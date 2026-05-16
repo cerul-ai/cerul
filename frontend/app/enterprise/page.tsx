@@ -675,7 +675,43 @@ export default function EnterprisePage() {
                 </p>
               </FadeIn>
 
-              <div className="mt-12 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+              {/* Flagship no-training commitment */}
+              <FadeIn delay={50}>
+                <div className="relative mt-12 overflow-hidden rounded-[28px] border-2 border-[var(--border-brand)] bg-gradient-to-br from-[var(--brand-subtle)] via-[var(--surface)] to-[var(--background-elevated)] p-8 lg:p-10">
+                  <div className="absolute -right-20 -top-20 h-48 w-48 rounded-full bg-[var(--brand)] opacity-15 blur-3xl" />
+                  <div className="relative grid gap-6 lg:grid-cols-[auto_1fr_auto] lg:items-center">
+                    <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl border border-[var(--border-brand)] bg-[var(--brand-subtle)] text-[var(--brand-bright)]">
+                      <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--brand-bright)]">
+                        Our foundational promise
+                      </p>
+                      <h3 className="mt-2 text-2xl font-bold tracking-tight text-[var(--foreground)] lg:text-3xl">
+                        Your data never trains any model.
+                      </h3>
+                      <p className="mt-3 text-sm leading-relaxed text-[var(--foreground-secondary)] lg:text-base">
+                        Customer videos, transcripts, embeddings, and queries are never used to
+                        train any Cerul model or third-party model. We do not share customer data
+                        with model providers for training. This is binding — written into our DPA.
+                      </p>
+                    </div>
+                    <Link
+                      href="/security"
+                      className="button-secondary inline-flex items-center gap-2 self-start lg:self-center"
+                    >
+                      Read our security posture
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </Link>
+                  </div>
+                </div>
+              </FadeIn>
+
+              <div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
                 {securityFeatures.map((feature, index) => (
                   <FadeIn key={feature.title} delay={index * 60}>
                     <div className="flex items-start gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
