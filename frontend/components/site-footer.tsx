@@ -9,6 +9,7 @@ export function SiteFooter() {
       title: "Product",
       links: [
         { label: "Search API", href: "/docs" },
+        { label: "Desktop App", href: "https://app.cerul.ai" },
         { label: "Pricing", href: "/pricing" },
         { label: "Dashboard", href: "/dashboard" },
       ],
