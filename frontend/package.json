@@ -22,7 +22,7 @@
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "react-easy-crop": "^5.5.7",
-    "resend": "^6.10.0",
+    "resend": "^6.12.2",
     "undici": "^8.0.3"
   },
   "devDependencies": {
