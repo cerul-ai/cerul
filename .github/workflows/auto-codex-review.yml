@@ -10,7 +10,7 @@ jobs:
     if: github.event.pull_request.draft == false && github.actor != 'dependabot[bot]'
     steps:
       - name: Request Codex review
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.CODEX_PAT }}
           script: |
