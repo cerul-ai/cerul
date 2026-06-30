@@ -22,16 +22,36 @@ export function SiteHeader({ currentPath }: SiteHeaderProps) {
         <nav className="hidden items-center gap-1 lg:flex lg:mx-6">
           {visibleNavigation.map((item) => {
             const isActive = isPrimaryNavigationActive(currentPath, item.href);
+            const className = `relative rounded-full px-4 py-2 text-sm font-medium transition-all duration-200 ${
+              isActive
+                ? "text-[var(--foreground)]"
+                : "text-[var(--foreground-secondary)] hover:text-[var(--foreground)]"
+            }`;
+
+            if ("external" in item) {
+              return (
+                <a
+                  key={item.label}
+                  href={item.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={className}
+                >
+                  <span className="relative z-10 inline-flex items-center gap-1.5">
+                    {item.label}
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path d="M6 4h6v6M12 4 5 11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </span>
+                </a>
+              );
+            }
 
             return (
               <Link
                 key={item.label}
                 href={item.href}
-                className={`relative rounded-full px-4 py-2 text-sm font-medium transition-all duration-200 ${
-                  isActive
-                    ? "text-[var(--foreground)]"
-                    : "text-[var(--foreground-secondary)] hover:text-[var(--foreground)]"
-                }`}
+                className={className}
               >
                 {isActive && (
                   <span className="absolute inset-0 rounded-full bg-[var(--background-sunken)] shadow-[inset_0_1px_0_rgba(255,255,255,0.68)]" />
@@ -74,16 +94,31 @@ export function SiteHeader({ currentPath }: SiteHeaderProps) {
       <nav className="mt-3 flex items-center justify-start gap-1 overflow-x-auto rounded-full bg-[var(--surface)] p-1 backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:hidden">
         {visibleNavigation.map((item) => {
           const isActive = isPrimaryNavigationActive(currentPath, item.href);
+          const className = `rounded-full px-3 py-1.5 text-xs font-medium transition-all ${
+            isActive
+              ? "bg-[var(--background-sunken)] text-[var(--foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.68)]"
+              : "text-[var(--foreground-secondary)]"
+          }`;
+
+          if ("external" in item) {
+            return (
+              <a
+                key={item.label}
+                href={item.href}
+                target="_blank"
+                rel="noreferrer"
+                className={className}
+              >
+                {item.label}
+              </a>
+            );
+          }
 
           return (
             <Link
               key={item.label}
               href={item.href}
-              className={`rounded-full px-3 py-1.5 text-xs font-medium transition-all ${
-                isActive
-                  ? "bg-[var(--background-sunken)] text-[var(--foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.68)]"
-                  : "text-[var(--foreground-secondary)]"
-              }`}
+              className={className}
             >
               {item.label}
             </Link>
