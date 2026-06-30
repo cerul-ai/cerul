@@ -17,7 +17,7 @@ import { getServerSession } from "@/lib/auth-server";
 import { getAuthUiConfig } from "@/lib/auth-providers";
 
 const homeDescription =
-  "Cerul — the video search layer for AI agents. Search video by meaning — across speech, visuals, and on-screen text.";
+  "Cerul is the hosted video search API for AI agents. Use the Cloud API on cerul.ai, or download Cerul App for local-first desktop video and audio search.";
 
 const siteOrigin = getSiteOrigin();
 
@@ -63,7 +63,7 @@ const jsonLd = {
     },
     {
       "@type": "SoftwareApplication",
-      name: "Cerul",
+      name: "Cerul Cloud",
       applicationCategory: "DeveloperApplication",
       operatingSystem: "Web",
       description: homeDescription,
@@ -80,6 +80,21 @@ const jsonLd = {
       documentation: `${siteOrigin}/docs`,
       url: siteOrigin,
       provider: {
+        "@type": "Organization",
+        name: "Cerul",
+      },
+    },
+    {
+      "@type": "SoftwareApplication",
+      name: "Cerul App",
+      applicationCategory: "UtilitiesApplication",
+      operatingSystem: "macOS",
+      description:
+        "The local-first desktop app for searching personal video and audio libraries by meaning.",
+      url: "https://app.cerul.ai",
+      downloadUrl: "https://app.cerul.ai/download",
+      isAccessibleForFree: true,
+      publisher: {
         "@type": "Organization",
         name: "Cerul",
       },
@@ -170,6 +185,25 @@ export default async function HomePage() {
                     Search video by meaning — across speech, visuals, and
                     on-screen text.
                   </p>
+                </BlurFade>
+
+                <BlurFade delay={400}>
+                  <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
+                    <Link href="/login?mode=signup" className="button-gradient">
+                      Get API key
+                    </Link>
+                    <a
+                      href="https://discord.gg/qHDEMQB9vN"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="button-discord"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M20.317 4.369a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.369a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.105 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.006.128 12.299 12.299 0 0 1-1.873.891.077.077 0 0 0-.041.106c.36.699.772 1.364 1.225 1.994a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.331c-1.182 0-2.157-1.086-2.157-2.42 0-1.332.956-2.418 2.157-2.418 1.21 0 2.176 1.096 2.157 2.418 0 1.334-.956 2.42-2.157 2.42zm7.975 0c-1.183 0-2.157-1.086-2.157-2.42 0-1.332.955-2.418 2.157-2.418 1.21 0 2.176 1.096 2.157 2.418 0 1.334-.946 2.42-2.157 2.42z" />
+                      </svg>
+                      Join Discord
+                    </a>
+                  </div>
                 </BlurFade>
 
               </div>
@@ -274,6 +308,120 @@ export default async function HomePage() {
               features={features}
             />
 
+            {/* Product Split Section */}
+            <section className="scroll-mt-36 py-16 lg:scroll-mt-32 lg:py-24" id="products">
+              <FadeIn className="text-center">
+                <span className="eyebrow inline-flex items-center gap-2">
+                  <span className="inline-block h-px w-4 bg-[var(--brand)]" />
+                  API or App
+                </span>
+                <h2 className="mt-4 text-3xl font-bold tracking-tight text-[var(--foreground)] sm:text-4xl lg:text-5xl">
+                  Two ways to use Cerul
+                </h2>
+                <p className="mx-auto mt-4 max-w-3xl text-lg leading-relaxed text-[var(--foreground-secondary)]">
+                  Cerul API and Cerul App are two product surfaces for the same video
+                  search idea. Choose the hosted API when your agents need a managed
+                  endpoint. Choose the desktop app when your own media library should
+                  stay local.
+                </p>
+              </FadeIn>
+
+              <div className="mt-12 grid gap-6 lg:grid-cols-2">
+                <FadeIn delay={100}>
+                  <div className="group h-full rounded-[28px] border border-[var(--border-brand)] bg-[var(--surface-elevated)] p-7 shadow-[var(--shadow)] transition hover:-translate-y-1 hover:border-[var(--brand-bright)] sm:p-8">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <span className="label label-brand">Hosted API</span>
+                        <h3 className="mt-5 text-2xl font-bold tracking-tight text-[var(--foreground)]">
+                          Cerul API on cerul.ai
+                        </h3>
+                      </div>
+                      <span className="rounded-full border border-[var(--border)] bg-[var(--background-sunken)] px-3 py-1 text-xs font-semibold uppercase tracking-wider text-[var(--foreground-secondary)]">
+                        Cloud
+                      </span>
+                    </div>
+                    <p className="mt-4 text-[15px] leading-relaxed text-[var(--foreground-secondary)]">
+                      This is the developer platform: API keys, docs, usage, billing,
+                      and a hosted video-search endpoint at{" "}
+                      <code className="rounded-md bg-[var(--background-sunken)] px-1.5 py-0.5 text-[var(--foreground)]">
+                        api.cerul.ai
+                      </code>
+                      . It is best for agents, SaaS products, research workflows, and
+                      teams that want a managed service.
+                    </p>
+                    <dl className="mt-6 grid gap-x-6 gap-y-4 border-y border-[var(--border)] py-5 text-sm sm:grid-cols-2">
+                      <div>
+                        <dt className="font-semibold text-[var(--foreground)]">Runs in</dt>
+                        <dd className="mt-1 text-[var(--foreground-secondary)]">Cerul Cloud</dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold text-[var(--foreground)]">Use it for</dt>
+                        <dd className="mt-1 text-[var(--foreground-secondary)]">Agent video search API</dd>
+                      </div>
+                    </dl>
+                    <div className="mt-7 flex flex-wrap gap-3">
+                      <Link href="/docs" className="button-gradient">
+                        Read API docs
+                      </Link>
+                      <Link href="/login?mode=signup" className="button-secondary">
+                        Get API key
+                      </Link>
+                    </div>
+                  </div>
+                </FadeIn>
+
+                <FadeIn delay={200}>
+                  <div className="group h-full rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-7 shadow-[var(--shadow)] transition hover:-translate-y-1 hover:border-[var(--border-brand)] sm:p-8">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <span className="label label-accent">Desktop App</span>
+                        <h3 className="mt-5 text-2xl font-bold tracking-tight text-[var(--foreground)]">
+                          Cerul App on app.cerul.ai
+                        </h3>
+                      </div>
+                      <span className="rounded-full border border-[var(--border)] bg-[var(--background-sunken)] px-3 py-1 text-xs font-semibold uppercase tracking-wider text-[var(--foreground-secondary)]">
+                        Local-first
+                      </span>
+                    </div>
+                    <p className="mt-4 text-[15px] leading-relaxed text-[var(--foreground-secondary)]">
+                      This is the desktop version: point it at folders, YouTube channels,
+                      and podcasts, then search your own video and audio library locally.
+                      It includes a global overlay and local REST API for agents running
+                      on your machine.
+                    </p>
+                    <dl className="mt-6 grid gap-x-6 gap-y-4 border-y border-[var(--border)] py-5 text-sm sm:grid-cols-2">
+                      <div>
+                        <dt className="font-semibold text-[var(--foreground)]">Runs on</dt>
+                        <dd className="mt-1 text-[var(--foreground-secondary)]">Your Mac</dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold text-[var(--foreground)]">Use it for</dt>
+                        <dd className="mt-1 text-[var(--foreground-secondary)]">Private media memory</dd>
+                      </div>
+                    </dl>
+                    <div className="mt-7 flex flex-wrap gap-3">
+                      <a
+                        href="https://app.cerul.ai"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="button-gradient"
+                      >
+                        Open Cerul App site
+                      </a>
+                      <a
+                        href="https://app.cerul.ai/download"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="button-secondary"
+                      >
+                        Download app
+                      </a>
+                    </div>
+                  </div>
+                </FadeIn>
+              </div>
+            </section>
+
             {/* Stats Section */}
             <section className="py-16 lg:py-24">
               <FadeIn className="text-center">
@@ -362,6 +510,14 @@ export default async function HomePage() {
                       <Link href="/docs" className="button-secondary">
                         Read the docs
                       </Link>
+                      <a
+                        href="https://discord.gg/qHDEMQB9vN"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="button-secondary"
+                      >
+                        Join Discord
+                      </a>
                     </div>
                   </div>
                 </div>

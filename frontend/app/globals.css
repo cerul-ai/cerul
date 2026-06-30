@@ -482,6 +482,32 @@ button:focus-visible,
   color: var(--brand-bright);
 }
 
+.button-discord {
+  display: inline-flex;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  background: linear-gradient(135deg, #5865f2 0%, #4752c4 100%);
+  padding: 0.75rem 1.5rem;
+  color: white;
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow:
+    0 4px 6px -1px rgba(88, 101, 242, 0.3),
+    0 10px 20px -5px rgba(88, 101, 242, 0.28);
+}
+
+.button-discord:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 12px -1px rgba(88, 101, 242, 0.38),
+    0 20px 30px -5px rgba(88, 101, 242, 0.32);
+}
+
 .button-ghost {
   display: inline-flex;
   min-height: 2.5rem;

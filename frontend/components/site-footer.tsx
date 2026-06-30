@@ -8,7 +8,7 @@ export function SiteFooter() {
     {
       title: "Product",
       links: [
-        { label: "Search API", href: "/docs" },
+        { label: "Cloud API", href: "/docs" },
         { label: "Desktop App", href: "https://app.cerul.ai" },
         { label: "Pricing", href: "/pricing" },
         { label: "Dashboard", href: "/dashboard" },
@@ -21,6 +21,7 @@ export function SiteFooter() {
         { label: "API Reference", href: "/docs/api-reference" },
         { label: "Quickstart", href: "/docs" },
         { label: "GitHub", href: "https://github.com/cerul-ai/cerul" },
+        { label: "Discord", href: "https://discord.gg/qHDEMQB9vN" },
         { label: "Status", href: "https://status.cerul.ai" },
       ],
     },

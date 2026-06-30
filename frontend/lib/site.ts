@@ -3,6 +3,7 @@ export const primaryNavigation = [
   { label: "Docs", href: "/docs" },
   { label: "Pricing", href: "/pricing" },
   { label: "Enterprise", href: "/enterprise" },
+  { label: "App", href: "https://app.cerul.ai", external: true },
   { label: "Dashboard", href: "/dashboard" },
 ] as const;
 
@@ -251,13 +252,17 @@ export const adminRoutes = [
 ] as const;
 
 export function isPrimaryRoute(path: string): boolean {
-  return primaryNavigation.some((item) => item.href === path);
+  return primaryNavigation.some((item) => !("external" in item) && item.href === path);
 }
 
 export function isPrimaryNavigationActive(
   currentPath: string,
   itemHref: (typeof primaryNavigation)[number]["href"],
 ): boolean {
+  if (itemHref.startsWith("http")) {
+    return false;
+  }
+
   if (itemHref === "/") {
     return currentPath === "/";
   }
