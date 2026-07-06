@@ -142,7 +142,7 @@ function renderEmailTemplate(input: EmailTemplateInput): string {
         </div>
 
         <p style="margin:18px 0 0;padding:0 10px;color:${palette.textSecondary};font-size:12px;line-height:1.7;text-align:center;">
-          Cerul — The video search layer for AI agents
+          Cerul — where video becomes citable
         </p>
       </div>
     </div>
@@ -162,7 +162,7 @@ export function emailVerificationTemplate(params: {
     title: "Verify your email address",
     intro: `Hi ${name}, thanks for signing up to Cerul.`,
     body: [
-      "Click below to verify your email and start using the video search layer built for AI agents.",
+      "Click below to verify your email and start searching your video by meaning.",
     ],
     cta: {
       href: params.url,

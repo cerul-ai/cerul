@@ -10,7 +10,7 @@ PNG at a specific size, dark-mode screenshot, founder headshot), email
 
 ## What is Cerul?
 
-**Cerul is the video search layer for AI agents.** It lets agents and
+**Cerul: where video becomes citable.** It lets agents and
 developers search video by meaning — across speech, visuals, and on-screen
 text — through a single API.
 

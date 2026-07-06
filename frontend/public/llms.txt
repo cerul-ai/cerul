@@ -1,6 +1,6 @@
 # Cerul
 
-> Cerul is the video search layer for AI agents. Search video by meaning — across speech, visuals, and on-screen text.
+> Cerul is where video becomes citable. Search video by meaning — across speech, visuals, and on-screen text.
 
 ## About
 

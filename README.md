@@ -4,8 +4,8 @@
     <img src="./assets/logo.png" alt="Cerul" width="80" />
   </a>
   <h1>Cerul</h1>
-  <p><strong>The video search layer for AI agents.</strong></p>
-  <p>Teach your AI agents to see. Search video by meaning — across speech, visuals, and on-screen text.</p>
+  <p><strong>Where video becomes citable.</strong></p>
+  <p>Stop scrubbing. Start searching. Search video by meaning — across speech, visuals, and on-screen text.</p>
 
   <p>
     <a href="https://cerul.ai/docs"><strong>Docs</strong></a> &middot;

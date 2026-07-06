@@ -186,7 +186,7 @@ export default function BrandPage() {
                   One-liner
                 </h2>
                 <p className="mt-4 text-lg leading-relaxed text-[var(--foreground)]">
-                  Cerul is the video search layer for AI agents — search video
+                  Cerul is where video becomes citable — search video
                   by meaning across speech, visuals, and on-screen text.
                 </p>
               </div>
