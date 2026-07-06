@@ -76,7 +76,7 @@ const jsonLd = {
       "@type": "WebAPI",
       name: "Cerul Search API",
       description:
-        "The video search layer for AI agents. Search video by meaning — across speech, visuals, and on-screen text.",
+        "Where video becomes citable. Search video by meaning — across speech, visuals, and on-screen text.",
       documentation: `${siteOrigin}/docs`,
       url: siteOrigin,
       provider: {
@@ -169,14 +169,14 @@ export default async function HomePage() {
                 <BlurFade delay={100}>
                   <span className="eyebrow inline-flex items-center gap-2 rounded-full border border-[var(--border-brand)] bg-[var(--brand-subtle)] px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-[var(--brand-bright)]">
                     <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-pulse" />
-                    The video search layer for AI agents
+                    Where video becomes citable
                   </span>
                 </BlurFade>
 
                 <BlurFade delay={200}>
                   <h1 className="mt-8 text-4xl font-bold leading-[1.1] tracking-tight text-[var(--foreground)] sm:text-5xl lg:text-7xl">
-                    Teach your AI agents{" "}
-                    <TextGradient animate>to see</TextGradient>
+                    Stop scrubbing.{" "}
+                    <TextGradient animate>Start searching.</TextGradient>
                   </h1>
                 </BlurFade>
 
@@ -303,7 +303,7 @@ export default async function HomePage() {
             {/* Features Section */}
             <Features
               eyebrow="Features"
-              title="Teach your AI agents to see"
+              title="Every second, searchable"
               description="Search video by meaning — across speech, visuals, and on-screen text."
               features={features}
             />

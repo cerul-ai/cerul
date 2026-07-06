@@ -1,7 +1,7 @@
 export const SOCIAL_IMAGE_VERSION = "20260314";
 export const HOME_SOCIAL_IMAGE_VERSION = "20260315-home1";
 
-const socialImageAlt = "Cerul — Teach your AI agents to see";
+const socialImageAlt = "Cerul — where video becomes citable";
 
 function createOpenGraphImages(version: string) {
   return [
