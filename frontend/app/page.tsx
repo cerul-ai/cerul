@@ -76,7 +76,7 @@ const jsonLd = {
       "@type": "WebAPI",
       name: "Cerul Search API",
       description:
-        "Where video becomes citable. Search video by meaning — across speech, visuals, and on-screen text.",
+        "Where video becomes citable. One API to search video like text — every word, every frame, timestamped.",
       documentation: `${siteOrigin}/docs`,
       url: siteOrigin,
       provider: {
@@ -182,8 +182,8 @@ export default async function HomePage() {
 
                 <BlurFade delay={300}>
                   <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-[var(--foreground-secondary)] sm:text-xl">
-                    Search video by meaning — across speech, visuals, and
-                    on-screen text.
+                    One API to search video like text — every word, every frame,
+                    timestamped.
                   </p>
                 </BlurFade>
 
@@ -304,7 +304,7 @@ export default async function HomePage() {
             <Features
               eyebrow="Features"
               title="Every second, searchable"
-              description="Search video by meaning — across speech, visuals, and on-screen text."
+              description="One API to search video like text — every word, every frame, timestamped."
               features={features}
             />
 

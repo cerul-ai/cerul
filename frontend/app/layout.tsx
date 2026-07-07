@@ -80,7 +80,7 @@ export const metadata: Metadata = {
     template: "%s | Cerul",
   },
   description:
-    "Cerul — where video becomes citable. Search video by meaning — across speech, visuals, and on-screen text.",
+    "Cerul — where video becomes citable. One API to search video like text — every word, every frame, timestamped.",
   icons: {
     icon: [
       { url: "/logo.svg", type: "image/svg+xml" },
@@ -96,7 +96,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Cerul",
     description:
-      "Cerul — where video becomes citable. Search video by meaning — across speech, visuals, and on-screen text.",
+      "Cerul — where video becomes citable. One API to search video like text — every word, every frame, timestamped.",
     url: siteOrigin,
     siteName: "Cerul",
     type: "website",
@@ -106,7 +106,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Cerul",
     description:
-      "Cerul — where video becomes citable. Search video by meaning — across speech, visuals, and on-screen text.",
+      "Cerul — where video becomes citable. One API to search video like text — every word, every frame, timestamped.",
     images: defaultTwitterImages,
   },
 };
