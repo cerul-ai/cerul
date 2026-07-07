@@ -1,6 +1,6 @@
 # Cerul
 
-> Cerul is where video becomes citable. Search video by meaning — across speech, visuals, and on-screen text.
+> Cerul is where video becomes citable. One API to search video like text — every word, every frame, timestamped.
 
 ## About
 
