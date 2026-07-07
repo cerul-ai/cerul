@@ -1,7 +1,7 @@
 # Cerul — Company Info & Boilerplate
 
 ## One-liner
-> Cerul is where video becomes citable — one API to search video like text: every word, every frame, timestamped.
+> Cerul is where video becomes citable — the video search API for agents: meaning-based, grounded, timestamped.
 
 ## Short description (≤280 chars)
 > Cerul gives AI agents a Search API for video. Query by meaning and get back the exact moments across speech, visuals, and on-screen text — from tech talks, podcasts, conferences, and earnings calls.

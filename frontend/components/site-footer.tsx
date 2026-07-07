@@ -45,8 +45,8 @@ export function SiteFooter() {
           <div className="space-y-6">
             <BrandMark />
             <p className="max-w-sm text-[15px] leading-relaxed text-[var(--foreground-secondary)]">
-              Where video becomes citable. One API to search video like
-              text — every word, every frame, timestamped.
+              Where video becomes citable. The video search API for agents —
+              meaning-based, grounded, timestamped.
             </p>
             <div className="flex items-center gap-4">
               <a

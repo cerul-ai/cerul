@@ -5,7 +5,7 @@
   </a>
   <h1>Cerul</h1>
   <p><strong>Where video becomes citable.</strong></p>
-  <p>Stop scrubbing. Start searching. One API to search video like text — every word, every frame, timestamped.</p>
+  <p>Stop scrubbing. Start searching. The video search API for agents — meaning-based, grounded, timestamped.</p>
 
   <p>
     <a href="https://cerul.ai/docs"><strong>Docs</strong></a> &middot;
