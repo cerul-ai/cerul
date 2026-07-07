@@ -1,6 +1,6 @@
 # Cerul
 
-> Cerul is where video becomes citable. One API to search video like text — every word, every frame, timestamped.
+> Cerul is where video becomes citable. The video search API for agents — meaning-based, grounded, timestamped.
 
 ## About
 
