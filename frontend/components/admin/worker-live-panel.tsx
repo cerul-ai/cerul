@@ -648,7 +648,7 @@ export function WorkerLivePanel() {
                 {activeJobs.map((job) => (
                   <div key={job.jobId} className="surface-elevated relative overflow-hidden rounded-[28px] p-5">
                     {/* Glow background */}
-                    <div className="pointer-events-none absolute right-0 top-0 h-64 w-64 bg-[rgba(136,165,242,0.12)] blur-3xl" />
+                    <div className="pointer-events-none absolute right-0 top-0 h-64 w-64 bg-[rgba(111, 151, 201,0.12)] blur-3xl" />
                     <ActiveJobCard job={job} referenceNowMs={referenceNowMs} />
                   </div>
                 ))}

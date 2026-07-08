@@ -58,7 +58,7 @@ export function ParticlesBackground() {
 
           if (distance < 150) {
             ctx.beginPath();
-            ctx.strokeStyle = `rgba(103, 232, 249, ${0.08 * (1 - distance / 150)})`;
+            ctx.strokeStyle = `rgba(182, 205, 234, ${0.08 * (1 - distance / 150)})`;
             ctx.lineWidth = 0.5;
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(p2.x, p2.y);
@@ -71,7 +71,7 @@ export function ParticlesBackground() {
       particles.forEach((particle) => {
         ctx.beginPath();
         ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(103, 232, 249, ${particle.opacity})`;
+        ctx.fillStyle = `rgba(182, 205, 234, ${particle.opacity})`;
         ctx.fill();
 
         // Update position

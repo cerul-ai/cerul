@@ -98,7 +98,7 @@ export function DocsHeader({ currentPath }: DocsHeaderProps) {
                     .querySelector("[data-docs-ai-anchor='true']")
                     ?.scrollIntoView({ behavior: "smooth", block: "center" });
                 }}
-                className="flex h-10 items-center justify-center rounded-full border border-[var(--border-brand)] bg-[var(--brand-subtle)] px-4 text-sm font-medium text-[var(--brand-bright)] transition hover:bg-[rgba(136,165,242,0.18)]"
+                className="flex h-10 items-center justify-center rounded-full border border-[var(--border-brand)] bg-[var(--brand-subtle)] px-4 text-sm font-medium text-[var(--brand-bright)] transition hover:bg-[rgba(111, 151, 201,0.18)]"
               >
                 Ask AI
               </button>

@@ -15,28 +15,28 @@ export const metadata: Metadata = {
 
 const logoAssets = [
   {
-    label: "Primary logo",
-    description: "Dark mark on light backgrounds",
+    label: "Primary mark",
+    description: "Flat mark on light backgrounds",
     svg: "/press-kit/01-logos/vector-svg/cerul-primary-black.svg",
-    bg: "#f7f3ec",
+    bg: "#eef1f4",
   },
   {
-    label: "Inverted logo",
-    description: "White mark on dark backgrounds",
+    label: "Inverted mark",
+    description: "Flat white mark on dark backgrounds",
     svg: "/press-kit/01-logos/vector-svg/cerul-primary-white.svg",
-    bg: "#241d15",
+    bg: "#15171c",
   },
   {
-    label: "Brand variant",
-    description: "Cerul blue on neutral backgrounds",
+    label: "App icon (default)",
+    description: "Graphite container — the default Cerul icon",
     svg: "/press-kit/01-logos/vector-svg/cerul-primary-color.svg",
     bg: "#ffffff",
   },
   {
-    label: "Wordmark lockup",
-    description: "Mark + Cerul wordmark",
+    label: "Wordmark",
+    description: "Cerul in Inter",
     svg: "/press-kit/01-logos/vector-svg/cerul-wordmark.svg",
-    bg: "#f7f3ec",
+    bg: "#eef1f4",
   },
 ];
 
@@ -105,11 +105,11 @@ const usageShots = [
 ];
 
 const colorSwatches = [
-  { name: "Foreground / ink", hex: "#241d15" },
-  { name: "Brand", hex: "#88a5f2" },
-  { name: "Brand bright", hex: "#5e79cf" },
-  { name: "Brand deep", hex: "#2f405a" },
-  { name: "Background", hex: "#f7f3ec" },
+  { name: "Graphite", hex: "#15171c" },
+  { name: "Steel (accent)", hex: "#3e6b9d" },
+  { name: "Steel · on dark", hex: "#8fb0d8" },
+  { name: "Amber (timestamp)", hex: "#e5a54a" },
+  { name: "Paper", hex: "#eef0f4" },
 ];
 
 export default function BrandPage() {

@@ -94,7 +94,7 @@ export function ResendVerificationForm({
       </div>
 
       {success && (
-        <div className="rounded-[18px] border border-[rgba(92,132,191,0.18)] bg-[rgba(136,165,242,0.12)] px-4 py-3 text-sm text-[var(--foreground)]">
+        <div className="rounded-[18px] border border-[rgba(92,132,191,0.18)] bg-[rgba(111, 151, 201,0.12)] px-4 py-3 text-sm text-[var(--foreground)]">
           {success}
         </div>
       )}

@@ -323,7 +323,7 @@ function StatOverview({
       note: "Pending, running, and retrying jobs still consuming admin attention.",
       tone: "text-[var(--brand-bright)]",
       shell:
-        "border-[var(--border-brand)] bg-[rgba(34,211,238,0.08)] shadow-[0_18px_40px_rgba(14,165,233,0.12)]",
+        "border-[var(--border-brand)] bg-[rgba(143, 176, 216,0.08)] shadow-[0_18px_40px_rgba(62, 107, 157,0.12)]",
     },
     {
       label: "Completion rate",
@@ -1049,7 +1049,7 @@ export function DashboardPipelinesScreen() {
                                 aria-expanded={isExpanded}
                                 className={`w-full rounded-[28px] border text-left transition ${
                                   isExpanded
-                                    ? "border-[var(--border-brand)] bg-[rgba(34,211,238,0.08)] shadow-[0_18px_44px_rgba(14,165,233,0.14)]"
+                                    ? "border-[var(--border-brand)] bg-[rgba(143, 176, 216,0.08)] shadow-[0_18px_44px_rgba(62, 107, 157,0.14)]"
                                     : "border-[var(--border)] bg-[rgba(255,255,255,0.02)] hover:border-[var(--border-strong)] hover:bg-white/[0.04]"
                                 }`}
                                 onClick={() => void handleToggleJob(job.id)}

@@ -63,7 +63,7 @@ interface FeatureCardProps {
 
 function FeatureCard({ icon, title, description, href }: FeatureCardProps) {
   const wrapperClassName = href
-    ? "group block h-full rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-8 transition-all duration-300 hover:border-[var(--border-brand)] hover:bg-[var(--surface-hover)] hover:shadow-[0_0_40px_-10px_rgba(136,165,242,0.15)]"
+    ? "group block h-full rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-8 transition-all duration-300 hover:border-[var(--border-brand)] hover:bg-[var(--surface-hover)] hover:shadow-[0_0_40px_-10px_rgba(111, 151, 201,0.15)]"
     : "group h-full rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-8 transition-all duration-300 hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)]";
 
   const content = (
