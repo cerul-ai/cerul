@@ -38,7 +38,7 @@ export function AdminMetricCard({
         : {
             card: "border-[var(--border)] bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(252,246,237,0.94))]",
             badge: "border-[var(--border)] bg-white/74 text-[var(--foreground-secondary)]",
-            accent: "from-[rgba(136,165,242,0.22)] via-[rgba(136,165,242,0.04)] to-transparent",
+            accent: "from-[rgba(111, 151, 201,0.22)] via-[rgba(111, 151, 201,0.04)] to-transparent",
             state: "Benchmark",
           };
 

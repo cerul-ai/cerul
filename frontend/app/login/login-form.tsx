@@ -161,7 +161,7 @@ export function LoginForm({
 
   return (
     <form className="space-y-6" onSubmit={(event) => void handleSubmit(event)}>
-      <div className="flex rounded-[20px] border border-[var(--border)] bg-white/60 p-1 shadow-[0_1px_3px_rgba(70,52,29,0.06)]">
+      <div className="flex rounded-[20px] border border-[var(--border)] bg-white/60 p-1 shadow-[0_1px_3px_rgba(28, 38, 56,0.06)]">
         <button
           type="button"
           className={`flex-1 rounded-[16px] px-4 py-2.5 text-sm font-semibold transition ${

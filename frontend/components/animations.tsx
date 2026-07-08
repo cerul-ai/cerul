@@ -121,8 +121,8 @@ interface GlowCardProps {
 export function GlowCard({
   children,
   className = "",
-  glowColor = "rgba(136, 165, 242, 0.15)",
-  hoverGlowColor = "rgba(136, 165, 242, 0.25)",
+  glowColor = "rgba(111, 151, 201, 0.15)",
+  hoverGlowColor = "rgba(111, 151, 201, 0.25)",
 }: GlowCardProps) {
   return (
     <div

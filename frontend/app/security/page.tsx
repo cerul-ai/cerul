@@ -594,7 +594,7 @@ export default function SecurityPage() {
             <section className="py-16 lg:py-24">
               <FadeIn>
                 <div className="relative overflow-hidden rounded-[32px] border border-[var(--border)] bg-gradient-to-br from-[var(--surface)] via-[var(--background)] to-[var(--surface)] p-12 text-center lg:p-16">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(34,211,238,0.08),transparent_55%)]" />
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(143, 176, 216,0.08),transparent_55%)]" />
                   <div className="relative">
                     <h2 className="text-2xl font-bold tracking-tight text-[var(--foreground)] sm:text-3xl lg:text-4xl">
                       Questions, or running a security review?

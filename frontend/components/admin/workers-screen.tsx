@@ -311,7 +311,7 @@ export function AdminWorkersScreen() {
               label="Jobs Completed"
               value={data.metrics.jobsCompleted.current}
               accentColor="bg-[var(--brand-bright)]"
-              glowColor="bg-[rgba(136,165,242,0.18)]"
+              glowColor="bg-[rgba(111, 151, 201,0.18)]"
             >
               {data.metrics.jobsCompleted.delta !== 0 ? (
                 <div

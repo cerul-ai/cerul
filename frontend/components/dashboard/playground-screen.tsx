@@ -479,7 +479,7 @@ function ResultCard({
       href={result.url}
       target="_blank"
       rel="noreferrer"
-      className="group block overflow-hidden rounded-[16px] border border-[var(--border)] bg-[var(--background-elevated,#fffaf2)] transition hover:border-[var(--border-strong)] hover:shadow-sm"
+      className="group block overflow-hidden rounded-[16px] border border-[var(--border)] bg-[var(--background-elevated,#ffffff)] transition hover:border-[var(--border-strong)] hover:shadow-sm"
     >
       {imageUrl ? (
         <div className="relative aspect-video w-full overflow-hidden bg-[rgba(36,29,21,0.04)]">
@@ -1002,7 +1002,7 @@ export function PlaygroundScreen() {
                   ) : responseTab === "preview" ? (
                     <div className="space-y-4">
                       {response.answer ? (
-                        <div className="rounded-[12px] border border-[var(--border)] bg-[rgba(136,165,242,0.06)] p-4 text-sm leading-6 text-[var(--foreground)]">
+                        <div className="rounded-[12px] border border-[var(--border)] bg-[rgba(111, 151, 201,0.06)] p-4 text-sm leading-6 text-[var(--foreground)]">
                           <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-tertiary)]">
                             Answer
                           </p>

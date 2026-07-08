@@ -492,7 +492,7 @@ export default async function HomePage() {
             <section className="py-16 lg:py-24">
               <FadeIn>
                 <div className="relative overflow-hidden rounded-[32px] border border-[var(--border)] bg-gradient-to-br from-[var(--surface)] via-[var(--background)] to-[var(--surface)] p-12 text-center lg:p-16">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(136,165,242,0.08),transparent_50%)]" />
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(111, 151, 201,0.08),transparent_50%)]" />
                   <div className="relative">
                     <h2 className="text-3xl font-bold tracking-tight text-[var(--foreground)] sm:text-4xl lg:text-5xl">
                       Give your agents eyes on{" "}
