@@ -1,7 +1,10 @@
 <div align="center">
   <br />
   <a href="https://cerul.ai">
-    <img src="./assets/logo.png" alt="Cerul" width="80" />
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="./assets/cerul-paper-256.png" />
+      <img src="./assets/cerul-graphite-256.png" alt="Cerul" width="88" />
+    </picture>
   </a>
   <h1>Cerul</h1>
   <p><strong>Where video becomes citable.</strong></p>
@@ -181,13 +184,21 @@ Licensed under [Apache 2.0](./LICENSE).
 
 <h2 id="wechat-group">Community</h2>
 
-Join our WeChat group to chat with the team and other users. Scan the QR code below (refreshes weekly):
+Questions, feedback, or just want to follow along? Join the conversation — pick whichever community is closest to you.
 
-<div align="center">
-  <img src="./assets/wechat-group.jpg" alt="Cerul.ai WeChat Group" width="280" />
-</div>
+**🇨🇳 中国 (China)** — scan to join the WeChat group:
 
-Or join us on [Discord](https://discord.gg/qHDEMQB9vN) for English discussion.
+<p align="center">
+  <strong>微信群 (WeChat)</strong><br />
+  「Cerul.ai 官方社群」<br /><br />
+  <img src="./assets/wechat-group.png" alt="Cerul.ai 官方微信社群二维码" width="240" />
+</p>
+
+**🌍 International** — chat with users and contributors worldwide on Discord:
+
+<a href="https://discord.gg/qHDEMQB9vN"><img src="https://img.shields.io/badge/Join%20our-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord" /></a>
+
+> **Heads up:** the WeChat QR rotates periodically and may expire. If a scan fails, ping us on [Discord](https://discord.gg/qHDEMQB9vN) or [X / Twitter](https://x.com/cerul_hq) for the latest invite.
 
 <div align="center">
   <br />
