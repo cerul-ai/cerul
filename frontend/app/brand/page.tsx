@@ -106,9 +106,8 @@ const usageShots = [
 
 const colorSwatches = [
   { name: "Graphite", hex: "#15171c" },
-  { name: "Steel (accent)", hex: "#3e6b9d" },
-  { name: "Steel · on dark", hex: "#8fb0d8" },
-  { name: "Amber (timestamp)", hex: "#e5a54a" },
+  { name: "Copper (accent)", hex: "#a85a28" },
+  { name: "Copper · on dark", hex: "#d99a62" },
   { name: "Paper", hex: "#eef0f4" },
 ];
 
