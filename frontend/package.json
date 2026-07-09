@@ -21,7 +21,7 @@
     "pg": "^8.22.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "react-easy-crop": "^5.5.7",
+    "react-easy-crop": "^6.2.2",
     "resend": "^6.14.0",
     "undici": "^8.7.0"
   },
