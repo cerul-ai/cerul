@@ -593,7 +593,7 @@ export default function EnterprisePage() {
                     <div
                       className={`relative flex h-full flex-col rounded-3xl border p-8 transition-all duration-300 hover:shadow-lg ${
                         option.popular
-                          ? "border-[var(--border-brand)] bg-gradient-to-b from-[var(--surface)] to-[var(--background-elevated)] shadow-[0_0_40px_-10px_rgba(143, 176, 216,0.15)] lg:scale-105"
+                          ? "border-[var(--border-brand)] bg-gradient-to-b from-[var(--surface)] to-[var(--background-elevated)] shadow-[0_0_40px_-10px_rgba(217,154,98,0.15)] lg:scale-105"
                           : "border-[var(--border)] bg-[var(--surface)]"
                       }`}
                     >
@@ -935,7 +935,7 @@ docker run -d \\
             <section className="py-16 lg:py-24">
               <FadeIn>
                 <div className="relative overflow-hidden rounded-[32px] border border-[var(--border)] bg-gradient-to-br from-[var(--surface)] via-[var(--background)] to-[var(--surface)] p-12 text-center lg:p-16">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(143, 176, 216,0.10),transparent_55%)]" />
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(217,154,98,0.10),transparent_55%)]" />
                   <div className="relative">
                     <h2 className="text-3xl font-bold tracking-tight text-[var(--foreground)] sm:text-4xl lg:text-5xl">
                       Ready to make your video archive{" "}
