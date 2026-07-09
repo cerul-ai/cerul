@@ -16,7 +16,7 @@
   "dependencies": {
     "@next/third-parties": "^16.2.10",
     "better-auth": "^1.6.9",
-    "kysely": "^0.28.16",
+    "kysely": "^0.29.3",
     "next": "16.2.10",
     "pg": "^8.22.0",
     "react": "19.2.7",
