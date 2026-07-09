@@ -123,7 +123,7 @@ export default function PricingPage() {
                 <div
                   className={`relative flex h-full flex-col rounded-3xl border p-8 transition-all duration-300 hover:shadow-lg ${
                     index === 2
-                      ? "border-[var(--border-brand)] bg-gradient-to-b from-[var(--surface)] to-[var(--background-elevated)] shadow-[0_0_40px_-10px_rgba(111, 151, 201,0.15)] lg:scale-105"
+                      ? "border-[var(--border-brand)] bg-gradient-to-b from-[var(--surface)] to-[var(--background-elevated)] shadow-[0_0_40px_-10px_rgba(168,90,40,0.15)] lg:scale-105"
                       : "border-[var(--border)] bg-[var(--surface)]"
                   }`}
                 >
