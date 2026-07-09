@@ -23,7 +23,7 @@
     "react-dom": "19.2.7",
     "react-easy-crop": "^5.5.7",
     "resend": "^6.14.0",
-    "undici": "^8.5.0"
+    "undici": "^8.7.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.1",
