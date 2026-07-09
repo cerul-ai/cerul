@@ -14,7 +14,7 @@
     "test": "vitest run --config vitest.config.mts"
   },
   "dependencies": {
-    "@next/third-parties": "^16.2.3",
+    "@next/third-parties": "^16.2.10",
     "better-auth": "^1.6.9",
     "kysely": "^0.28.16",
     "next": "16.2.10",
