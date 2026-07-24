@@ -1,0 +1,11 @@
+{
+  "name": "cerul",
+  "version": "1.0.0",
+  "description": "Cerul — where video becomes citable. The video search API for agents — meaning-based, grounded, timestamped.",
+  "author": {
+    "name": "Cerul AI",
+    "url": "https://cerul.ai"
+  },
+  "keywords": ["video", "search", "ai-agent", "transcript", "conference"],
+  "category": "external-integrations"
+}

@@ -2,66 +2,24 @@ version: 2
 
 updates:
   - package-ecosystem: npm
-    directory: /frontend
+    directory: /
     schedule:
       interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - frontend
-    ignore:
-      - dependency-name: "eslint"
-        update-types:
-          - "version-update:semver-major"
-      # typescript-eslint does not support TypeScript 7 yet; lint/build fail on TS major bumps
-      - dependency-name: "typescript"
-        update-types:
-          - "version-update:semver-major"
     groups:
-      next-ecosystem:
-        patterns:
-          - "next"
-          - "eslint-config-next"
-          - "react"
-          - "react-dom"
-          - "@types/react*"
-      tailwind:
-        patterns:
-          - "tailwindcss"
-          - "@tailwindcss/*"
-      dev-tooling:
-        patterns:
-          - "typescript"
-          - "eslint"
-          - "vitest"
-          - "@types/node"
+      public-node:
+        patterns: ["*"]
 
   - package-ecosystem: pip
-    directory: /backend
+    directory: /packages/python
     schedule:
       interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - backend
 
-  - package-ecosystem: pip
-    directory: /workers
+  - package-ecosystem: cargo
+    directory: /apps/cli
     schedule:
       interval: weekly
-      day: monday
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - workers
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - ci

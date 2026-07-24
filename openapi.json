@@ -1,0 +1,3339 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Cerul API",
+    "version": "1.0.0-foundation",
+    "description": "The public Cerul API contract shared by cloud and local runtimes. Runtime availability is discovered through GET /v1/capabilities."
+  },
+  "servers": [
+    {
+      "url": "https://api.cerul.ai",
+      "description": "Cloud runtime"
+    },
+    {
+      "url": "http://127.0.0.1:{port}",
+      "description": "Local loopback runtime",
+      "variables": {
+        "port": {
+          "default": "23785"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Isolated Web, Desktop, CLI, and MCP authentication protocols"
+    },
+    {
+      "name": "Capabilities",
+      "description": "Runtime capability discovery"
+    },
+    {
+      "name": "Libraries",
+      "description": "Content collection and membership"
+    },
+    {
+      "name": "Assets",
+      "description": "Source and derived media"
+    },
+    {
+      "name": "Search",
+      "description": "Scoped retrieval and evidence"
+    },
+    {
+      "name": "Jobs",
+      "description": "Asynchronous capability and workflow execution"
+    },
+    {
+      "name": "Artifacts",
+      "description": "Structured, renderable outputs and human review"
+    },
+    {
+      "name": "Agent",
+      "description": "Constrained AgentSession and Response orchestration"
+    },
+    {
+      "name": "Workspaces",
+      "description": "Cloud ownership and collaboration boundary"
+    },
+    {
+      "name": "Usage",
+      "description": "Workspace-scoped entitlement and metering projection"
+    },
+    {
+      "name": "Credentials",
+      "description": "Scoped Workspace API credential lifecycle"
+    },
+    {
+      "name": "Shares",
+      "description": "Revocable public Share projections"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    },
+    {
+      "apiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/v1/oauth/device/authorize": {
+      "post": {
+        "operationId": "createDeviceAuthorization",
+        "summary": "Start CLI or MCP device authorization",
+        "tags": [
+          "Auth"
+        ],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceAuthorizationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Device authorization started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceAuthorizationResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/oauth/token": {
+      "post": {
+        "operationId": "exchangeOAuthToken",
+        "summary": "Exchange or refresh an isolated Desktop, CLI, or MCP credential",
+        "tags": [
+          "Auth"
+        ],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OAuth token set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthTokenResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/workspaces": {
+      "get": {
+        "operationId": "listWorkspaces",
+        "summary": "List workspaces visible to the authenticated identity",
+        "tags": [
+          "Workspaces"
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspaces",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/usage": {
+      "get": {
+        "operationId": "getUsageReport",
+        "summary": "Get a workspace-scoped usage and credit report",
+        "tags": [
+          "Usage"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Exclusive report end",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace usage report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageReportResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/principal": {
+      "get": {
+        "operationId": "getPrincipal",
+        "summary": "Get the server-authoritative identity, Workspace role, and scopes",
+        "tags": [
+          "Auth"
+        ],
+        "responses": {
+          "200": {
+            "description": "Authenticated principal projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{workspace_id}/entitlement": {
+      "get": {
+        "operationId": "getWorkspaceEntitlement",
+        "summary": "Get the effective plan, capability grants, limits, and credit reservations",
+        "tags": [
+          "Usage"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective Workspace entitlement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceEntitlementResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{workspace_id}/api-credentials": {
+      "get": {
+        "operationId": "listApiCredentials",
+        "summary": "List API credential metadata without secret material",
+        "tags": [
+          "Credentials"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "API credential metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiCredentialListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createApiCredential",
+        "summary": "Create a scoped API credential and return its secret once",
+        "tags": [
+          "Credentials"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApiCredentialRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "API credential created; secret is never returned again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedApiCredentialResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{workspace_id}/api-credentials/{api_credential_id}": {
+      "delete": {
+        "operationId": "revokeApiCredential",
+        "summary": "Revoke a Workspace API credential idempotently",
+        "tags": [
+          "Credentials"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/ApiCredentialId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "API credential revoked or already revoked"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/shares/{share_id}": {
+      "get": {
+        "operationId": "getPublicShare",
+        "summary": "Get a published, non-revoked public Share projection",
+        "tags": [
+          "Shares"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ShareId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published public Share",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "description": "Briefly cacheable and revalidated; never immutable",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicShareResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing, expired, and revoked Shares are all reported as not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/capabilities": {
+      "get": {
+        "operationId": "listCapabilities",
+        "summary": "List capabilities available in the selected runtime",
+        "tags": [
+          "Capabilities"
+        ],
+        "responses": {
+          "200": {
+            "description": "Capability registry projection for this runtime",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/libraries": {
+      "get": {
+        "operationId": "listLibraries",
+        "summary": "List libraries visible to the caller",
+        "tags": [
+          "Libraries"
+        ],
+        "responses": {
+          "200": {
+            "description": "Libraries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createLibrary",
+        "summary": "Create a library",
+        "tags": [
+          "Libraries"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLibraryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Library created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/libraries/{library_id}/items": {
+      "post": {
+        "operationId": "addLibraryItem",
+        "summary": "Add an asset to a library",
+        "tags": [
+          "Libraries"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddLibraryItemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Library item accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryItemResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/library-items/{library_item_id}": {
+      "get": {
+        "operationId": "getLibraryItem",
+        "summary": "Get a library item",
+        "tags": [
+          "Libraries"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryItemId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Library item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryItemResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/uploads": {
+      "post": {
+        "operationId": "createUpload",
+        "summary": "Create an isomorphic local or cloud upload session",
+        "tags": [
+          "Assets"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Upload session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/index": {
+      "post": {
+        "operationId": "indexAsset",
+        "summary": "Create an ingestion job for an asset",
+        "tags": [
+          "Assets"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IndexRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Indexing job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/assets/{asset_id}": {
+      "get": {
+        "operationId": "getAsset",
+        "summary": "Get an asset",
+        "tags": [
+          "Assets"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AssetId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Asset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/search": {
+      "post": {
+        "operationId": "searchEvidence",
+        "summary": "Search scoped libraries and assets for evidence",
+        "tags": [
+          "Search"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/jobs": {
+      "post": {
+        "operationId": "createJob",
+        "summary": "Create a capability or workflow job",
+        "tags": [
+          "Jobs"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/jobs/{job_id}": {
+      "get": {
+        "operationId": "getJob",
+        "summary": "Get job state",
+        "tags": [
+          "Jobs"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/jobs/{job_id}/cancel": {
+      "post": {
+        "operationId": "cancelJob",
+        "summary": "Request idempotent cancellation of a job",
+        "tags": [
+          "Jobs"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job cancellation state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/jobs/{job_id}/artifacts": {
+      "get": {
+        "operationId": "listJobArtifacts",
+        "summary": "List artifacts created by a job",
+        "tags": [
+          "Artifacts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job artifacts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "getArtifact",
+        "summary": "Get a structured artifact",
+        "tags": [
+          "Artifacts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ArtifactId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{artifact_id}/reviews": {
+      "post": {
+        "operationId": "createArtifactReview",
+        "summary": "Record an accept, reject, or revision event for an artifact",
+        "tags": [
+          "Artifacts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ArtifactId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReviewEventRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Review event recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewEventResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/responses": {
+      "post": {
+        "operationId": "createResponse",
+        "summary": "Create a constrained Agent response",
+        "tags": [
+          "Agent"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateResponseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed or non-streaming response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseEnvelope"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseEvent"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/agent-sessions/{agent_session_id}": {
+      "get": {
+        "operationId": "getAgentSession",
+        "summary": "Get a constrained Agent session",
+        "tags": [
+          "Agent"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentSessionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAgentSession",
+        "summary": "Delete an Agent session without deleting scoped assets",
+        "tags": [
+          "Agent"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentSessionId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Agent session deleted"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "Error": {
+        "description": "Standard Cerul error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "error"
+        ],
+        "properties": {
+          "request_id": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        }
+      },
+      "ErrorDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid_request",
+              "invalid_credentials",
+              "invalid_grant",
+              "invalid_client",
+              "unauthorized",
+              "forbidden",
+              "permission_denied",
+              "already_exists",
+              "session_expired",
+              "not_found",
+              "conflict",
+              "authorization_pending",
+              "slow_down",
+              "access_denied",
+              "expired_token",
+              "capability_unavailable",
+              "scope_violation",
+              "data_egress_not_authorized",
+              "insufficient_entitlement",
+              "rate_limited",
+              "internal_error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "RequestId": {
+        "type": "string",
+        "pattern": "^req_[A-Za-z0-9]+$"
+      },
+      "AgentSessionId": {
+        "type": "string",
+        "pattern": "^asess_[A-Za-z0-9]+$"
+      },
+      "AgentSessionResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/AgentSession"
+              }
+            }
+          }
+        ]
+      },
+      "AgentSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "runtime",
+          "scope",
+          "execution_policy",
+          "data_egress_allowed",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/AgentSessionId"
+          },
+          "workspace_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/RuntimeKind"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "execution_policy": {
+            "$ref": "#/components/schemas/ExecutionPolicy"
+          },
+          "workflow": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "data_egress_allowed": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WorkflowReference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ExecutionPolicy": {
+        "type": "string",
+        "enum": [
+          "local_only",
+          "prefer_local",
+          "cloud_allowed",
+          "cloud_required"
+        ]
+      },
+      "Scope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "library_ids",
+          "asset_ids"
+        ],
+        "properties": {
+          "library_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/LibraryId"
+            }
+          },
+          "asset_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/AssetId"
+            }
+          }
+        }
+      },
+      "AssetId": {
+        "type": "string",
+        "pattern": "^asset_[A-Za-z0-9]+$"
+      },
+      "LibraryId": {
+        "type": "string",
+        "pattern": "^lib_[A-Za-z0-9]+$"
+      },
+      "RuntimeKind": {
+        "type": "string",
+        "enum": [
+          "local",
+          "cloud",
+          "hybrid"
+        ]
+      },
+      "WorkspaceId": {
+        "type": "string",
+        "pattern": "^ws_[A-Za-z0-9]+$"
+      },
+      "ResponseMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "execution",
+          "usage",
+          "warnings"
+        ],
+        "properties": {
+          "request_id": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "execution": {
+            "$ref": "#/components/schemas/Execution"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Usage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "billable",
+          "quantity",
+          "unit"
+        ],
+        "properties": {
+          "billable": {
+            "type": "boolean"
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 0
+          },
+          "unit": {
+            "type": "string"
+          },
+          "credits": {
+            "type": "number",
+            "minimum": 0,
+            "default": 0
+          }
+        }
+      },
+      "Execution": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "location"
+        ],
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/RuntimeLocation"
+          },
+          "capability_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "capability_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RuntimeLocation": {
+        "type": "string",
+        "enum": [
+          "local",
+          "cloud"
+        ]
+      },
+      "ResponseEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id",
+          "type",
+          "response_id",
+          "sequence",
+          "created_at",
+          "data"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "response.created",
+              "response.output_text.delta",
+              "response.tool.started",
+              "response.tool.completed",
+              "response.artifact.added",
+              "response.completed",
+              "response.failed"
+            ]
+          },
+          "response_id": {
+            "$ref": "#/components/schemas/ResponseId"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ResponseId": {
+        "type": "string",
+        "pattern": "^resp_[A-Za-z0-9]+$"
+      },
+      "ResponseEnvelope": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Response"
+              }
+            }
+          }
+        ]
+      },
+      "Response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "response_id",
+          "agent_session_id",
+          "status",
+          "output",
+          "citations",
+          "artifacts"
+        ],
+        "properties": {
+          "response_id": {
+            "$ref": "#/components/schemas/ResponseId"
+          },
+          "agent_session_id": {
+            "$ref": "#/components/schemas/AgentSessionId"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "in_progress",
+              "completed",
+              "failed",
+              "canceled"
+            ]
+          },
+          "output": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResponseOutputItem"
+            }
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            }
+          }
+        }
+      },
+      "Artifact": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "schema_version",
+          "evidence_ids",
+          "payload",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ArtifactId"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "clip_gallery",
+              "comparison",
+              "timeline",
+              "highlight_reel",
+              "storyboard",
+              "dataset_manifest",
+              "review_queue"
+            ]
+          },
+          "schema_version": {
+            "type": "string"
+          },
+          "job_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/JobId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "response_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResponseId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceId"
+            }
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EvidenceId": {
+        "type": "string",
+        "pattern": "^ev_[A-Za-z0-9]+$"
+      },
+      "JobId": {
+        "type": "string",
+        "pattern": "^job_[A-Za-z0-9]+$"
+      },
+      "ArtifactId": {
+        "type": "string",
+        "pattern": "^artifact_[A-Za-z0-9]+$"
+      },
+      "Evidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "asset_id",
+          "kind",
+          "start_seconds",
+          "end_seconds",
+          "quote",
+          "locators"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EvidenceId"
+          },
+          "asset_id": {
+            "$ref": "#/components/schemas/AssetId"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "transcript",
+              "frame",
+              "video_clip",
+              "segment"
+            ]
+          },
+          "start_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "end_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "quote": {
+            "type": "string"
+          },
+          "locators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceLocator"
+            }
+          }
+        }
+      },
+      "EvidenceLocator": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "url"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "local",
+              "cloud"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "ResponseOutputItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "content"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "message",
+              "tool_summary"
+            ]
+          },
+          "content": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateResponseRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "input",
+          "scope",
+          "execution_policy",
+          "stream"
+        ],
+        "properties": {
+          "input": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/ResponseInputMessage"
+            }
+          },
+          "agent_session_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AgentSessionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "instructions": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workflow": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "format": {
+                "$ref": "#/components/schemas/StructuredTextFormat"
+              }
+            }
+          },
+          "execution_policy": {
+            "$ref": "#/components/schemas/ExecutionPolicy"
+          },
+          "stream": {
+            "type": "boolean"
+          },
+          "include": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "tool_events",
+                "citations"
+              ]
+            }
+          }
+        }
+      },
+      "StructuredTextFormat": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "name",
+          "schema"
+        ],
+        "properties": {
+          "type": {
+            "const": "json_schema"
+          },
+          "name": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ResponseInputMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "role",
+          "content"
+        ],
+        "properties": {
+          "type": {
+            "const": "message"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string"
+          }
+        }
+      },
+      "ReviewEventResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ReviewEvent"
+              }
+            }
+          }
+        ]
+      },
+      "ReviewEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "artifact_id",
+          "action",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "artifact_id": {
+            "$ref": "#/components/schemas/ArtifactId"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "rejected",
+              "revised"
+            ]
+          },
+          "revision": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateReviewEventRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "rejected",
+              "revised"
+            ]
+          },
+          "revision": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ArtifactResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Artifact"
+              }
+            }
+          }
+        ]
+      },
+      "ArtifactListResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "JobResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Job"
+              }
+            }
+          }
+        ]
+      },
+      "Job": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "status",
+          "execution_policy",
+          "scope",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/JobId"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancel_requested",
+              "canceled"
+            ]
+          },
+          "capability_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workflow": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "execution_policy": {
+            "$ref": "#/components/schemas/ExecutionPolicy"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateJobRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scope",
+          "execution_policy",
+          "input"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "capability_id"
+            ]
+          },
+          {
+            "required": [
+              "workflow"
+            ]
+          }
+        ],
+        "properties": {
+          "capability_id": {
+            "type": "string"
+          },
+          "workflow": {
+            "$ref": "#/components/schemas/WorkflowReference"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "execution_policy": {
+            "$ref": "#/components/schemas/ExecutionPolicy"
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "SearchResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SearchResult"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "SearchResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidence",
+          "score"
+        ],
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/Evidence"
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      },
+      "SearchRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "query",
+          "scope",
+          "execution_policy"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "execution_policy": {
+            "$ref": "#/components/schemas/ExecutionPolicy"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        }
+      },
+      "AssetResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Asset"
+              }
+            }
+          }
+        ]
+      },
+      "Asset": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "media_type",
+          "byte_size",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/AssetId"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "source",
+              "derived"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "byte_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "IndexRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "asset_id",
+          "library_id",
+          "execution_policy"
+        ],
+        "properties": {
+          "asset_id": {
+            "$ref": "#/components/schemas/AssetId"
+          },
+          "library_id": {
+            "$ref": "#/components/schemas/LibraryId"
+          },
+          "execution_policy": {
+            "$ref": "#/components/schemas/ExecutionPolicy"
+          }
+        }
+      },
+      "UploadResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/UploadSession"
+              }
+            }
+          }
+        ]
+      },
+      "UploadSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "method",
+          "upload_url",
+          "expires_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "PUT",
+              "POST"
+            ]
+          },
+          "upload_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateUploadRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "filename",
+          "media_type",
+          "byte_size",
+          "execution_policy"
+        ],
+        "properties": {
+          "filename": {
+            "type": "string",
+            "minLength": 1
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "byte_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "execution_policy": {
+            "$ref": "#/components/schemas/ExecutionPolicy"
+          }
+        }
+      },
+      "LibraryItemResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LibraryItem"
+              }
+            }
+          }
+        ]
+      },
+      "LibraryItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "library_id",
+          "asset_id",
+          "status",
+          "enrichment",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/LibraryItemId"
+          },
+          "library_id": {
+            "$ref": "#/components/schemas/LibraryId"
+          },
+          "asset_id": {
+            "$ref": "#/components/schemas/AssetId"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "processing",
+              "ready",
+              "failed"
+            ]
+          },
+          "enrichment": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LibraryItemId": {
+        "type": "string",
+        "pattern": "^li_[A-Za-z0-9]+$"
+      },
+      "AddLibraryItemRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "asset_id"
+        ],
+        "properties": {
+          "asset_id": {
+            "$ref": "#/components/schemas/AssetId"
+          }
+        }
+      },
+      "LibraryResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Library"
+              }
+            }
+          }
+        ]
+      },
+      "Library": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "ingestion_profile",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/LibraryId"
+          },
+          "workspace_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ingestion_profile": {
+            "$ref": "#/components/schemas/IngestionProfile"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "IngestionProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "required_capabilities",
+          "enrichment_schema",
+          "segmentation_policy",
+          "metadata_schema"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "required_capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enrichment_schema": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "segmentation_policy": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "metadata_schema": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "CreateLibraryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "ingestion_profile"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ingestion_profile": {
+            "$ref": "#/components/schemas/IngestionProfile"
+          }
+        }
+      },
+      "LibraryListResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Library"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "CapabilityListResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Capability"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Capability": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capability_id",
+          "version",
+          "runtimes",
+          "read_only",
+          "billable",
+          "data_egress",
+          "requires_confirmation",
+          "required_scopes",
+          "estimated_cost"
+        ],
+        "properties": {
+          "capability_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "runtimes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/RuntimeLocation"
+            }
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "billable": {
+            "type": "boolean"
+          },
+          "data_egress": {
+            "type": "boolean"
+          },
+          "requires_confirmation": {
+            "type": "boolean"
+          },
+          "required_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "estimated_cost": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "limits": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "PublicShareResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PublicShare"
+              }
+            }
+          }
+        ]
+      },
+      "PublicShare": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "headline",
+          "language",
+          "clip_url",
+          "poster_url",
+          "media_expires_at",
+          "created_at",
+          "published_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ShareId"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "headline": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 5000
+          },
+          "source_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300
+          },
+          "shared_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "Public display label, never an identity or Workspace identifier"
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "en",
+              "zh"
+            ]
+          },
+          "clip_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://",
+            "description": "Revocable application-service URL; never a storage key"
+          },
+          "poster_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://",
+            "description": "Revocable application-service URL; never a storage key"
+          },
+          "media_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Expiry for signed media URLs; null only for request-time revocation proxies"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ShareId": {
+        "type": "string",
+        "pattern": "^share_[A-Za-z0-9]+$"
+      },
+      "ApiCredentialId": {
+        "type": "string",
+        "pattern": "^key_[A-Za-z0-9]+$"
+      },
+      "CreatedApiCredentialResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/CreatedApiCredential"
+              }
+            }
+          }
+        ]
+      },
+      "CreatedApiCredential": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "credential",
+          "secret"
+        ],
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/ApiCredential"
+          },
+          "secret": {
+            "type": "string",
+            "minLength": 1,
+            "description": "One-time secret; only a hash is retained"
+          }
+        }
+      },
+      "ApiCredential": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "prefix",
+          "scopes",
+          "created_at",
+          "last_used_at",
+          "expires_at",
+          "revoked_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ApiCredentialId"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prefix": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Non-secret display prefix"
+          },
+          "scopes": {
+            "$ref": "#/components/schemas/OAuthScopeList"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "OAuthScopeList": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "CreateApiCredentialRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "scopes"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "scopes": {
+            "$ref": "#/components/schemas/OAuthScopeList"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ApiCredentialListResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ApiCredential"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "WorkspaceEntitlementResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/WorkspaceEntitlement"
+              }
+            }
+          }
+        ]
+      },
+      "WorkspaceEntitlement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspace_id",
+          "plan_id",
+          "status",
+          "capabilities",
+          "limits",
+          "reservations"
+        ],
+        "properties": {
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "plan_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "past_due",
+              "suspended",
+              "canceled"
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntitledCapability"
+            }
+          },
+          "limits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntitlementLimit"
+            }
+          },
+          "reservations": {
+            "$ref": "#/components/schemas/CreditReservationSummary"
+          }
+        }
+      },
+      "CreditReservationSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "active_count",
+          "credits_reserved"
+        ],
+        "properties": {
+          "active_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "credits_reserved": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "EntitlementLimit": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "limit_id",
+          "value",
+          "unit"
+        ],
+        "properties": {
+          "limit_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": "number",
+            "minimum": 0
+          },
+          "unit": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "EntitledCapability": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capability_id",
+          "allowed",
+          "effective_from"
+        ],
+        "properties": {
+          "capability_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "allowed": {
+            "type": "boolean"
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "effective_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "PrincipalResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Principal"
+              }
+            }
+          }
+        ]
+      },
+      "Principal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "user_id",
+          "workspace_id",
+          "role",
+          "scopes",
+          "credential_kind"
+        ],
+        "properties": {
+          "user_id": {
+            "$ref": "#/components/schemas/UserId"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "viewer"
+            ]
+          },
+          "scopes": {
+            "$ref": "#/components/schemas/OAuthScopeList"
+          },
+          "credential_kind": {
+            "type": "string",
+            "enum": [
+              "web_cookie",
+              "desktop_oauth",
+              "cli_device",
+              "api_key"
+            ]
+          }
+        }
+      },
+      "UserId": {
+        "type": "string",
+        "pattern": "^usr_[A-Za-z0-9]+$"
+      },
+      "UsageReportResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/UsageReport"
+              }
+            }
+          }
+        ]
+      },
+      "UsageReport": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspace_id",
+          "credits_available",
+          "period_start",
+          "period_end",
+          "meters"
+        ],
+        "properties": {
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "credits_available": {
+            "type": "number",
+            "minimum": 0
+          },
+          "period_start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Exclusive report end"
+          },
+          "meters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageMeterTotal"
+            }
+          }
+        }
+      },
+      "UsageMeterTotal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "meter_id",
+          "quantity",
+          "unit",
+          "credits"
+        ],
+        "properties": {
+          "meter_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 0
+          },
+          "unit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "credits": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "WorkspaceListResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Workspace": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OAuthTokenResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "access_token",
+          "refresh_token",
+          "token_type",
+          "expires_in",
+          "scope"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "refresh_token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "token_type": {
+            "type": "string",
+            "const": "Bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scope": {
+            "$ref": "#/components/schemas/OAuthScopeList"
+          }
+        }
+      },
+      "OAuthTokenRequest": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AuthorizationCodeTokenRequest"
+          },
+          {
+            "$ref": "#/components/schemas/DeviceCodeTokenRequest"
+          },
+          {
+            "$ref": "#/components/schemas/RefreshTokenRequest"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "grant_type",
+          "mapping": {
+            "authorization_code": "#/components/schemas/AuthorizationCodeTokenRequest",
+            "urn:ietf:params:oauth:grant-type:device_code": "#/components/schemas/DeviceCodeTokenRequest",
+            "refresh_token": "#/components/schemas/RefreshTokenRequest"
+          }
+        }
+      },
+      "RefreshTokenRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "grant_type",
+          "refresh_token",
+          "client_id"
+        ],
+        "properties": {
+          "grant_type": {
+            "type": "string",
+            "const": "refresh_token"
+          },
+          "refresh_token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "DeviceCodeTokenRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "grant_type",
+          "device_code",
+          "client_id"
+        ],
+        "properties": {
+          "grant_type": {
+            "type": "string",
+            "const": "urn:ietf:params:oauth:grant-type:device_code"
+          },
+          "device_code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "AuthorizationCodeTokenRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "grant_type",
+          "code",
+          "client_id",
+          "redirect_uri",
+          "code_verifier"
+        ],
+        "properties": {
+          "grant_type": {
+            "type": "string",
+            "const": "authorization_code"
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "redirect_uri": {
+            "type": "string",
+            "format": "uri"
+          },
+          "code_verifier": {
+            "type": "string",
+            "minLength": 43,
+            "maxLength": 128
+          }
+        }
+      },
+      "DeviceAuthorizationResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "device_code",
+          "user_code",
+          "verification_uri",
+          "verification_uri_complete",
+          "expires_in",
+          "interval"
+        ],
+        "properties": {
+          "device_code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "user_code": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 32
+          },
+          "verification_uri": {
+            "type": "string",
+            "format": "uri"
+          },
+          "verification_uri_complete": {
+            "type": "string",
+            "format": "uri"
+          },
+          "expires_in": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "interval": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "DeviceAuthorizationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "client_id",
+          "scope"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "$ref": "#/components/schemas/OAuthScopeList"
+          }
+        }
+      }
+    },
+    "parameters": {
+      "AgentSessionId": {
+        "name": "agent_session_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/AgentSessionId"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 200
+        }
+      },
+      "ArtifactId": {
+        "name": "artifact_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/ArtifactId"
+        }
+      },
+      "JobId": {
+        "name": "job_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/JobId"
+        }
+      },
+      "AssetId": {
+        "name": "asset_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/AssetId"
+        }
+      },
+      "LibraryItemId": {
+        "name": "library_item_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/LibraryItemId"
+        }
+      },
+      "LibraryId": {
+        "name": "library_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/LibraryId"
+        }
+      },
+      "ShareId": {
+        "name": "share_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/ShareId"
+        }
+      },
+      "ApiCredentialId": {
+        "name": "api_credential_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/ApiCredentialId"
+        }
+      },
+      "WorkspaceId": {
+        "name": "workspace_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/WorkspaceId"
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Cerul access or installation token"
+      },
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Cerul-API-Key"
+      }
+    }
+  }
+}

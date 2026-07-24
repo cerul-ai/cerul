@@ -21,8 +21,6 @@ tmp/
 .turbo/
 artifacts/
 *.log
-ARCHITECTURE.md
-PIPELINE_PATTERN.md
 scripts/.seed_broll_state.json
 eval/.video_cache/
 eval/*_log.txt
@@ -36,3 +34,7 @@ api/.dev.vars
 
 # Claude Code local config
 .claude/
+
+# Multi-language package outputs
+target/
+*.egg-info/

@@ -1,0 +1,22 @@
+{
+  "schema_version": "1",
+  "channel": "staging",
+  "packages": {
+    "javascript": {
+      "name": "cerul",
+      "registry": "https://www.npmjs.com/package/cerul"
+    },
+    "python": {
+      "name": "cerul",
+      "registry": "https://pypi.org/project/cerul/"
+    },
+    "cli": {
+      "name": "cerul",
+      "source": "https://github.com/cerul-ai/cerul/tree/main/apps/cli"
+    }
+  },
+  "desktop": {
+    "status": "not_published_from_this_migration",
+    "releases": []
+  }
+}

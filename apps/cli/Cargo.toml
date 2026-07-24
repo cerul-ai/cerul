@@ -1,0 +1,24 @@
+[package]
+name = "cerul"
+version = "0.0.23"
+edition = "2021"
+description = "Official Cerul CLI for the unified local and cloud API"
+license = "MIT"
+repository = "https://github.com/cerul-ai/cerul"
+homepage = "https://cerul.ai"
+readme = "README.md"
+keywords = ["cerul", "video-search", "cli", "ai-agent"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
+opt-level = "z"

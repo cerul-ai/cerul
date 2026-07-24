@@ -1,0 +1,39 @@
+{
+  "source": "cerul-platform/contracts/openapi.yaml",
+  "source_sha256": "ab9c43b3cc135ecb84831728c6deaf71d25b1406b9dba6c74269e156464d6eda",
+  "public_openapi_sha256": "ad74af1e38df91c1ddaca7c695733207a885f78f5a3a5c65a1acbc1af7dc05ec",
+  "operation_ids": [
+    "addLibraryItem",
+    "cancelJob",
+    "createApiCredential",
+    "createArtifactReview",
+    "createDeviceAuthorization",
+    "createJob",
+    "createLibrary",
+    "createResponse",
+    "createUpload",
+    "deleteAgentSession",
+    "exchangeOAuthToken",
+    "getAgentSession",
+    "getArtifact",
+    "getAsset",
+    "getJob",
+    "getLibraryItem",
+    "getPrincipal",
+    "getPublicShare",
+    "getUsageReport",
+    "getWorkspaceEntitlement",
+    "indexAsset",
+    "listApiCredentials",
+    "listCapabilities",
+    "listJobArtifacts",
+    "listLibraries",
+    "listWorkspaces",
+    "revokeApiCredential",
+    "searchEvidence"
+  ],
+  "fixtures": {
+    "artifact-response.json": "bb0630f1086ae980ba3c861049660da8d49cddbc49f3550d99769723a4d83f97",
+    "response-envelope.json": "c37937dcb876365bfe7252175f405c10b18d7456ba3e454eadc017490041a2f8"
+  }
+}

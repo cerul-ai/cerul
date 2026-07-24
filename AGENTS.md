@@ -1,246 +1,45 @@
-# Repository Guidelines
+# Repository guidelines
 
-## Communication & Language
-When collaborating in issues, reviews, or direct agent/user conversations, reply to the repository owner in Chinese by default.
+Communicate with the repository owner in Chinese by default. Public docs,
+code, identifiers, comments, commit messages, and API fields are English.
 
-Unless explicitly requested otherwise:
+This repository is the public Cerul developer surface. Allowed content is
+limited to sanitized generated OpenAPI, generated SDKs, CLI, MCP and agent
+integrations, examples, public documentation, and release metadata.
 
-- code should be written in English
-- public-facing docs should be written in English
-- `README.md` content should be written in English
-- identifiers, comments, commit messages, and API field names should be written in English
+Do not add product Web, Desktop, API, Worker, storage, queue, model, prompt,
+workflow, ranking, evaluation, billing-provider, or operational admin
+implementation. Do not commit secrets, data, indexes, internal plans, or
+production exports.
 
-If a document is clearly internal-only and not intended for the public repository, Chinese is acceptable when that is more practical.
+`openapi.json`, `packages/js/src/generated/schema.ts`, and
+`packages/python/cerul/generated_contract.py` are generated from the private
+platform contract. Do not hand-edit them. Contract changes must begin in the
+private platform repository and pass the public-surface generator.
 
-## Project Principles
-Cerul is an open-core project. The codebase is public; the core moat is not.
+Use the existing boundaries:
 
-Treat these as baseline project rules:
+- `packages/js`
+- `packages/python`
+- `apps/cli`
+- `integrations/mcp`
+- `integrations/claude-code`
+- `examples`
+- `docs`
 
-1. Data, indexes, prompts, internal evaluation assets, and model weights are not part of the public repository.
-2. Public code should stay reusable and infrastructure-oriented.
-3. Avoid adding stack changes unless there is a clear project-level decision to do so.
-4. Prefer simple, maintainable building blocks over framework churn.
-5. Keep the API layer thin and push heavy processing into workers.
+MCP maps advertised capabilities and creates normal Cerul Jobs. It must not
+implement a planner or invent business objects. All clients must support local
+and cloud through the same contract and a configurable base URL.
 
-## Product & Architecture Guardrails
-Cerul exposes one unified product surface and routes internally by source and processing strategy.
-
-This repository is the `cerul` web app after the backend split. Private backend code now lives in sibling repositories:
-
-- `cerul-api` for the Hono / Cloudflare Workers API and database migrations
-- `cerul-worker` for indexing, evaluation, and media-heavy processing
-
-Default architectural assumptions:
-
-- frontend: Next.js
-- api: Hono on Cloudflare Workers
-- database: Neon PostgreSQL with pgvector
-- auth: Better Auth
-- heavy indexing and media processing: Python workers
-- first agent integration path: installable skill over direct HTTP API
-
-Do not introduce a second primary backend stack, ORM stack, or deployment platform without an explicit decision. In particular, do not casually pivot the project toward TanStack Start, Cloudflare D1, or Drizzle as the default foundation.
-
-For agent integrations, keep the first phase simple:
-
-- ship a documented HTTP API
-- ship a skill that uses API keys
-- do not add an MCP adapter unless there is clear external demand
-
-Keep these boundaries intact:
-
-- `cerul-api` handles request orchestration, auth, usage, and API responses
-- `cerul-worker` handles indexing and other media-heavy processing
-- shared worker runtime helpers live in `cerul-worker/workers/common/`
-- frontend pages should not become the primary business logic layer
-
-Worker-side indexing should continue to follow a shared step-pipeline approach:
-
-- keep indexing flows step-based and composable
-- prefer shared context over ad hoc cross-step state passing
-- keep idempotency in mind for every pipeline step
-- avoid embedding heavy media logic directly inside API handlers
-
-## Open Source Boundary
-Assume everything inside this repository may become public.
-
-Do not commit:
-
-- internal strategy memos
-- fundraising materials
-- internal prompts
-- internal benchmark sets
-- production data exports
-- proprietary ranking parameters
-- secrets, local dumps, or ad hoc research files
-
-If material is useful internally but not suitable for the repository, keep it under the local private workspace rather than adding it here.
-
-## Project Structure & Module Organization
-This repository is the public-safe server-side Next.js app. Put the web app in `frontend/` (`app/`, `components/`, `lib/`), keep public-safe docs in `docs/`, installable agent skills in `skills/`, the public API contract copy in `openapi.yaml`, and frontend-side automation in `scripts/`. Do not reintroduce `api/`, `workers/`, `db/`, or `config/` as top-level product directories here; those belong in the private sibling repositories.
-
-Do not create a top-level `sdk/` just to wrap Cerul's own backend calls. An SDK only belongs in the repo once there is a real public client package to ship and version independently. Until then, frontend code should call backend APIs directly, and agent integrations should prefer a documented skill plus direct HTTP access. Treat MCP the same way: it is a future adapter, not a required first-class module in the initial repository layout.
-
-## Build, Test, and Development Commands
-This repository is still scaffold-first: no root `package.json`, `pyproject.toml`, or `Makefile` is committed yet. Today, the main setup command is:
+Verify changes with:
 
 ```sh
-cp .env.example .env
+corepack pnpm install --frozen-lockfile
+corepack pnpm check
+python3 -m unittest discover -s packages/python/tests
+cargo test --manifest-path apps/cli/Cargo.toml --locked
 ```
 
-Use it to seed local secrets, runtime profile selection, and any optional env overrides before running new app code. Frontend browser code must consume a derived public config subset rather than reading raw repo config files directly. When you add runnable modules, expose explicit commands close to that module and document them in both `README.md` and this file.
-
-Current frontend commands:
-
-```sh
-pnpm --dir frontend install
-pnpm --dir frontend dev
-pnpm --dir frontend lint
-pnpm --dir frontend test
-pnpm --dir frontend build
-```
-
-Repository-level reset:
-
-```sh
-./rebuild.sh
-./rebuild.sh --fast
-```
-
-## Coding Style & Naming Conventions
-Match the target stack. In this repository, prefer `PascalCase` for React components with `camelCase` helpers and 2-space indentation in TypeScript, JSON, and YAML. Keep files narrowly scoped so app-only utilities stay inside the owning app. If work spans the private companion repositories, follow their local conventions there instead of reintroducing backend structure into this repo.
-
-Additional Cerul-specific expectations:
-
-- keep architecture and internal planning docs out of version control unless explicitly meant to be public
-- prefer English schema names, table names, env vars, and API payloads
-- avoid placeholder-heavy code; create real module boundaries only when they are about to be used
-- default to ASCII unless an existing file already uses non-ASCII text for a clear reason
-
-## Testing Guidelines
-No repo-wide test runner is defined yet, so add tests with each new module. Name web tests `*.test.ts` or `*.test.tsx`. Cover happy paths and one failure case for new routes, auth helpers, and shared frontend utilities. If a PR ships without tests, explain the gap clearly.
-
-For this repository specifically, prioritize tests around:
-
-- Better Auth server paths
-- dashboard/admin proxy behavior
-- public docs and API-reference rendering
-- frontend API client error handling
-
-## Branch, Commit, PR, and Issue Workflow
-
-### Branches
-Use `main` as the only long-lived integration branch.
-
-Branch rules:
-
-- start new work from the latest `main`
-- keep branches short-lived
-- delete merged branches
-- do not commit directly to `main`
-
-For agent-created branches, use the `codex/` prefix.
-
-Recommended branch patterns:
-
-- `codex/feature-search-api`
-- `codex/fix-api-key-auth`
-- `codex/docs-readme-refresh`
-- `codex/chore-repo-bootstrap`
-- `codex/refactor-job-ledger`
-
-Keep branch names:
-
-- lowercase
-- English
-- hyphenated
-- scoped to one clear objective
-
-### Commits
-Commit messages should be short, imperative, and in English.
-
-Good patterns:
-
-- `Add initial API route`
-- `Fix API key hash lookup`
-- `Document public repo scope`
-- `Refactor pipeline context handling`
-- `Scaffold worker module structure`
-
-Commit rules:
-
-- one logical concern per commit
-- avoid mixed commits that combine docs, refactors, and features unless tightly related
-- do not use vague subjects such as `update`, `misc`, or `wip`
-- prefer clean history over high commit volume
-
-### Pull Requests
-Every merge to `main` should go through a PR. Always create PRs as **ready for review** (not draft) unless the user explicitly asks for a draft. This is important because our CI triggers automated Codex reviews on non-draft PRs.
-
-PR title rules:
-
-- write titles in English
-- use concise, outcome-focused wording
-- match the main change, not the implementation detail
-
-Recommended PR title patterns:
-
-- `Add API key management skeleton`
-- `Implement unified indexing flow`
-- `Rewrite README for public repo`
-- `Scaffold public repo structure`
-
-PR body should include:
-
-- summary of the change
-- affected directories
-- new env vars or configuration changes
-- testing status
-- screenshots for UI changes
-- request/response examples for API changes
-
-PR process rules:
-
-- keep PRs focused and reviewable
-- separate public repo cleanup from product logic when possible
-- if architecture changes, explain the decision and tradeoffs explicitly
-- if tests are missing, say why
-
-Preferred merge rule:
-
-- prefer squash merge for routine work to keep `main` readable
-- keep multiple commits only when the sequence itself is meaningful
-
-### Issues
-Use issues for work that should be tracked publicly or discussed before implementation.
-
-Open an issue when:
-
-- adding a feature
-- fixing a user-visible bug
-- changing architecture or infrastructure direction
-- introducing a new dependency or platform decision
-- documenting a non-trivial follow-up task
-
-An issue is not required for every tiny cleanup.
-
-Recommended issue title patterns:
-
-- `[Feature] Add unified search API`
-- `[Bug] Usage endpoint returns wrong remaining credits`
-- `[Docs] Clarify open-source scope`
-- `[Infra] Add Neon migration workflow`
-- `[Decision] Define indexing queue strategy`
-
-Issue rules:
-
-- titles should be in English
-- keep titles short and searchable
-- describe the expected outcome, not just the symptom
-- include acceptance criteria when the task is implementation-driven
-
-## Security & Configuration Tips
-Never commit `.env`, provider credentials, or generated artifacts. Use `.env.example` as the source of truth for required private variables such as `DATABASE_URL`, `BETTER_AUTH_SECRET`, and OAuth credentials. Treat `publicConfig` as a code-level whitelist derived from those sources, not as a third configuration store.
-
-If a change affects public docs or repository metadata, ensure the result still matches the intended open-source boundary of the project.
+Use `main` as the only long-lived branch and `codex/` for agent branches.
+Public merges go through a ready-for-review PR unless the user explicitly asks
+for a draft.
