@@ -1,5 +1,5 @@
 {
-  "request_id": "req_fixture_artifact",
+  "request_id": "req_fixtureartifact",
   "execution": {
     "location": "local",
     "capability_id": "media.storyboard",
@@ -18,12 +18,12 @@
     "schema_version": "1",
     "job_id": "job_fixture1",
     "response_id": "resp_fixture1",
-    "evidence_ids": ["evidence_fixture1"],
+    "evidence_ids": ["ev_fixture1"],
     "payload": {
       "title": "A contract fixture",
       "items": [
         {
-          "evidence_id": "evidence_fixture1",
+          "evidence_id": "ev_fixture1",
           "caption": "A stable renderable item"
         }
       ]

@@ -225,3 +225,25 @@ fn generated_idempotency_key() -> String {
         .as_nanos();
     format!("cli-{}-{nanos}", std::process::id())
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    #[test]
+    fn cli_parses_canonical_response_and_artifact_fixtures() {
+        let artifact: Value = serde_json::from_str(include_str!(
+            "../../../examples/fixtures/artifact-response.json"
+        ))
+        .expect("artifact fixture must be valid JSON");
+        let response: Value = serde_json::from_str(include_str!(
+            "../../../examples/fixtures/response-envelope.json"
+        ))
+        .expect("response fixture must be valid JSON");
+
+        assert_eq!(artifact["data"]["id"], "artifact_fixture1");
+        assert_eq!(artifact["execution"]["location"], "local");
+        assert_eq!(response["data"]["status"], "completed");
+        assert_eq!(response["data"]["citations"][0]["id"], "ev_fixture1");
+    }
+}

@@ -1100,6 +1100,7 @@
         "pattern": "^asess_[A-Za-z0-9]+$"
       },
       "AgentSessionResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -1246,7 +1247,6 @@
       },
       "ResponseMetadata": {
         "type": "object",
-        "additionalProperties": false,
         "required": [
           "request_id",
           "execution",
@@ -1377,6 +1377,7 @@
         "pattern": "^resp_[A-Za-z0-9]+$"
       },
       "ResponseEnvelope": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -1727,6 +1728,7 @@
         }
       },
       "ReviewEventResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -1800,6 +1802,7 @@
         }
       },
       "ArtifactResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -1818,6 +1821,7 @@
         ]
       },
       "ArtifactListResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -1839,6 +1843,7 @@
         ]
       },
       "JobResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -1954,6 +1959,7 @@
         }
       },
       "SearchResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2020,6 +2026,7 @@
         }
       },
       "AssetResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2103,6 +2110,7 @@
         }
       },
       "UploadResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2177,6 +2185,7 @@
         }
       },
       "LibraryItemResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2256,6 +2265,7 @@
         }
       },
       "LibraryResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2370,6 +2380,7 @@
         }
       },
       "LibraryListResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2391,6 +2402,7 @@
         ]
       },
       "CapabilityListResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2468,6 +2480,7 @@
         }
       },
       "PublicShareResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2581,6 +2594,7 @@
         "pattern": "^key_[A-Za-z0-9]+$"
       },
       "CreatedApiCredentialResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2710,6 +2724,7 @@
         }
       },
       "ApiCredentialListResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2731,6 +2746,7 @@
         ]
       },
       "WorkspaceEntitlementResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2864,6 +2880,7 @@
         }
       },
       "PrincipalResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -2926,6 +2943,7 @@
         "pattern": "^usr_[A-Za-z0-9]+$"
       },
       "UsageReportResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"
@@ -3007,6 +3025,7 @@
         }
       },
       "WorkspaceListResponse": {
+        "unevaluatedProperties": false,
         "allOf": [
           {
             "$ref": "#/components/schemas/ResponseMetadata"

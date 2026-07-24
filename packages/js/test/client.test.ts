@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { createCerulClient, normalizeBaseUrl } from "../src/index.js";
 
 test("one generated client accepts cloud and local /v1 base URLs", () => {
@@ -37,4 +39,25 @@ test("generated search operation uses the normalized path and token", async () =
   assert.equal(result.error, undefined);
   assert.equal(captured?.url, "http://127.0.0.1:23785/v1/search");
   assert.equal(captured?.headers.get("authorization"), "Bearer installation_test");
+});
+
+test("generated client consumers can parse the canonical Response and Artifact fixtures", async () => {
+  const fixtureUrl = new URL("../../../examples/fixtures/", import.meta.url);
+  const artifact = JSON.parse(
+    await readFile(
+      fileURLToPath(new URL("artifact-response.json", fixtureUrl)),
+      "utf8",
+    ),
+  );
+  const response = JSON.parse(
+    await readFile(
+      fileURLToPath(new URL("response-envelope.json", fixtureUrl)),
+      "utf8",
+    ),
+  );
+
+  assert.equal(artifact.data.id, "artifact_fixture1");
+  assert.equal(artifact.execution.location, "local");
+  assert.equal(response.data.status, "completed");
+  assert.equal(response.data.citations[0].id, "ev_fixture1");
 });

@@ -1,7 +1,7 @@
 """Generated from the private Cerul OpenAPI. Do not edit."""
 
-CONTRACT_SHA256 = "ad74af1e38df91c1ddaca7c695733207a885f78f5a3a5c65a1acbc1af7dc05ec"
-SOURCE_SHA256 = "ab9c43b3cc135ecb84831728c6deaf71d25b1406b9dba6c74269e156464d6eda"
+CONTRACT_SHA256 = "b3fca22458a20b7b37107ac1ff473ad0600ef586db609518fa8518da2100d32a"
+SOURCE_SHA256 = "62d9256445051b45d3f0039cefa0fa59de20c64050e97596b674da56da232df2"
 PUBLIC_OPERATIONS = {
     "createDeviceAuthorization": {
         "method": "POST",

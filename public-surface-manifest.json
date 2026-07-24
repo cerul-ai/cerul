@@ -1,7 +1,7 @@
 {
   "source": "cerul-platform/contracts/openapi.yaml",
-  "source_sha256": "ab9c43b3cc135ecb84831728c6deaf71d25b1406b9dba6c74269e156464d6eda",
-  "public_openapi_sha256": "ad74af1e38df91c1ddaca7c695733207a885f78f5a3a5c65a1acbc1af7dc05ec",
+  "source_sha256": "62d9256445051b45d3f0039cefa0fa59de20c64050e97596b674da56da232df2",
+  "public_openapi_sha256": "b3fca22458a20b7b37107ac1ff473ad0600ef586db609518fa8518da2100d32a",
   "operation_ids": [
     "addLibraryItem",
     "cancelJob",
@@ -33,7 +33,7 @@
     "searchEvidence"
   ],
   "fixtures": {
-    "artifact-response.json": "bb0630f1086ae980ba3c861049660da8d49cddbc49f3550d99769723a4d83f97",
-    "response-envelope.json": "c37937dcb876365bfe7252175f405c10b18d7456ba3e454eadc017490041a2f8"
+    "artifact-response.json": "2211d3fa2b37eb9346cbebd3d7f783785f85d143645ca322c04a884ffff8e06a",
+    "response-envelope.json": "df5d79bd6af779d26f29f8ba05a00ff02e543e1936af2c2659153e9ac1582327"
   }
 }
