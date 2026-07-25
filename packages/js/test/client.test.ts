@@ -41,7 +41,7 @@ test("generated search operation uses the normalized path and token", async () =
   assert.equal(captured?.headers.get("authorization"), "Bearer installation_test");
 });
 
-test("generated client consumers can parse the canonical Response and Artifact fixtures", async () => {
+test("generated client consumers can parse the canonical contract fixtures", async () => {
   const fixtureUrl = new URL("../../../examples/fixtures/", import.meta.url);
   const artifact = JSON.parse(
     await readFile(
@@ -55,9 +55,17 @@ test("generated client consumers can parse the canonical Response and Artifact f
       "utf8",
     ),
   );
+  const upload = JSON.parse(
+    await readFile(
+      fileURLToPath(new URL("upload-response.json", fixtureUrl)),
+      "utf8",
+    ),
+  );
 
   assert.equal(artifact.data.id, "artifact_fixture1");
   assert.equal(artifact.execution.location, "local");
   assert.equal(response.data.status, "completed");
   assert.equal(response.data.citations[0].id, "ev_fixture1");
+  assert.equal(upload.data.asset_id, "asset_fixture1");
+  assert.notEqual(upload.data.id, upload.data.asset_id);
 });

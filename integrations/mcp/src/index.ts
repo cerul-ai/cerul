@@ -87,6 +87,7 @@ export function createMcpBridge(client: CerulClient) {
         params: { header: { "Idempotency-Key": idempotencyKey } },
         body: {
           capability_id: capability.capability_id,
+          capability_version: capability.version,
           scope: argumentsValue.scope as {
             library_ids: string[];
             asset_ids: string[];

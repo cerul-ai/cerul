@@ -1,0 +1,20 @@
+{
+  "request_id": "req_fixtureupload",
+  "execution": {
+    "location": "cloud"
+  },
+  "usage": {
+    "billable": false,
+    "quantity": 0,
+    "unit": "request",
+    "credits": 0
+  },
+  "warnings": [],
+  "data": {
+    "id": "upload_fixture1",
+    "asset_id": "asset_fixture1",
+    "method": "PUT",
+    "upload_url": "https://api.cerul.ai/v1/uploads/upload_fixture1/content?expires=1785052800&sig=fixture",
+    "expires_at": "2026-07-26T01:00:00Z"
+  }
+}

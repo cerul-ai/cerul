@@ -141,23 +141,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/shares/{share_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get a published, non-revoked public Share projection */
-        get: operations["getPublicShare"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/capabilities": {
         parameters: {
             query?: never;
@@ -270,6 +253,57 @@ export interface paths {
         };
         /** Get an asset */
         get: operations["getAsset"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/evidence/{evidence_id}/frame": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the representative frame for local Evidence */
+        get: operations["getEvidenceFrame"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/evidence/{evidence_id}/video-segment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream the source segment for local Evidence */
+        get: operations["getEvidenceVideoSegment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/evidence/{evidence_id}/video-clip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Render or read a bounded clip around local Evidence */
+        get: operations["getEvidenceVideoClip"];
         put?: never;
         post?: never;
         delete?: never;
@@ -506,7 +540,7 @@ export interface components {
         ResponseEvent: {
             event_id: string;
             /** @enum {string} */
-            type: "response.created" | "response.output_text.delta" | "response.tool.started" | "response.tool.completed" | "response.artifact.added" | "response.completed" | "response.failed";
+            type: "response.created" | "response.output_text.delta" | "response.tool.started" | "response.tool.completed" | "response.artifact.added" | "response.completed" | "response.canceled" | "response.failed";
             response_id: components["schemas"]["ResponseId"];
             sequence: number;
             /** Format: date-time */
@@ -629,6 +663,7 @@ export interface components {
             /** @enum {string} */
             status: "queued" | "running" | "succeeded" | "failed" | "cancel_requested" | "canceled";
             capability_id?: string | null;
+            capability_version?: string | null;
             workflow?: components["schemas"]["WorkflowReference"] | null;
             execution_policy: components["schemas"]["ExecutionPolicy"];
             scope: components["schemas"]["Scope"];
@@ -639,6 +674,8 @@ export interface components {
         };
         CreateJobRequest: {
             capability_id?: string;
+            /** @default 1 */
+            capability_version: string;
             workflow?: components["schemas"]["WorkflowReference"];
             scope: components["schemas"]["Scope"];
             execution_policy: components["schemas"]["ExecutionPolicy"];
@@ -684,6 +721,7 @@ export interface components {
         };
         UploadSession: {
             id: string;
+            asset_id: components["schemas"]["AssetId"];
             /** @enum {string} */
             method: "PUT" | "POST";
             /** Format: uri */
@@ -771,40 +809,6 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        PublicShareResponse: components["schemas"]["ResponseMetadata"] & {
-            data: components["schemas"]["PublicShare"];
-        };
-        PublicShare: {
-            id: components["schemas"]["ShareId"];
-            title: string;
-            headline: string;
-            summary?: string | null;
-            source_label?: string | null;
-            /** @description Public display label, never an identity or Workspace identifier */
-            shared_by?: string | null;
-            /** @enum {string} */
-            language: "en" | "zh";
-            /**
-             * Format: uri
-             * @description Revocable application-service URL; never a storage key
-             */
-            clip_url: string;
-            /**
-             * Format: uri
-             * @description Revocable application-service URL; never a storage key
-             */
-            poster_url: string;
-            /**
-             * Format: date-time
-             * @description Expiry for signed media URLs; null only for request-time revocation proxies
-             */
-            media_expires_at: string | null;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            published_at: string;
-        };
-        ShareId: string;
         ApiCredentialId: string;
         CreatedApiCredentialResponse: components["schemas"]["ResponseMetadata"] & {
             data: components["schemas"]["CreatedApiCredential"];
@@ -982,10 +986,10 @@ export interface components {
         IdempotencyKey: string;
         ArtifactId: components["schemas"]["ArtifactId"];
         JobId: components["schemas"]["JobId"];
+        EvidenceId: components["schemas"]["EvidenceId"];
         AssetId: components["schemas"]["AssetId"];
         LibraryItemId: components["schemas"]["LibraryItemId"];
         LibraryId: components["schemas"]["LibraryId"];
-        ShareId: components["schemas"]["ShareId"];
         ApiCredentialId: components["schemas"]["ApiCredentialId"];
         WorkspaceId: components["schemas"]["WorkspaceId"];
     };
@@ -1211,40 +1215,6 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    getPublicShare: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                share_id: components["parameters"]["ShareId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Published public Share */
-            200: {
-                headers: {
-                    /** @description Briefly cacheable and revalidated; never immutable */
-                    "Cache-Control": string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PublicShareResponse"];
-                };
-            };
-            /** @description Missing, expired, and revoked Shares are all reported as not_found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
     listCapabilities: {
         parameters: {
             query?: never;
@@ -1443,6 +1413,98 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getEvidenceFrame: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                evidence_id: components["parameters"]["EvidenceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evidence frame bytes */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                    "image/png": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getEvidenceVideoSegment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                evidence_id: components["parameters"]["EvidenceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evidence video segment with HTTP range support */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                };
+            };
+            /** @description Partial Evidence video segment */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getEvidenceVideoClip: {
+        parameters: {
+            query?: {
+                before_seconds?: number;
+                after_seconds?: number;
+            };
+            header?: never;
+            path: {
+                evidence_id: components["parameters"]["EvidenceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded Evidence clip */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                };
+            };
+            /** @description Partial bounded Evidence clip */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     searchEvidence: {
         parameters: {
             query?: never;
@@ -1623,6 +1685,8 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+                /** @description Resume a previously created streaming Response after this event */
+                "Last-Event-ID"?: string;
             };
             path?: never;
             cookie?: never;

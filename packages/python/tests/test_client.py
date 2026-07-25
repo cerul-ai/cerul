@@ -47,15 +47,18 @@ class CerulClientTest(unittest.TestCase):
         self.assertEqual(PUBLIC_OPERATIONS["createResponse"]["path"], "/v1/responses")
         self.assertEqual(PUBLIC_OPERATIONS["getArtifact"]["path"], "/v1/artifacts/{artifact_id}")
 
-    def test_canonical_response_and_artifact_fixtures_are_parseable(self) -> None:
+    def test_canonical_contract_fixtures_are_parseable(self) -> None:
         fixture_dir = Path(__file__).resolve().parents[3] / "examples" / "fixtures"
         artifact = json.loads((fixture_dir / "artifact-response.json").read_text())
         response = json.loads((fixture_dir / "response-envelope.json").read_text())
+        upload = json.loads((fixture_dir / "upload-response.json").read_text())
 
         self.assertEqual(artifact["data"]["id"], "artifact_fixture1")
         self.assertEqual(artifact["execution"]["location"], "local")
         self.assertEqual(response["data"]["status"], "completed")
         self.assertEqual(response["data"]["citations"][0]["id"], "ev_fixture1")
+        self.assertEqual(upload["data"]["asset_id"], "asset_fixture1")
+        self.assertNotEqual(upload["data"]["id"], upload["data"]["asset_id"])
 
 
 if __name__ == "__main__":

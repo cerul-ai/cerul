@@ -205,6 +205,7 @@ async fn run(cli: Cli) -> Result<()> {
                     "/v1/jobs",
                     json!({
                         "capability_id": "export.timeline",
+                        "capability_version": "1",
                         "scope": scope.scope(),
                         "execution_policy": scope.execution_policy.as_contract_value(),
                         "input": input,
@@ -231,7 +232,7 @@ mod tests {
     use serde_json::Value;
 
     #[test]
-    fn cli_parses_canonical_response_and_artifact_fixtures() {
+    fn cli_parses_canonical_contract_fixtures() {
         let artifact: Value = serde_json::from_str(include_str!(
             "../../../examples/fixtures/artifact-response.json"
         ))
@@ -240,10 +241,16 @@ mod tests {
             "../../../examples/fixtures/response-envelope.json"
         ))
         .expect("response fixture must be valid JSON");
+        let upload: Value = serde_json::from_str(include_str!(
+            "../../../examples/fixtures/upload-response.json"
+        ))
+        .expect("upload fixture must be valid JSON");
 
         assert_eq!(artifact["data"]["id"], "artifact_fixture1");
         assert_eq!(artifact["execution"]["location"], "local");
         assert_eq!(response["data"]["status"], "completed");
         assert_eq!(response["data"]["citations"][0]["id"], "ev_fixture1");
+        assert_eq!(upload["data"]["asset_id"], "asset_fixture1");
+        assert_ne!(upload["data"]["id"], upload["data"]["asset_id"]);
     }
 }

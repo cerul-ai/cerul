@@ -42,6 +42,10 @@
       "description": "Scoped retrieval and evidence"
     },
     {
+      "name": "Evidence",
+      "description": "Authenticated media projections for returned Evidence"
+    },
+    {
       "name": "Jobs",
       "description": "Asynchronous capability and workflow execution"
     },
@@ -64,10 +68,6 @@
     {
       "name": "Credentials",
       "description": "Scoped Workspace API credential lifecycle"
-    },
-    {
-      "name": "Shares",
-      "description": "Revocable public Share projections"
     }
   ],
   "security": [
@@ -368,55 +368,6 @@
         }
       }
     },
-    "/v1/shares/{share_id}": {
-      "get": {
-        "operationId": "getPublicShare",
-        "summary": "Get a published, non-revoked public Share projection",
-        "tags": [
-          "Shares"
-        ],
-        "security": [],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/ShareId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Published public Share",
-            "headers": {
-              "Cache-Control": {
-                "required": true,
-                "description": "Briefly cacheable and revalidated; never immutable",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PublicShareResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Missing, expired, and revoked Shares are all reported as not_found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/v1/capabilities": {
       "get": {
         "operationId": "listCapabilities",
@@ -680,6 +631,153 @@
         }
       }
     },
+    "/v1/evidence/{evidence_id}/frame": {
+      "get": {
+        "operationId": "getEvidenceFrame",
+        "summary": "Read the representative frame for local Evidence",
+        "tags": [
+          "Evidence"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/EvidenceId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence frame bytes",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/evidence/{evidence_id}/video-segment": {
+      "get": {
+        "operationId": "getEvidenceVideoSegment",
+        "summary": "Stream the source segment for local Evidence",
+        "tags": [
+          "Evidence"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/EvidenceId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence video segment with HTTP range support",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Partial Evidence video segment",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/evidence/{evidence_id}/video-clip": {
+      "get": {
+        "operationId": "getEvidenceVideoClip",
+        "summary": "Render or read a bounded clip around local Evidence",
+        "tags": [
+          "Evidence"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/EvidenceId"
+          },
+          {
+            "name": "before_seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 60,
+              "default": 0
+            }
+          },
+          {
+            "name": "after_seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 60,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounded Evidence clip",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Partial bounded Evidence clip",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/v1/search": {
       "post": {
         "operationId": "searchEvidence",
@@ -924,6 +1022,15 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "description": "Resume a previously created streaming Response after this event",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -1352,6 +1459,7 @@
               "response.tool.completed",
               "response.artifact.added",
               "response.completed",
+              "response.canceled",
               "response.failed"
             ]
           },
@@ -1893,6 +2001,12 @@
               "null"
             ]
           },
+          "capability_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "workflow": {
             "oneOf": [
               {
@@ -1930,7 +2044,8 @@
         "oneOf": [
           {
             "required": [
-              "capability_id"
+              "capability_id",
+              "capability_version"
             ]
           },
           {
@@ -1942,6 +2057,10 @@
         "properties": {
           "capability_id": {
             "type": "string"
+          },
+          "capability_version": {
+            "type": "string",
+            "default": "1"
           },
           "workflow": {
             "$ref": "#/components/schemas/WorkflowReference"
@@ -2009,7 +2128,8 @@
         "properties": {
           "query": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "maxLength": 1000
           },
           "scope": {
             "$ref": "#/components/schemas/Scope"
@@ -2133,6 +2253,7 @@
         "additionalProperties": false,
         "required": [
           "id",
+          "asset_id",
           "method",
           "upload_url",
           "expires_at"
@@ -2140,6 +2261,9 @@
         "properties": {
           "id": {
             "type": "string"
+          },
+          "asset_id": {
+            "$ref": "#/components/schemas/AssetId"
           },
           "method": {
             "type": "string",
@@ -2170,14 +2294,19 @@
         "properties": {
           "filename": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "maxLength": 255
           },
           "media_type": {
-            "type": "string"
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 127,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$"
           },
           "byte_size": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 1,
+            "maximum": 5368709120
           },
           "execution_policy": {
             "$ref": "#/components/schemas/ExecutionPolicy"
@@ -2478,116 +2607,6 @@
             "additionalProperties": true
           }
         }
-      },
-      "PublicShareResponse": {
-        "unevaluatedProperties": false,
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ResponseMetadata"
-          },
-          {
-            "type": "object",
-            "required": [
-              "data"
-            ],
-            "properties": {
-              "data": {
-                "$ref": "#/components/schemas/PublicShare"
-              }
-            }
-          }
-        ]
-      },
-      "PublicShare": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "title",
-          "headline",
-          "language",
-          "clip_url",
-          "poster_url",
-          "media_expires_at",
-          "created_at",
-          "published_at"
-        ],
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/ShareId"
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 300
-          },
-          "headline": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 500
-          },
-          "summary": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "maxLength": 5000
-          },
-          "source_label": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "maxLength": 300
-          },
-          "shared_by": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "maxLength": 200,
-            "description": "Public display label, never an identity or Workspace identifier"
-          },
-          "language": {
-            "type": "string",
-            "enum": [
-              "en",
-              "zh"
-            ]
-          },
-          "clip_url": {
-            "type": "string",
-            "format": "uri",
-            "pattern": "^https://",
-            "description": "Revocable application-service URL; never a storage key"
-          },
-          "poster_url": {
-            "type": "string",
-            "format": "uri",
-            "pattern": "^https://",
-            "description": "Revocable application-service URL; never a storage key"
-          },
-          "media_expires_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "Expiry for signed media URLs; null only for request-time revocation proxies"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "published_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
-      "ShareId": {
-        "type": "string",
-        "pattern": "^share_[A-Za-z0-9]+$"
       },
       "ApiCredentialId": {
         "type": "string",
@@ -3293,6 +3312,14 @@
           "$ref": "#/components/schemas/JobId"
         }
       },
+      "EvidenceId": {
+        "name": "evidence_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/EvidenceId"
+        }
+      },
       "AssetId": {
         "name": "asset_id",
         "in": "path",
@@ -3315,14 +3342,6 @@
         "required": true,
         "schema": {
           "$ref": "#/components/schemas/LibraryId"
-        }
-      },
-      "ShareId": {
-        "name": "share_id",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "$ref": "#/components/schemas/ShareId"
         }
       },
       "ApiCredentialId": {

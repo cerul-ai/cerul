@@ -1,7 +1,7 @@
 {
   "source": "cerul-platform/contracts/openapi.yaml",
-  "source_sha256": "62d9256445051b45d3f0039cefa0fa59de20c64050e97596b674da56da232df2",
-  "public_openapi_sha256": "b3fca22458a20b7b37107ac1ff473ad0600ef586db609518fa8518da2100d32a",
+  "source_sha256": "9ee937bb3d1325232e729e114ee783b3c461bf2581ba79fce26b652248972852",
+  "public_openapi_sha256": "c15615d54993468465fc1528fdba783f7c430a290d6e72546bc7b83b7ecfa0c3",
   "operation_ids": [
     "addLibraryItem",
     "cancelJob",
@@ -17,10 +17,12 @@
     "getAgentSession",
     "getArtifact",
     "getAsset",
+    "getEvidenceFrame",
+    "getEvidenceVideoClip",
+    "getEvidenceVideoSegment",
     "getJob",
     "getLibraryItem",
     "getPrincipal",
-    "getPublicShare",
     "getUsageReport",
     "getWorkspaceEntitlement",
     "indexAsset",
@@ -34,6 +36,7 @@
   ],
   "fixtures": {
     "artifact-response.json": "2211d3fa2b37eb9346cbebd3d7f783785f85d143645ca322c04a884ffff8e06a",
-    "response-envelope.json": "df5d79bd6af779d26f29f8ba05a00ff02e543e1936af2c2659153e9ac1582327"
+    "response-envelope.json": "df5d79bd6af779d26f29f8ba05a00ff02e543e1936af2c2659153e9ac1582327",
+    "upload-response.json": "458a75515579d700a7afbbc93cf3e41b53d950dc242ee215f6bfe653b0cf3c68"
   }
 }
