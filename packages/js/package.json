@@ -50,7 +50,7 @@
     "openapi-fetch": "0.17.0"
   },
   "devDependencies": {
-    "tsx": "4.21.0",
-    "typescript": "5.9.3"
+    "tsx": "4.23.1",
+    "typescript": "7.0.2"
   }
 }
