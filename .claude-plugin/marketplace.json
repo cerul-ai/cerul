@@ -1,7 +1,18 @@
 {
-  "owner": "cerul-ai",
-  "repo": "cerul",
-  "description": "Search video knowledge from AI agents - speech, visuals, and on-screen text",
-  "tags": ["video-search", "ai-agent", "api"],
-  "category": "external-integrations"
+  "name": "cerul-plugin",
+  "owner": {
+    "name": "Cerul AI"
+  },
+  "metadata": {
+    "description": "Cerul public integration for grounded media evidence.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "cerul",
+      "description": "Search and answer with cited evidence from indexed media.",
+      "version": "1.0.0",
+      "source": "./integrations/claude-code/plugins/cerul"
+    }
+  ]
 }

@@ -1,0 +1,21 @@
+{
+  "name": "cerul-public",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22",
+    "pnpm": "9.15.9"
+  },
+  "scripts": {
+    "build": "corepack pnpm --filter cerul build && corepack pnpm --filter @cerul/mcp build",
+    "test": "corepack pnpm --filter cerul test && corepack pnpm --filter @cerul/mcp test",
+    "check:public": "node scripts/check-public-boundary.mjs",
+    "check": "corepack pnpm check:public && corepack pnpm build && corepack pnpm test"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 508 508" fill="#000">
-  <!-- Left vertical bar -->
-  <rect x="0" y="0" width="211" height="508"/>
-  <!-- Top-right horizontal bar -->
-  <rect x="297" y="91" width="211" height="112"/>
-  <!-- Bottom-right square block -->
-  <rect x="297" y="301" width="211" height="207"/>
-</svg>
