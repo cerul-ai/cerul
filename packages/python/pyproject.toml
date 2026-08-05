@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "cerul"
 version = "0.0.6"
-description = "Cerul — where video becomes citable. Python SDK"
+description = "Cerul video memory infrastructure — Python SDK"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"

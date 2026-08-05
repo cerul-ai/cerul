@@ -1,7 +1,7 @@
 {
   "name": "cerul",
   "version": "0.0.2",
-  "description": "Cerul — where video becomes citable. TypeScript SDK",
+  "description": "Cerul video memory infrastructure — TypeScript SDK",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
