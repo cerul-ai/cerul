@@ -1,7 +1,7 @@
 {
   "name": "cerul",
   "version": "1.0.0",
-  "description": "Cerul — where video becomes citable. The video search API for agents — meaning-based, grounded, timestamped.",
+  "description": "Cerul video memory infrastructure for AI products — understand, remember, and access video.",
   "author": {
     "name": "Cerul AI",
     "url": "https://cerul.ai"

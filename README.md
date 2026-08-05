@@ -1,5 +1,9 @@
 # Cerul developer surface
 
+**Help AI understand, remember, and access video.**
+
+Video memory infrastructure for AI products.
+
 Cerul turns video and other long-form media into searchable evidence and
 structured artifacts. This repository is the public integration surface for
 the Cerul platform.
