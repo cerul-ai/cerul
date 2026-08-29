@@ -14,8 +14,8 @@
     "check": "corepack pnpm check:public && corepack pnpm build && corepack pnpm test"
   },
   "devDependencies": {
-    "@types/node": "24.10.1",
-    "tsx": "4.21.0",
-    "typescript": "5.9.3"
+    "@types/node": "26.3.0",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
   }
 }
