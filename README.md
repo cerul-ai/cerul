@@ -32,8 +32,6 @@ offer identical execution.
 
 | Path | Purpose |
 |---|---|
-| `packages/js` | Generated TypeScript schema plus a small runtime client |
-| `packages/python` | Python client and generated operation registry |
 | `apps/cli` | CLI commands for search, ask, AgentSession, jobs, and export |
 | `integrations/mcp` | Remote MCP projection of the Capability Registry |
 | `integrations/claude-code` | Installable Claude Code integration |
@@ -43,11 +41,17 @@ offer identical execution.
 ```sh
 corepack pnpm install --frozen-lockfile
 corepack pnpm check
-python3 -m unittest discover -s packages/python/tests
 cargo test --manifest-path apps/cli/Cargo.toml --locked
 ```
 
-The public OpenAPI and generated SDK surfaces are produced from the private
+## SDKs
+
+The TypeScript and Python SDKs are retired while the `/v1` API is redesigned.
+The published `cerul` packages on npm and PyPI are deprecated and receive no
+updates. Use the REST API directly, or the MCP integration, until generated
+SDKs return with the new contract.
+
+The public OpenAPI and generated client surfaces are produced from the private
 `cerul-platform/contracts/openapi.yaml`; they are not independently authored
 here. See [ARCHITECTURE.md](./ARCHITECTURE.md) for the publication boundary.
 

@@ -27,4 +27,4 @@ body:
     id: scope
     attributes:
       label: Scope Notes
-      description: Mention affected areas such as `packages/js`, `packages/python`, `apps/cli`, `integrations/mcp`, or `docs`.
+      description: Mention affected areas such as `apps/cli`, `integrations/mcp`, or `docs`.

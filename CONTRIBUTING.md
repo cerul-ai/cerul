@@ -8,7 +8,7 @@ Good contributions improve the SDKs, CLI, MCP/agent integrations, examples,
 public documentation, compatibility checks, or release metadata. Product
 implementation and internal contracts are maintained privately.
 
-Do not hand-edit generated OpenAPI or generated SDK files. Open an issue when a
+Do not hand-edit generated OpenAPI or generated client files. Open an issue when a
 contract change is needed; maintainers will update the private source and
 regenerate this repository.
 
@@ -17,7 +17,6 @@ regenerate this repository.
 ```sh
 corepack pnpm install --frozen-lockfile
 corepack pnpm check
-python3 -m unittest discover -s packages/python/tests
 cargo test --manifest-path apps/cli/Cargo.toml --locked
 ```
 

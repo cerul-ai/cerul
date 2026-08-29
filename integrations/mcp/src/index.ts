@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { createCerulClient, type CerulClient } from "cerul";
+import { createCerulClient, type CerulClient } from "./cerul-client.js";
 
 export type Capability = {
   capability_id: string;

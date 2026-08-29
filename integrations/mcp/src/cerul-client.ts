@@ -19,10 +19,10 @@ export function createCerulClient(
     headers: token
       ? {
           Authorization: `Bearer ${token}`,
-          "X-Cerul-Client-Source": "sdk-js",
+          "X-Cerul-Client-Source": "mcp",
         }
       : {
-          "X-Cerul-Client-Source": "sdk-js",
+          "X-Cerul-Client-Source": "mcp",
         },
   });
 }

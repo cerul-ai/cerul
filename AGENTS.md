@@ -4,7 +4,7 @@ Communicate with the repository owner in Chinese by default. Public docs,
 code, identifiers, comments, commit messages, and API fields are English.
 
 This repository is the public Cerul developer surface. Allowed content is
-limited to sanitized generated OpenAPI, generated SDKs, CLI, MCP and agent
+limited to sanitized generated OpenAPI, CLI, MCP and agent
 integrations, examples, public documentation, and release metadata.
 
 Do not add product Web, Desktop, API, Worker, storage, queue, model, prompt,
@@ -12,15 +12,12 @@ workflow, ranking, evaluation, billing-provider, or operational admin
 implementation. Do not commit secrets, data, indexes, internal plans, or
 production exports.
 
-`openapi.json`, `packages/js/src/generated/schema.ts`, and
-`packages/python/cerul/generated_contract.py` are generated from the private
-platform contract. Do not hand-edit them. Contract changes must begin in the
+`openapi.json` and `integrations/mcp/src/generated/schema.ts` are generated
+from the private platform contract. Do not hand-edit them. Contract changes must begin in the
 private platform repository and pass the public-surface generator.
 
 Use the existing boundaries:
 
-- `packages/js`
-- `packages/python`
 - `apps/cli`
 - `integrations/mcp`
 - `integrations/claude-code`
@@ -36,7 +33,6 @@ Verify changes with:
 ```sh
 corepack pnpm install --frozen-lockfile
 corepack pnpm check
-python3 -m unittest discover -s packages/python/tests
 cargo test --manifest-path apps/cli/Cargo.toml --locked
 ```
 

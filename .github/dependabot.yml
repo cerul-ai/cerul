@@ -9,11 +9,6 @@ updates:
       public-node:
         patterns: ["*"]
 
-  - package-ecosystem: pip
-    directory: /packages/python
-    schedule:
-      interval: weekly
-
   - package-ecosystem: cargo
     directory: /apps/cli
     schedule:
