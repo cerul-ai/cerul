@@ -50,15 +50,8 @@ if (
   failures.push("public OpenAPI contains an internal or secret marker");
 }
 
-const generatedPython = await readFile(
-  path.join(root, "packages", "python", "cerul", "generated_contract.py"),
-  "utf8",
-);
-if (!generatedPython.includes(manifest.public_openapi_sha256)) {
-  failures.push("Python operation registry is not from the current contract");
-}
 const generatedTypescript = await readFile(
-  path.join(root, "packages", "js", "src", "generated", "schema.ts"),
+  path.join(root, "integrations", "mcp", "src", "generated", "schema.ts"),
   "utf8",
 );
 for (const operationId of manifest.operation_ids) {

@@ -8,8 +8,8 @@
     "pnpm": "9.15.9"
   },
   "scripts": {
-    "build": "corepack pnpm --filter cerul build && corepack pnpm --filter @cerul/mcp build",
-    "test": "corepack pnpm --filter cerul test && corepack pnpm --filter @cerul/mcp test",
+    "build": "corepack pnpm --filter @cerul/mcp build",
+    "test": "corepack pnpm --filter @cerul/mcp test",
     "check:public": "node scripts/check-public-boundary.mjs",
     "check": "corepack pnpm check:public && corepack pnpm build && corepack pnpm test"
   },

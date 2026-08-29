@@ -12,7 +12,7 @@
     "test": "tsx --test test/index.test.ts"
   },
   "dependencies": {
-    "cerul": "workspace:*"
+    "openapi-fetch": "0.17.0"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
