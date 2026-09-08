@@ -369,18 +369,18 @@ pub async fn run(
         index.replace(&episode.episode_id, stream, &rows).await?;
         return Ok(rows.len());
     }
-    // A failed refresh of identical inputs must not withdraw a valid generation.
-    if !previous_complete {
-        storage::write_json(
-            &state_path,
-            &State {
-                input_hash: input_hash.clone(),
-                complete: false,
-                error: None,
-            },
-        )?;
-        index.replace(&episode.episode_id, stream, &[]).await?;
-    }
+    // Withdraw the previous projection before publishing a replacement Parquet
+    // generation. This makes interruption recoverable: search cannot combine a
+    // new sidecar with an older Lance projection.
+    storage::write_json(
+        &state_path,
+        &State {
+            input_hash: input_hash.clone(),
+            complete: false,
+            error: None,
+        },
+    )?;
+    index.replace(&episode.episode_id, stream, &[]).await?;
     let context = EmbeddingContext {
         episode,
         stream,
@@ -432,16 +432,14 @@ pub async fn run(
     }
     drop(pending);
     if let Some(error) = errors.into_iter().next() {
-        if !previous_complete {
-            storage::write_json(
-                &state_path,
-                &State {
-                    input_hash,
-                    complete: false,
-                    error: Some(error.to_string()),
-                },
-            )?;
-        }
+        storage::write_json(
+            &state_path,
+            &State {
+                input_hash,
+                complete: false,
+                error: Some(error.to_string()),
+            },
+        )?;
         return Err(error);
     }
     rows.sort_by(|a, b| {

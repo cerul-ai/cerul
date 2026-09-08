@@ -2,6 +2,7 @@
 use crate::{
     annotations::AnnotationFile,
     episode::{Episode, Stream},
+    index::stations::has_current_input,
     lerobot::{json_rows, parquet_batches},
 };
 use anyhow::{Context, Result, ensure};
@@ -133,6 +134,10 @@ pub fn rewrite_shard(
                 && annotation.header.episode == episode.episode_id
                 && annotation.header.stream == episode.time.reference,
             "writeback requires this episode's primary-camera subtasks"
+        );
+        ensure!(
+            has_current_input(episode, annotation)?,
+            "subtask annotation input changed before writeback"
         );
         let index = episode.local_id.parse::<u64>()?;
         let selected = all_keys
@@ -574,7 +579,7 @@ mod tests {
         crate::lerobot::tests::write_rows(&source, &rows);
         let episodes = crate::lerobot::read(&root).unwrap();
         let episode = &episodes[0];
-        let annotation = AnnotationFile {
+        let mut annotation = AnnotationFile {
             header: Header {
                 schema: "annotation/1".into(),
                 name: "semantic.subtask".into(),
@@ -606,6 +611,13 @@ mod tests {
                 })
                 .collect(),
         };
+        annotation.header.input_hash = crate::index::stations::station_key(
+            episode,
+            &annotation.header.stream,
+            &annotation.header.name,
+            &annotation.header.params,
+        )
+        .unwrap();
         let before = fs::read(&source).unwrap();
         let destination = dir.path().join("staged.parquet");
         rewrite_shard(
