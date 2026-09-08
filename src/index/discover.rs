@@ -160,6 +160,8 @@ pub fn sidecar_path(
     registry: &[RegistryEntry],
     override_dir: Option<&Path>,
 ) -> Result<PathBuf> {
+    let absolute_override = override_dir.map(std::path::absolute).transpose()?;
+    let override_dir = absolute_override.as_deref();
     if episode.source.format.starts_with("lerobot/") {
         if override_dir.is_none()
             && let Some(existing) = registry
@@ -238,6 +240,7 @@ pub fn publish_episode(
         }
         Err(error) => return Err(error),
     };
+    let sidecar = std::path::absolute(sidecar)?;
     register_inner(
         workspace,
         RegistryEntry {
@@ -380,5 +383,16 @@ mod tests {
                     .unwrap();
             assert_eq!(stored.episode_id, entry.episode_id);
         }
+        let cwd = std::env::current_dir().unwrap();
+        let override_root = tempfile::tempdir_in(&cwd).unwrap();
+        let relative = override_root
+            .path()
+            .strip_prefix(&cwd)
+            .unwrap()
+            .join("not-created-yet");
+        let published = publish_episode(&workspace, &newest, Some(&relative)).unwrap();
+        assert!(published.is_absolute());
+        assert_eq!(read_registry(&workspace).unwrap()[0].sidecar, published);
+        assert!(published.join("episode.json").is_file());
     }
 }

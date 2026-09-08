@@ -278,7 +278,7 @@ async fn run_inner(
                 }
             }
         }
-        let mut blocked = None;
+        let mut blocked = std::collections::BTreeMap::new();
         // Preflight before expensive local processing, but never for a complete cached product.
         for stream in &selected {
             let transcript =
@@ -315,8 +315,7 @@ async fn run_inner(
                             .downcast_ref::<ProviderError>()
                             .is_some_and(|e| e.kind == Failure::Unavailable) =>
                     {
-                        blocked = Some(error.to_string());
-                        break;
+                        blocked.insert(stream.clone(), error.to_string());
                     }
                     Err(error) => return Err(error),
                 }
@@ -382,7 +381,7 @@ async fn run_inner(
                     }
                 }
             };
-            if let Some(error) = &blocked {
+            if let Some(error) = blocked.get(&stream) {
                 errors.push(error.clone());
             }
             let count = if errors.is_empty() {
@@ -401,6 +400,16 @@ async fn run_inner(
                 .await
                 {
                     Ok(count) => count,
+                    Err(error)
+                        if error.downcast_ref::<ProviderError>().is_some_and(|e| {
+                            matches!(
+                                e.kind,
+                                Failure::Unsupported | Failure::MissingKey | Failure::Cancelled
+                            )
+                        }) =>
+                    {
+                        return Err(error);
+                    }
                     Err(error) => {
                         interrupted(&cancel)?;
                         errors.push(error.to_string());
@@ -486,6 +495,159 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn skip_still_keeps_zero_calls_but_rejects_unsupported_moving_video() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.embedding.dims = Some(2);
+        let options = Options {
+            no_audio: true,
+            no_ocr: true,
+            embedding: embed::Options {
+                skip_still: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        for (name, filter) in [
+            ("static", "color=size=64x64:rate=2:duration=4"),
+            ("moving", "testsrc2=size=64x64:rate=2:duration=4"),
+        ] {
+            let source = dir.path().join(format!("{name}.mp4"));
+            crate::media::run(
+                std::process::Command::new("ffmpeg")
+                    .args([
+                        "-v", "error", "-f", "lavfi", "-i", filter, "-c:v", "libx264",
+                    ])
+                    .arg(&source),
+            )
+            .unwrap();
+            let workspace = dir.path().join(name);
+            if name == "static" {
+                // No credentials: any model request would fail this complete run.
+                config.embedding.base_url = "http://127.0.0.1:9".into();
+                let report = run(
+                    &[source],
+                    &workspace,
+                    &config,
+                    &options,
+                    CancellationToken::new(),
+                    &mut |_| {},
+                )
+                .await
+                .unwrap();
+                assert!(!report.partial);
+            } else {
+                let (base, server) = crate::providers::tests::server(vec![(
+                    400,
+                    serde_json::json!({"error":"unsupported"}),
+                )]);
+                config.embedding.base_url = base;
+                let error = run(
+                    &[source],
+                    &workspace,
+                    &config,
+                    &options,
+                    CancellationToken::new(),
+                    &mut |_| {},
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(
+                    error.downcast_ref::<ProviderError>().unwrap().kind,
+                    Failure::Unsupported
+                );
+                assert_eq!(server.join().unwrap().len(), 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn offline_pending_camera_does_not_block_cached_camera_rebuild() {
+        use crate::index::vectors::{self, Kind, VectorRow};
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dataset");
+        crate::lerobot::tests::fixture(&root, "v3.1");
+        let workspace = dir.path().join("workspace");
+        let episode = crate::lerobot::read(&root).unwrap().remove(0);
+        let sidecar = discover::publish_episode(&workspace, &episode, None).unwrap();
+        let mut config = Config::default();
+        config.embedding.base_url = "http://127.0.0.1:9".into();
+        config.embedding.dims = Some(2);
+        let options = Options {
+            no_audio: true,
+            no_ocr: true,
+            streams: "all".into(),
+            only: Some("0".into()),
+            ..Default::default()
+        };
+        let space = config.space_id().unwrap();
+        let stream = "observation.images.wrist";
+        vectors::write(
+            &sidecar.join("embeddings").join(format!("{space}.parquet")),
+            &[VectorRow {
+                id: "cached-wrist".into(),
+                episode: episode.episode_id.clone(),
+                stream: stream.into(),
+                kind: Kind::Video,
+                start_us: 0,
+                end_us: 4_000_000,
+                vector: vec![1., 0.],
+                text: "cached".into(),
+                still: false,
+                space_id: space.clone(),
+                params_hash: "fixture".into(),
+            }],
+            2,
+        )
+        .unwrap();
+        storage::write_json(
+            &embed::state_path(&sidecar, stream, &episode.time.reference, &space),
+            &embed::State {
+                input_hash: embed::fingerprint(
+                    &episode,
+                    stream,
+                    &space,
+                    &options.embedding,
+                    None,
+                    None,
+                )
+                .unwrap(),
+                complete: true,
+                error: None,
+            },
+        )
+        .unwrap();
+        assert!(!workspace.join("index").exists());
+        let report = run(
+            &[root],
+            &workspace,
+            &config,
+            &options,
+            CancellationToken::new(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(report.partial);
+        let camera = report.episodes[0]
+            .streams
+            .iter()
+            .find(|s| s.stream == stream)
+            .unwrap();
+        assert!(camera.indexed, "{:?}", camera.errors);
+        assert_eq!(camera.vector_rows, 1);
+        assert_eq!(
+            super::super::lance::VectorIndex::open(&workspace, &space, 2, false)
+                .await
+                .unwrap()
+                .count()
+                .await
+                .unwrap(),
+            1
+        );
+    }
 
     #[tokio::test]
     async fn unsupported_transcription_fails_before_ocr_or_sidecar_publication() {

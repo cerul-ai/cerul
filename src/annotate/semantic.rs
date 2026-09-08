@@ -217,7 +217,10 @@ pub async fn run(
     if !options.recompute && path.is_file() && product_path.is_file() {
         let annotation = AnnotationFile::read(&path)?;
         let saved: Product = serde_json::from_slice(&fs::read(&product_path)?)?;
-        if annotation.header.input_hash == key && saved.annotation.header.input_hash == key {
+        if annotation.header.input_hash == key
+            && saved.annotation.header.input_hash == key
+            && storage::cache_key(&annotation)? == storage::cache_key(&saved.annotation)?
+        {
             annotation.validate(duration, options.ontology.as_ref())?;
             return Ok(Product {
                 annotation,
@@ -467,6 +470,37 @@ mod tests {
         assert_eq!(
             again.annotation.header.input_hash,
             product.annotation.header.input_hash
+        );
+        // Simulate interruption after the new product is published but before
+        // its annotation replaces the previous generation (same input hash).
+        let mut torn = product.clone();
+        torn.annotation.records[0]
+            .fields
+            .insert("text".into(), json!("Different generation"));
+        torn.conflicts.clear();
+        storage::write_json(&sidecar.join("semantic.subtask.conflicts.json"), &torn).unwrap();
+        super::super::pipeline::publish_conflicts(&episode, "primary", &sidecar).unwrap();
+        assert_eq!(fs::read(&flag_path).unwrap(), bytes);
+        let repaired = run(
+            &episode,
+            "primary",
+            "subtask",
+            &sidecar,
+            &workspace,
+            &provider,
+            &options,
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(!repaired.conflicts.is_empty());
+        let saved: Product = serde_json::from_slice(
+            &fs::read(sidecar.join("semantic.subtask.conflicts.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            storage::cache_key(&saved.annotation).unwrap(),
+            storage::cache_key(&AnnotationFile::read(&path).unwrap()).unwrap()
         );
     }
 }

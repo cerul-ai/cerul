@@ -270,18 +270,48 @@ async fn run_inner(
         episode.validate()?;
         episodes.insert(episode.episode_id.clone(), episode);
     }
-    if vector
-        && !registry.iter().any(|entry| {
-            entry
+    if vector {
+        let dims = config
+            .embedding
+            .dims
+            .context("embedding dimensions missing")?;
+        let mut available = false;
+        for entry in registry
+            .iter()
+            .filter(|entry| episodes.contains_key(&entry.episode_id))
+        {
+            let path = entry
                 .sidecar
                 .join("embeddings")
-                .join(format!("{space}.parquet"))
-                .is_file()
-        })
-    {
-        return Err(unavailable(
-            "no saved vectors match the configured embedding space; run index with this model",
-        ));
+                .join(format!("{space}.parquet"));
+            if !path.is_file() {
+                continue;
+            }
+            let episode = &episodes[&entry.episode_id];
+            for row in crate::index::vectors::read(&path, dims)? {
+                if row.episode == entry.episode_id
+                    && row.space_id == space
+                    && episode.video(&row.stream).is_ok()
+                    && crate::index::embed::usable(
+                        &entry.sidecar,
+                        &row.stream,
+                        &episode.time.reference,
+                        &space,
+                    )?
+                {
+                    available = true;
+                    break;
+                }
+            }
+            if available {
+                break;
+            }
+        }
+        if !available {
+            return Err(unavailable(
+                "no usable saved vectors in the selected scope match the configured embedding space; run index with this model",
+            ));
+        }
     }
     let _lock = storage::WorkspaceLock::acquire(workspace)?;
     let record_index = RecordIndex::rebuild(workspace, &space).await?;
@@ -692,6 +722,65 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             missing.downcast_ref::<ProviderError>().unwrap().kind,
+            Failure::Unsupported
+        );
+        let unindexed = dir.path().join("unindexed.mp4");
+        media::run(
+            std::process::Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=64x64:rate=2:duration=1",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&unindexed),
+        )
+        .unwrap();
+        let other = discover::ordinary_episode(&unindexed).unwrap();
+        discover::publish_episode(&workspace, &other, None).unwrap();
+        let error = run(
+            &workspace,
+            &config,
+            &Options {
+                query: Some("cup".into()),
+                within: Some(unindexed),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<ProviderError>().unwrap().kind,
+            Failure::Unsupported
+        );
+        storage::write_json(
+            &crate::index::embed::state_path(&sidecar, "primary", "primary", &space),
+            &crate::index::embed::State {
+                input_hash: "fixture".into(),
+                complete: false,
+                error: None,
+            },
+        )
+        .unwrap();
+        let error = run(
+            &workspace,
+            &config,
+            &Options {
+                query: Some("cup".into()),
+                within: Some(source),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<ProviderError>().unwrap().kind,
             Failure::Unsupported
         );
     }
