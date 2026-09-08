@@ -211,6 +211,94 @@ pub fn sidecar_path(
     Ok(preferred)
 }
 
+fn source_keys(episode: &Episode) -> Result<BTreeMap<String, String>> {
+    episode
+        .streams
+        .iter()
+        .filter(|stream| matches!(stream, Stream::Video { .. }))
+        .map(|stream| {
+            Ok((
+                stream.id().to_owned(),
+                super::stations::station_key(
+                    episode,
+                    stream.id(),
+                    "source",
+                    &serde_json::json!({}),
+                )?,
+            ))
+        })
+        .collect()
+}
+/// Withdraw old vectors before publishing a changed timeline/content descriptor.
+/// A crash may leave an incomplete index, but cannot label old vectors as current.
+fn write_episode(sidecar: &Path, episode: &Episode) -> Result<()> {
+    let descriptor = sidecar.join("episode.json");
+    let previous = if descriptor.is_file() {
+        Some(serde_json::from_slice::<Episode>(&fs::read(&descriptor)?)?)
+    } else {
+        None
+    };
+    let old_keys = previous
+        .as_ref()
+        .map(source_keys)
+        .transpose()?
+        .unwrap_or_default();
+    let new_keys = source_keys(episode)?;
+    let changed = old_keys != new_keys;
+    let vectors = sidecar.join("embeddings");
+    if changed && vectors.is_dir() {
+        let mut streams = std::collections::BTreeSet::new();
+        let mut primaries = std::collections::BTreeSet::from([episode.time.reference.clone()]);
+        for value in std::iter::once(episode).chain(previous.as_ref()) {
+            primaries.insert(value.time.reference.clone());
+            streams.extend(
+                value
+                    .streams
+                    .iter()
+                    .filter(|stream| matches!(stream, Stream::Video { .. }))
+                    .map(|stream| stream.id().to_owned()),
+            );
+        }
+        streams.retain(|stream| old_keys.get(stream) != new_keys.get(stream));
+        for entry in fs::read_dir(vectors)? {
+            let path = entry?.path();
+            if path
+                .extension()
+                .is_none_or(|extension| extension != "parquet")
+            {
+                continue;
+            }
+            let space = path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .context("invalid vector filename")?;
+            let mut states = std::collections::BTreeSet::new();
+            for stream in &streams {
+                for primary in &primaries {
+                    states.insert(super::embed::state_path(sidecar, stream, primary, space));
+                }
+            }
+            for path in states {
+                let mut state = if path.is_file() {
+                    serde_json::from_slice::<super::embed::State>(&fs::read(&path)?)?
+                } else {
+                    super::embed::State {
+                        input_hash: String::new(),
+                        complete: false,
+                        error: None,
+                    }
+                };
+                state.complete = false;
+                state.error = Some(
+                    "episode content or timeline changed; run index to refresh vectors".into(),
+                );
+                storage::write_json(&path, &state)?;
+            }
+        }
+    }
+    storage::write_json(&descriptor, episode)
+}
+
 /// Publish only local metadata here. Remote station work follows separately.
 pub fn publish_episode(
     workspace: &Path,
@@ -227,7 +315,7 @@ pub fn publish_episode(
     };
     let media = episode.source.root.join(path);
     let preferred = sidecar_path(episode, &registry, override_dir)?;
-    let sidecar = match storage::write_json(&preferred.join("episode.json"), episode) {
+    let sidecar = match write_episode(&preferred, episode) {
         Ok(()) => preferred,
         Err(error) if override_dir.is_none() && crate::lerobot::permission_error(&error) => {
             let fallback = if episode.source.format.starts_with("lerobot/") {
@@ -238,7 +326,7 @@ pub fn publish_episode(
             } else {
                 workspace.join("sidecars").join(sha256)
             };
-            storage::write_json(&fallback.join("episode.json"), episode)?;
+            write_episode(&fallback, episode)?;
             fallback
         }
         Err(error) => return Err(error),
@@ -261,6 +349,163 @@ pub fn publish_episode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn changed_dataset_publication_withdraws_only_affected_vectors_before_rebuild() {
+        use super::super::{
+            embed, lance,
+            vectors::{self, Kind, VectorRow},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dataset");
+        crate::lerobot::tests::fixture(&root, "v3.1");
+        let workspace = dir.path().join("workspace");
+        let episode = crate::lerobot::read_with_workspace(&root, &workspace)
+            .unwrap()
+            .remove(0);
+        let sidecar = publish_episode(&workspace, &episode, None).unwrap();
+        let front = "observation.images.front";
+        let wrist = "observation.images.wrist";
+        let mut config = crate::config::Config::default();
+        config.embedding.dims = Some(2);
+        let space = config.space_id().unwrap();
+        let rows = [front, wrist]
+            .into_iter()
+            .map(|stream| VectorRow {
+                id: stream.into(),
+                episode: episode.episode_id.clone(),
+                stream: stream.into(),
+                kind: Kind::Video,
+                start_us: 0,
+                end_us: 1_000_000,
+                vector: vec![1., 0.],
+                text: String::new(),
+                still: false,
+                space_id: space.clone(),
+                params_hash: "fixture".into(),
+            })
+            .collect::<Vec<_>>();
+        let parquet = sidecar.join("embeddings").join(format!("{space}.parquet"));
+        vectors::write(&parquet, &rows, 2).unwrap();
+        for stream in [front, wrist] {
+            storage::write_json(
+                &embed::state_path(&sidecar, stream, front, &space),
+                &embed::State {
+                    input_hash: embed::fingerprint(
+                        &episode,
+                        stream,
+                        &space,
+                        &embed::Options::default(),
+                        None,
+                        None,
+                    )
+                    .unwrap(),
+                    complete: true,
+                    error: None,
+                },
+            )
+            .unwrap();
+        }
+        let bytes = fs::read(&parquet).unwrap();
+        publish_episode(&workspace, &episode, None).unwrap();
+        assert!(embed::usable(&sidecar, front, front, &space).unwrap());
+        assert_eq!(
+            lance::rebuild(&workspace, &space, 2)
+                .await
+                .unwrap()
+                .count()
+                .await
+                .unwrap(),
+            2
+        );
+        let Stream::Video { path, .. } = episode.video(front).unwrap() else {
+            unreachable!()
+        };
+        media::run(
+            std::process::Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=blue:size=64x64:rate=2:duration=8",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(root.join(path)),
+        )
+        .unwrap();
+        let mut changed = crate::lerobot::read_with_workspace(&root, &workspace)
+            .unwrap()
+            .remove(0);
+        assert_eq!(episode.episode_id, changed.episode_id);
+        publish_episode(&workspace, &changed, None).unwrap();
+        assert!(!embed::usable(&sidecar, front, front, &space).unwrap());
+        assert!(embed::usable(&sidecar, wrist, front, &space).unwrap());
+        assert_eq!(
+            lance::rebuild(&workspace, &space, 2)
+                .await
+                .unwrap()
+                .count()
+                .await
+                .unwrap(),
+            1
+        );
+        let status = crate::status::inspect(&workspace, None).unwrap();
+        assert!(
+            !status.episodes[0]
+                .embeddings
+                .iter()
+                .find(|state| state.stream == front)
+                .unwrap()
+                .complete
+        );
+        assert!(
+            status.episodes[0]
+                .embeddings
+                .iter()
+                .find(|state| state.stream == wrist)
+                .unwrap()
+                .complete
+        );
+        changed.time.mappings.get_mut(wrist).unwrap().b_us += 1;
+        publish_episode(&workspace, &changed, None).unwrap();
+        assert!(!embed::usable(&sidecar, wrist, front, &space).unwrap());
+        assert_eq!(
+            lance::rebuild(&workspace, &space, 2)
+                .await
+                .unwrap()
+                .count()
+                .await
+                .unwrap(),
+            0
+        );
+        let error = crate::search::run(
+            &workspace,
+            &config,
+            &crate::search::Options {
+                query: Some("cup".into()),
+                ..Default::default()
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<crate::providers::ProviderError>()
+                .unwrap()
+                .kind,
+            crate::providers::Failure::Unsupported
+        );
+        assert!(
+            crate::status::inspect(&workspace, None).unwrap().episodes[0]
+                .embedding_spaces
+                .is_empty()
+        );
+        assert_eq!(fs::read(parquet).unwrap(), bytes);
+    }
     #[test]
     fn registry_replaces_shared_sidecar_but_preserves_shared_media_episodes() {
         let dir = tempfile::tempdir().unwrap();

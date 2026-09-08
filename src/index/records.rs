@@ -104,7 +104,9 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
                     continue;
                 }
                 let file = AnnotationFile::read(&path)?;
-                if !crate::index::stations::has_current_input(&episode, &file)? {
+                if file.header.stream != stream.id()
+                    || !crate::index::stations::has_current_input(&episode, &file)?
+                {
                     continue;
                 }
                 if file.header.name.starts_with("semantic.") {
@@ -363,6 +365,22 @@ mod tests {
         assert_eq!(rows[0].record.confidence, Some(0.8));
         assert_eq!(rows[0].record.fields["note"], "note 0");
         drop(index);
+        let mut renamed = episode.clone();
+        if let Stream::Video { id, .. } = &mut renamed.streams[0] {
+            *id = "renamed".into();
+        }
+        renamed.time.reference = "renamed".into();
+        assert!(!crate::index::stations::has_current_input(&renamed, &file).unwrap());
+        discover::publish_episode(&workspace, &renamed, None).unwrap();
+        assert!(
+            crate::status::inspect(&workspace, None).unwrap().episodes[0]
+                .annotations
+                .is_empty()
+        );
+        let index = RecordIndex::rebuild(&workspace, &space).await.unwrap();
+        assert!(index.read(None).await.unwrap().is_empty());
+        drop(index);
+        assert!(path.is_file());
         fs::remove_file(path).unwrap();
         let index = RecordIndex::rebuild(&workspace, &space).await.unwrap();
         assert!(index.read(None).await.unwrap().is_empty());

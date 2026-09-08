@@ -162,7 +162,9 @@ pub(crate) fn publish_conflicts(episode: &Episode, stream: &str, sidecar: &Path)
         }
         let product: semantic::Product = serde_json::from_slice(&fs::read(path)?)?;
         let annotation = AnnotationFile::read(&annotation_path)?;
-        if !crate::index::stations::has_current_input(episode, &annotation)? {
+        if annotation.header.stream != stream
+            || !crate::index::stations::has_current_input(episode, &annotation)?
+        {
             continue;
         }
         ensure!(
@@ -186,7 +188,8 @@ pub(crate) fn publish_conflicts(episode: &Episode, stream: &str, sidecar: &Path)
         None
     };
     if let Some(file) = &existing
-        && !crate::index::stations::has_current_input(episode, file)?
+        && (file.header.stream != stream
+            || !crate::index::stations::has_current_input(episode, file)?)
     {
         existing = None;
     }

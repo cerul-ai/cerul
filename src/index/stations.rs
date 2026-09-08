@@ -47,6 +47,9 @@ pub fn station_key(
 }
 /// Retain historical sidecars on disk, but never project records from old inputs.
 pub(crate) fn has_current_input(episode: &Episode, file: &AnnotationFile) -> Result<bool> {
+    if file.header.episode != episode.episode_id || episode.video(&file.header.stream).is_err() {
+        return Ok(false);
+    }
     Ok(file.header.input_hash
         == station_key(
             episode,

@@ -109,7 +109,9 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
                     continue;
                 }
                 let file = AnnotationFile::read(&directory.join(format!("{name}.jsonl")))?;
-                if !crate::index::stations::has_current_input(&episode, &file)? {
+                if file.header.stream != stream.id()
+                    || !crate::index::stations::has_current_input(&episode, &file)?
+                {
                     continue;
                 }
                 if file.header.name.starts_with("semantic.") {

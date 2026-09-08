@@ -81,3 +81,9 @@ Copying a new output checks cancellation between file blocks and before
 publication. A cancelled output stays unpublished and its temporary directory
 is removed. Recovery of an already interrupted in-place transaction completes
 its rollback before another operation can observe the dataset.
+
+Publishing changed media or timeline metadata marks affected vector states
+incomplete before replacing the episode descriptor. Historical Parquet vectors
+remain on disk; searches and index rebuilds exclude them until indexing refreshes
+the changed streams. Unchanged streams keep their completed vectors. Removed
+camera annotations are treated as historical rather than as read errors.
