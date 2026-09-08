@@ -256,6 +256,7 @@ async fn run_inner(
     let vector = !options.text && (options.query.is_some() || options.image.is_some());
     let space = config.space_id()?;
     let selection = options.within.as_ref().map(fs::canonicalize).transpose()?;
+    let _lock = storage::WorkspaceLock::acquire(workspace)?;
     let registry = discover::read_registry(workspace)?;
     let mut episodes = BTreeMap::new();
     for entry in &registry {
@@ -313,7 +314,6 @@ async fn run_inner(
             ));
         }
     }
-    let _lock = storage::WorkspaceLock::acquire(workspace)?;
     let record_index = RecordIndex::rebuild(workspace, &space).await?;
     let rows = record_index.read(None).await?;
     let mut files: Vec<AnnotationFile> = records::sidecars(workspace)?;
@@ -576,6 +576,29 @@ mod tests {
                 fields: serde_json::from_value(fields).unwrap(),
             }],
         }
+    }
+    #[tokio::test]
+    async fn busy_workspace_precedes_vector_availability_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::default();
+        let options = Options {
+            query: Some("cup".into()),
+            ..Default::default()
+        };
+        let writer = storage::WorkspaceLock::acquire(dir.path()).unwrap();
+        let error = run(dir.path(), &config, &options, CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("already being written"));
+        assert!(error.downcast_ref::<ProviderError>().is_none());
+        drop(writer);
+        let error = run(dir.path(), &config, &options, CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<ProviderError>().unwrap().kind,
+            Failure::Unsupported
+        );
     }
     #[tokio::test]
     async fn prefilter_recovers_low_ranked_event_and_offline_modes_count_text_and_save() {
