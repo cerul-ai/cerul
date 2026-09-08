@@ -343,9 +343,18 @@ async fn run_inner(
             if !matches!(stream, Stream::Video { .. }) {
                 continue;
             }
+            let Some(coverage) = episode.video_coverage(stream.id())? else {
+                continue;
+            };
             let intervals =
                 filter::intervals(&files, &filters, id, stream.id(), episode.duration_us()?)
-                    .map_err(|e| unavailable(e.to_string()))?;
+                    .map_err(|e| unavailable(e.to_string()))?
+                    .into_iter()
+                    .filter_map(|mut matched| {
+                        matched.range = matched.range.intersection(coverage)?;
+                        Some(matched)
+                    })
+                    .collect::<Vec<_>>();
             if !intervals.is_empty() {
                 scopes.insert((id.clone(), stream.id().to_owned()), intervals);
             }
@@ -536,13 +545,15 @@ async fn run_inner(
             let Stream::Video { path, .. } = episode.video(&found.stream)? else {
                 unreachable!()
             };
+            let coverage = episode
+                .video_coverage(&found.stream)?
+                .context("hit stream has no episode coverage")?;
             let range = TimeRange::new(
                 found.start_us.saturating_sub(options.pad_us).max(0),
-                found
-                    .end_us
-                    .saturating_add(options.pad_us)
-                    .min(episode.duration_us()?),
-            )?;
+                found.end_us.saturating_add(options.pad_us),
+            )?
+            .intersection(coverage)
+            .context("saved clip has no stream coverage")?;
             let name =
                 storage::cache_key(&(&found.episode, &found.stream, range.start_us, range.end_us))?;
             let destination = directory.join(format!("{name}.mp4"));
@@ -588,7 +599,13 @@ mod tests {
                 params: json!({}),
                 created: "2026-09-08T00:00:00Z".into(),
                 cerul_version: "0.0.3".into(),
-                input_hash: "fixture".into(),
+                input_hash: crate::index::stations::station_key(
+                    episode,
+                    "primary",
+                    name,
+                    &json!({}),
+                )
+                .unwrap(),
                 record_schema: format!("{name}/1"),
             },
             records: vec![Record {

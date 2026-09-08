@@ -10,6 +10,10 @@ Semantic windows are clipped to each selected camera's available interval on
 the common episode timeline. Shorter cameras never borrow frames from the next
 episode in a shared shard; their task/subtask coverage spans only that camera's
 available interval. Primary-camera writeback still requires the full episode.
+Search intervals and saved-clip padding also stop at the selected camera's
+coverage. When media, stream ranges, or time mappings change, old annotations
+remain on disk but are omitted from status and rebuilt search indexes until
+the corresponding processing command regenerates them.
 
 A dataset receives a persistent UUID in `.cerul/dataset.json` when first published.
 Read-only discovery and dry runs do not create this file. Each episode has a

@@ -446,6 +446,101 @@ mod tests {
             1
         );
         assert_eq!(server.join().unwrap().len(), 3);
+        assert!(
+            crate::status::inspect(&workspace, None).unwrap().episodes[0]
+                .annotations
+                .contains(&"short/semantic.subtask".into())
+        );
+        let config = crate::config::Config::default();
+        let report = crate::search::run(
+            &workspace,
+            &config,
+            &crate::search::Options {
+                filters: vec!["stream=short".into()],
+                save: Some(dir.path().join("clips")),
+                ..Default::default()
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.hits.len(), 1);
+        assert_eq!(
+            (report.hits[0].start_us, report.hits[0].end_us),
+            (2_000_000, 4_000_000)
+        );
+        assert_eq!(
+            media::probe(report.hits[0].clip.as_ref().unwrap())
+                .unwrap()
+                .duration_us,
+            2_000_000
+        );
+        let annotation_path =
+            stream_directory(&sidecar, "short", "primary").join("semantic.subtask.jsonl");
+        let old_bytes = fs::read(&annotation_path).unwrap();
+        for change in ["range", "mapping"] {
+            let mut changed = episode.clone();
+            if change == "mapping" {
+                changed.time.mappings.get_mut("short").unwrap().b_us += 1;
+            } else if let Stream::Video { range_us, .. } = &mut changed.streams[1] {
+                range_us[1] -= 1;
+            }
+            assert!(
+                !crate::index::stations::has_current_input(&changed, &product.annotation).unwrap()
+            );
+        }
+        media::run(
+            std::process::Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=blue:size=64x64:rate=2:duration=7",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let new_hash = media::sha256(&source).unwrap();
+        for stream in &mut episode.streams {
+            if let Stream::Video { sha256, .. } = stream {
+                *sha256 = new_hash.clone();
+            }
+        }
+        storage::write_json(&sidecar.join("episode.json"), &episode).unwrap();
+        assert!(
+            crate::index::records::sidecars(&workspace)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::status::inspect(&workspace, None).unwrap().episodes[0]
+                .annotations
+                .is_empty()
+        );
+        let index =
+            crate::index::records::RecordIndex::rebuild(&workspace, &config.space_id().unwrap())
+                .await
+                .unwrap();
+        assert!(index.read(None).await.unwrap().is_empty());
+        drop(index);
+        let error = crate::search::run(
+            &workspace,
+            &config,
+            &crate::search::Options {
+                filters: vec!["stream=short".into(), "semantic.subtask.index=0".into()],
+                ..Default::default()
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("has not been generated"));
+        assert_eq!(fs::read(&annotation_path).unwrap(), old_bytes);
         episode.time.mappings.get_mut("short").unwrap().b_us = 10_000_000;
         let error = run(
             &episode,

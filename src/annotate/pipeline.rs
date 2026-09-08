@@ -162,6 +162,9 @@ pub(crate) fn publish_conflicts(episode: &Episode, stream: &str, sidecar: &Path)
         }
         let product: semantic::Product = serde_json::from_slice(&fs::read(path)?)?;
         let annotation = AnnotationFile::read(&annotation_path)?;
+        if !crate::index::stations::has_current_input(episode, &annotation)? {
+            continue;
+        }
         ensure!(
             annotation.header.episode == episode.episode_id && annotation.header.stream == stream,
             "conflict source provenance mismatch"
@@ -177,8 +180,19 @@ pub(crate) fn publish_conflicts(episode: &Episode, stream: &str, sidecar: &Path)
         }
     }
     let path = directory.join("semantic.flag.jsonl");
-    let mut file = if path.is_file() {
-        AnnotationFile::read(&path)?
+    let mut existing = if path.is_file() {
+        Some(AnnotationFile::read(&path)?)
+    } else {
+        None
+    };
+    if let Some(file) = &existing
+        && !crate::index::stations::has_current_input(episode, file)?
+    {
+        existing = None;
+    }
+    let replace_stale = existing.is_none();
+    let mut file = if let Some(file) = existing {
+        file
     } else {
         if conflicts.is_empty() {
             return Ok(());
@@ -197,7 +211,12 @@ pub(crate) fn publish_conflicts(episode: &Episode, stream: &str, sidecar: &Path)
                 params: json!({}),
                 created: chrono::Utc::now().to_rfc3339(),
                 cerul_version: env!("CARGO_PKG_VERSION").into(),
-                input_hash: storage::cache_key(&conflicts)?,
+                input_hash: crate::index::stations::station_key(
+                    episode,
+                    stream,
+                    "semantic.flag",
+                    &json!({}),
+                )?,
                 record_schema: "semantic.flag/1".into(),
             },
             records: Vec::new(),
@@ -214,9 +233,14 @@ pub(crate) fn publish_conflicts(episode: &Episode, stream: &str, sidecar: &Path)
     file.records.extend(conflicts);
     file.records
         .sort_by(|a, b| (a.start_us, a.end_us, &a.id).cmp(&(b.start_us, b.end_us, &b.id)));
-    if before != serde_json::to_vec(&file.records)? || !path.is_file() {
+    if before != serde_json::to_vec(&file.records)? || replace_stale {
         if file.header.model.kind == "cerul" {
-            file.header.input_hash = storage::cache_key(&file.records)?;
+            file.header.input_hash = crate::index::stations::station_key(
+                episode,
+                stream,
+                "semantic.flag",
+                &file.header.params,
+            )?;
         }
         file.publish(&path, episode.duration_us()?, None)?;
     }

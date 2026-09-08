@@ -104,6 +104,9 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
                     continue;
                 }
                 let file = AnnotationFile::read(&path)?;
+                if !crate::index::stations::has_current_input(&episode, &file)? {
+                    continue;
+                }
                 if file.header.name.starts_with("semantic.") {
                     let coverage =
                         episode
@@ -314,7 +317,13 @@ mod tests {
                 params: json!({}),
                 created: "2026-09-08T00:00:00Z".into(),
                 cerul_version: "0.0.3".into(),
-                input_hash: "fixture".into(),
+                input_hash: crate::index::stations::station_key(
+                    &episode,
+                    "primary",
+                    "semantic.flag",
+                    &json!({}),
+                )
+                .unwrap(),
                 record_schema: "semantic.flag/1".into(),
             },
             records: (0..15)

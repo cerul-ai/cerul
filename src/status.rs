@@ -109,7 +109,17 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
                     continue;
                 }
                 let file = AnnotationFile::read(&directory.join(format!("{name}.jsonl")))?;
-                file.validate(episode.duration_us()?, None)?;
+                if !crate::index::stations::has_current_input(&episode, &file)? {
+                    continue;
+                }
+                if file.header.name.starts_with("semantic.") {
+                    let coverage = episode
+                        .video_coverage(stream.id())?
+                        .context("annotation stream has no episode coverage")?;
+                    file.validate_in_range(coverage, None)?;
+                } else {
+                    file.validate(episode.duration_us()?, None)?;
+                }
                 anyhow::ensure!(
                     file.header.episode == episode.episode_id && file.header.stream == stream.id(),
                     "annotation provenance does not match its episode/stream"
