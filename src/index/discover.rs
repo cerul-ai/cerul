@@ -76,7 +76,10 @@ pub fn discover(paths: &[PathBuf]) -> Result<Vec<Input>> {
         }
         if metadata.is_dir() {
             if path.join("meta/info.json").is_file() {
-                output.push(Input::LeRobot(fs::canonicalize(path)?));
+                let input = Input::LeRobot(fs::canonicalize(path)?);
+                if !output.contains(&input) {
+                    output.push(input);
+                }
                 return Ok(());
             }
             let mut children = fs::read_dir(path)?
@@ -294,6 +297,19 @@ mod tests {
         let found = discover(&[dir.path().into()]).unwrap();
         assert_eq!(found.len(), 2);
         assert!(found.iter().any(|i| matches!(i, Input::LeRobot(_))));
+    }
+    #[test]
+    fn overlapping_dataset_inputs_are_canonicalized_and_deduplicated() {
+        let dir = tempfile::tempdir().unwrap();
+        let dataset = dir.path().join("dataset");
+        fs::create_dir_all(dataset.join("meta")).unwrap();
+        fs::write(dataset.join("meta/info.json"), "{}").unwrap();
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(&dataset, &alias).unwrap();
+        assert_eq!(
+            discover(&[dir.path().into(), dataset.clone(), alias, dataset.clone()]).unwrap(),
+            vec![Input::LeRobot(fs::canonicalize(dataset).unwrap())]
+        );
     }
     #[test]
     fn media_move_reuses_sidecar_and_preserves_identity() {

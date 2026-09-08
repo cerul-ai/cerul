@@ -77,12 +77,16 @@ pub(super) fn read_lock(root: &Path) -> Result<DatasetLock> {
     ensure_readable(root)?;
     Ok(guard)
 }
-fn lock(root: &Path) -> Result<DatasetLock> {
-    let root = fs::canonicalize(root)?;
-    let file = File::open(&root)?;
+pub(super) fn identity_lock(root: &Path) -> Result<DatasetLock> {
+    let file = File::open(root)?;
     file.try_lock()
         .context("dataset is being read or written by another process")?;
     let guard = DatasetLock(file);
+    Ok(guard)
+}
+fn lock(root: &Path) -> Result<DatasetLock> {
+    let root = fs::canonicalize(root)?;
+    let guard = identity_lock(&root)?;
     let sidecar = root.join(".cerul");
     fs::create_dir_all(&sidecar)?;
     ensure!(

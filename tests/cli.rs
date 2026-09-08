@@ -299,3 +299,32 @@ fn ctrl_c_stops_media_subprocess_and_exits_cancelled() {
     );
     assert!(!dir.path().join(".cerul").exists());
 }
+
+#[test]
+fn search_rejects_invalid_kind_and_missing_save_tools_before_workspace_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    for (args, code) in [
+        (vec!["--json", "search", "--filter", "kind=video"], 2),
+        (
+            vec!["--json", "search", "cup", "--text", "--save", "clips"],
+            3,
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_cerul"))
+            .current_dir(dir.path())
+            .env_clear()
+            .env("HOME", dir.path())
+            .env("PATH", "")
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(final_json(&output).get("error").is_some());
+        assert!(!dir.path().join(".cerul").exists());
+    }
+}

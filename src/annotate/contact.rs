@@ -83,10 +83,14 @@ fn build_inner(
     let Stream::Video { path, sha256, .. } = episode.video(stream)? else {
         unreachable!()
     };
+    let coverage = episode
+        .video_coverage(stream)?
+        .and_then(|coverage| coverage.intersection(window))
+        .ok_or_else(|| anyhow::anyhow!("no stream coverage in annotation window"))?;
     let source = episode.source.root.join(path);
     let range = SourceRange::new(
-        episode.episode_to_source(stream, window.start_us)?,
-        episode.episode_to_source(stream, window.end_us)?,
+        episode.episode_to_source(stream, coverage.start_us)?,
+        episode.episode_to_source(stream, coverage.end_us)?,
     )?;
     let directory = tempfile::tempdir()?;
     let frames = if let Some(workspace) = workspace {

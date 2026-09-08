@@ -6,6 +6,10 @@ Data row ranges are local to their Parquet shard and are checked against the
 episode's global index bounds and length. Camera IDs retain the official feature
 keys; the lexicographically first video feature is the default primary camera.
 Use `--streams all` or explicit feature keys to select other cameras.
+Semantic windows are clipped to each selected camera's available interval on
+the common episode timeline. Shorter cameras never borrow frames from the next
+episode in a shared shard; their task/subtask coverage spans only that camera's
+available interval. Primary-camera writeback still requires the full episode.
 
 A dataset receives a persistent UUID in `.cerul/dataset.json` when first published.
 Read-only discovery and dry runs do not create this file. Each episode has a

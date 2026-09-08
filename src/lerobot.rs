@@ -322,6 +322,8 @@ pub(crate) fn permission_error(error: &anyhow::Error) -> bool {
 }
 /// Caller holds the workspace lock. Cache identity before attempting a local sidecar.
 pub fn publish_identity(episode: &Episode, workspace: &Path) -> Result<()> {
+    let _dataset_lock = transaction::identity_lock(&episode.source.root)?;
+    transaction::ensure_readable(&episode.source.root)?;
     let local = episode.source.root.join(".cerul/dataset.json");
     let cache = identity_cache(&episode.source.root, workspace)?;
     for path in [&local, &cache] {
@@ -354,6 +356,40 @@ pub(crate) mod tests {
     use super::*;
     use serde_json::json;
     use std::sync::Arc;
+    #[test]
+    fn separate_workspaces_cannot_publish_conflicting_dataset_identities() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dataset");
+        fixture(&root, "v3.1");
+        let a = read(&root).unwrap().remove(0);
+        let b = read(&root).unwrap().remove(0);
+        assert_ne!(a.dataset_id, b.dataset_id);
+        let wa = dir.path().join("a");
+        let wb = dir.path().join("b");
+        let barrier = std::sync::Barrier::new(2);
+        let (ra, rb) = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                barrier.wait();
+                publish_identity(&a, &wa)
+            });
+            let second = scope.spawn(|| {
+                barrier.wait();
+                publish_identity(&b, &wb)
+            });
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert_ne!(ra.is_ok(), rb.is_ok());
+        let winner = if ra.is_ok() { &a } else { &b };
+        let saved: Identity =
+            serde_json::from_slice(&fs::read(root.join(".cerul/dataset.json")).unwrap()).unwrap();
+        assert_eq!(saved.dataset_id, winner.dataset_id);
+        for workspace in [&wa, &wb] {
+            assert_eq!(
+                read_with_workspace(&root, workspace).unwrap()[0].dataset_id,
+                winner.dataset_id
+            );
+        }
+    }
     pub fn write_rows(path: &Path, rows: &[Value]) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let schema =

@@ -104,7 +104,17 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
                     continue;
                 }
                 let file = AnnotationFile::read(&path)?;
-                file.validate(episode.duration_us()?, None)?;
+                if file.header.name.starts_with("semantic.") {
+                    let coverage =
+                        episode
+                            .video_coverage(&file.header.stream)?
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("annotation stream has no episode coverage")
+                            })?;
+                    file.validate_in_range(coverage, None)?;
+                } else {
+                    file.validate(episode.duration_us()?, None)?;
+                }
                 ensure!(
                     file.header.episode == episode.episode_id && file.header.stream == stream.id(),
                     "annotation provenance mismatch"

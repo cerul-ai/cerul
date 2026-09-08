@@ -99,6 +99,13 @@ impl AnnotationFile {
         Ok(Self { header, records })
     }
     pub fn validate(&self, duration_us: i64, ontology: Option<&BTreeSet<String>>) -> Result<()> {
+        self.validate_in_range(TimeRange::new(0, duration_us)?, ontology)
+    }
+    pub fn validate_in_range(
+        &self,
+        coverage: TimeRange,
+        ontology: Option<&BTreeSet<String>>,
+    ) -> Result<()> {
         let h = &self.header;
         ensure!(
             h.schema == "annotation/1" && h.record_schema == format!("{}/1", h.name),
@@ -115,13 +122,12 @@ impl AnnotationFile {
             !h.episode.is_empty() && !h.stream.is_empty() && !h.input_hash.is_empty(),
             "incomplete annotation provenance"
         );
-        ensure!(duration_us > 0, "invalid episode duration");
         let mut ids = BTreeSet::new();
-        let mut expected_subtask_start = 0;
+        let mut expected_subtask_start = coverage.start_us;
         for (index, record) in self.records.iter().enumerate() {
             let range = record.range()?;
             ensure!(
-                range.end_us <= duration_us,
+                range.start_us >= coverage.start_us && range.end_us <= coverage.end_us,
                 "annotation extends beyond episode"
             );
             ensure!(
@@ -227,7 +233,7 @@ impl AnnotationFile {
         }
         if matches!(h.name.as_str(), "semantic.subtask" | "semantic.task") {
             ensure!(
-                expected_subtask_start == duration_us,
+                expected_subtask_start == coverage.end_us,
                 "tasks or subtasks do not cover the whole episode"
             );
         }
@@ -239,7 +245,15 @@ impl AnnotationFile {
         duration_us: i64,
         ontology: Option<&BTreeSet<String>>,
     ) -> Result<()> {
-        self.validate(duration_us, ontology)?;
+        self.publish_in_range(path, TimeRange::new(0, duration_us)?, ontology)
+    }
+    pub fn publish_in_range(
+        &self,
+        path: &Path,
+        coverage: TimeRange,
+        ontology: Option<&BTreeSet<String>>,
+    ) -> Result<()> {
+        self.validate_in_range(coverage, ontology)?;
         let mut bytes = serde_json::to_vec(&self.header)?;
         bytes.push(b'\n');
         for record in &self.records {

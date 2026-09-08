@@ -276,6 +276,17 @@ impl Episode {
             .checked_add(range_us[0])
             .ok_or_else(|| anyhow::anyhow!("time overflow"))
     }
+    /// The selected stream's available interval on the common episode timeline.
+    pub fn video_coverage(&self, id: &str) -> Result<Option<TimeRange>> {
+        let Stream::Video { range_us, .. } = self.video(id)? else {
+            unreachable!()
+        };
+        let start = self.source_to_episode(id, range_us[0])?.max(0);
+        let end = self
+            .source_to_episode(id, range_us[1])?
+            .min(self.duration_us()?);
+        Ok(TimeRange::new(start, end).ok())
+    }
     pub fn duration_us(&self) -> Result<i64> {
         let Stream::Video { range_us, .. } = self.video(&self.time.reference)? else {
             unreachable!()

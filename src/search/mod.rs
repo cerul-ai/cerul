@@ -101,6 +101,12 @@ impl Options {
                 || (!self.text && (self.query.is_some() || self.image.is_some())),
             "threshold requires vector search"
         );
+        ensure!(
+            self.query.is_some()
+                || self.image.is_some()
+                || !filters.iter().any(|f| f.key == "kind"),
+            "kind requires vector or text search"
+        );
         Ok(filters)
     }
 }
@@ -253,6 +259,9 @@ async fn run_inner(
             dry_run: true,
         });
     }
+    if options.save.is_some() {
+        media::check_dependencies().map_err(|error| unavailable(error.to_string()))?;
+    }
     let vector = !options.text && (options.query.is_some() || options.image.is_some());
     let space = config.space_id()?;
     let selection = options.within.as_ref().map(fs::canonicalize).transpose()?;
@@ -388,27 +397,46 @@ async fn run_inner(
                     Input::Text(options.query.clone().unwrap())
                 };
                 let query = provider.embed(input, true).await?;
-                // Fetch all qualifying rows before interval grouping. Limiting raw
-                // modality rows first can omit unique hits after deduplication.
-                for (row, score) in index
-                    .search(&query, Some(&predicate), index.count().await?.max(1))
-                    .await?
-                {
-                    if options.threshold.is_some_and(|threshold| score < threshold) {
-                        continue;
-                    }
-                    for scope in &scopes[&(row.episode.clone(), row.stream.clone())] {
-                        if let Some(range) = scope
-                            .range
-                            .intersection(TimeRange::new(row.start_us, row.end_us)?)
-                        {
-                            let mut found = hit(&row.episode, &row.stream, range, &rows);
-                            found.score = Some(score);
-                            found.matched = Some(row.kind);
-                            found.excerpt = row.text.clone();
-                            hits.push(found);
+                let total = index.count().await?;
+                let mut budget = options.limit.saturating_mul(3).max(32).min(total);
+                loop {
+                    cancelled(&cancel)?;
+                    let candidates = index.search(&query, Some(&predicate), budget).await?;
+                    let exhausted = candidates.len() < budget || budget == total;
+                    let below_threshold = candidates.last().is_some_and(|(_, score)| {
+                        options
+                            .threshold
+                            .is_some_and(|threshold| *score < threshold)
+                    });
+                    hits.clear();
+                    let mut unique = BTreeSet::new();
+                    for (row, score) in candidates {
+                        if options.threshold.is_some_and(|threshold| score < threshold) {
+                            continue;
+                        }
+                        for scope in &scopes[&(row.episode.clone(), row.stream.clone())] {
+                            if let Some(range) = scope
+                                .range
+                                .intersection(TimeRange::new(row.start_us, row.end_us)?)
+                            {
+                                unique.insert((
+                                    row.episode.clone(),
+                                    row.stream.clone(),
+                                    range.start_us,
+                                    range.end_us,
+                                ));
+                                let mut found = hit(&row.episode, &row.stream, range, &rows);
+                                found.score = Some(score);
+                                found.matched = Some(row.kind);
+                                found.excerpt = row.text.clone();
+                                hits.push(found);
+                            }
                         }
                     }
+                    if unique.len() >= options.limit || exhausted || below_threshold {
+                        break;
+                    }
+                    budget = budget.saturating_mul(2).min(total);
                 }
             }
         }
@@ -445,10 +473,6 @@ async fn run_inner(
             }
         }
     } else if !vector {
-        ensure!(
-            !filters.iter().any(|f| f.key == "kind"),
-            "kind requires vector or text search"
-        );
         for ((episode, stream), ranges) in &scopes {
             for scope in ranges {
                 for (annotation, id) in &scope.records {
@@ -506,7 +530,6 @@ async fn run_inner(
     let mut hits = merge_hits(hits, vector);
     hits.truncate(options.limit);
     if let Some(directory) = &options.save {
-        media::check_dependencies()?;
         for found in &mut hits {
             cancelled(&cancel)?;
             let episode = &episodes[&found.episode];

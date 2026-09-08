@@ -106,14 +106,14 @@ fn reconcile(
     units: &[Unit],
     header: &Header,
     pts: &[i64],
-    duration: i64,
+    coverage: TimeRange,
     ontology: Option<&BTreeSet<String>>,
 ) -> Result<Product> {
     let normalized = units
         .iter()
         .map(|unit| normalize(item, unit, header, pts, ontology))
         .collect::<Result<Vec<_>>>()?;
-    let mut cuts = vec![0];
+    let mut cuts = vec![coverage.start_us];
     for pair in units.windows(2) {
         let midpoint =
             pair[1].window.start_us + (pair[0].window.end_us - pair[1].window.start_us) / 2;
@@ -129,7 +129,7 @@ fn reconcile(
         );
         cuts.push(boundary);
     }
-    cuts.push(duration);
+    cuts.push(coverage.end_us);
     let mut conflicts = Vec::new();
     let mut conflict_keys = BTreeSet::new();
     for pair in normalized.windows(2) {
@@ -179,7 +179,7 @@ fn reconcile(
         header: header.clone(),
         records,
     };
-    annotation.validate(duration, ontology)?;
+    annotation.validate_in_range(coverage, ontology)?;
     Ok(Product {
         annotation,
         conflicts,
@@ -208,12 +208,14 @@ pub async fn run(
     let common = include_str!("../../prompts/semantic-common.md");
     let instruction = prompt(item)?;
     let name = format!("semantic.{item}");
-    let params = json!({"contact_recipe":media::contact_proxy::RECIPE_VERSION,"window_us":options.window_us,"overlap_us":5_000_000,"fps":options.fps,"ontology":options.ontology,"prompt_hash":storage::cache_key(&(common,instruction,1))?,"kind":provider.endpoint.kind,"base_url":provider.endpoint.base_url,"model":provider.endpoint.model});
+    let params = json!({"stream_coverage_recipe":1,"contact_recipe":media::contact_proxy::RECIPE_VERSION,"window_us":options.window_us,"overlap_us":5_000_000,"fps":options.fps,"ontology":options.ontology,"prompt_hash":storage::cache_key(&(common,instruction,1))?,"kind":provider.endpoint.kind,"base_url":provider.endpoint.base_url,"model":provider.endpoint.model});
     let key = station_key(episode, stream, &name, &params)?;
     let directory = stream_directory(sidecar, stream, &episode.time.reference);
     let path = directory.join(format!("{name}.jsonl"));
     let product_path = directory.join(format!("{name}.conflicts.json"));
-    let duration = episode.duration_us()?;
+    let coverage = episode
+        .video_coverage(stream)?
+        .ok_or_else(|| anyhow::anyhow!("no stream coverage in episode"))?;
     if !options.recompute && path.is_file() && product_path.is_file() {
         let annotation = AnnotationFile::read(&path)?;
         let saved: Product = serde_json::from_slice(&fs::read(&product_path)?)?;
@@ -221,7 +223,7 @@ pub async fn run(
             && saved.annotation.header.input_hash == key
             && storage::cache_key(&annotation)? == storage::cache_key(&saved.annotation)?
         {
-            annotation.validate(duration, options.ontology.as_ref())?;
+            annotation.validate_in_range(coverage, options.ontology.as_ref())?;
             return Ok(Product {
                 annotation,
                 conflicts: saved.conflicts,
@@ -251,7 +253,14 @@ pub async fn run(
         .into_iter()
         .map(|t| episode.source_to_episode(stream, t))
         .collect::<Result<Vec<_>>>()?;
-    let windows = media::chunks(duration, options.window_us, 5_000_000)?;
+    let windows = media::chunks(
+        coverage.end_us - coverage.start_us,
+        options.window_us,
+        5_000_000,
+    )?
+    .into_iter()
+    .map(|window| TimeRange::from_clip(coverage.start_us, window))
+    .collect::<Result<Vec<_>>>()?;
     let checkpoints = Checkpoints::new(sidecar);
     let mut units = Vec::new();
     for (index, window) in windows.iter().enumerate() {
@@ -315,14 +324,14 @@ pub async fn run(
         &units,
         &header,
         &pts,
-        duration,
+        coverage,
         options.ontology.as_ref(),
     )?;
     // Keep the conflict provenance recoverable if publication is interrupted.
     storage::write_json(&product_path, &product)?;
     product
         .annotation
-        .publish(&path, duration, options.ontology.as_ref())?;
+        .publish_in_range(&path, coverage, options.ontology.as_ref())?;
     Ok(product)
 }
 
@@ -334,6 +343,123 @@ mod tests {
     }
     fn subtask(text: &str, start: i64) -> serde_json::Value {
         json!({"records":[{"start_us":start,"end_us":6000000,"confidence":0.8,"text":text,"index":0}]})
+    }
+    #[tokio::test]
+    async fn short_offset_camera_annotates_only_its_coverage_and_roundtrips_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.mp4");
+        media::run(
+            std::process::Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=64x64:rate=2:duration=7",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let mut episode = crate::index::discover::ordinary_episode(&source).unwrap();
+        let mut camera = episode.streams[0].clone();
+        if let Stream::Video {
+            id,
+            primary,
+            range_us,
+            ..
+        } = &mut camera
+        {
+            *id = "short".into();
+            *primary = false;
+            *range_us = [1_000_000, 3_000_000];
+        }
+        episode.streams.push(camera);
+        episode.time.mappings.insert(
+            "short".into(),
+            crate::episode::TimeMapping {
+                a: 1.,
+                b_us: 2_000_000,
+                status: crate::episode::MappingStatus::Calibrated,
+            },
+        );
+        let coverage = TimeRange::new(2_000_000, 4_000_000).unwrap();
+        assert_eq!(episode.video_coverage("short").unwrap(), Some(coverage));
+        let sheet =
+            contact::build(&episode, "short", TimeRange::new(0, 7_000_000).unwrap(), 2.).unwrap();
+        assert_eq!(
+            sheet.frame_times_us,
+            vec![2_000_000, 2_500_000, 3_000_000, 3_500_000]
+        );
+        assert!(
+            contact::build(
+                &episode,
+                "short",
+                TimeRange::new(4_000_000, 7_000_000).unwrap(),
+                2.
+            )
+            .is_err()
+        );
+        let (base, server) = crate::providers::tests::server(vec![
+            (200, response(json!({"ok":true}))),
+            (200, response(json!({"description":"Hold the cup."}))),
+            (
+                200,
+                response(
+                    json!({"records":[{"start_us":0,"end_us":2000000,"confidence":0.8,"text":"Hold the cup","index":0}]}),
+                ),
+            ),
+        ]);
+        let workspace = dir.path().join("workspace");
+        let sidecar = crate::index::discover::publish_episode(&workspace, &episode, None).unwrap();
+        let mut endpoint = crate::config::Config::default().vision;
+        endpoint.base_url = base;
+        let provider = Provider::new(
+            endpoint,
+            None,
+            1,
+            None,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .unwrap();
+        let product = run(
+            &episode,
+            "short",
+            "subtask",
+            &sidecar,
+            &workspace,
+            &provider,
+            &Options::default(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(product.annotation.records[0].range().unwrap(), coverage);
+        product
+            .annotation
+            .validate_in_range(coverage, None)
+            .unwrap();
+        assert_eq!(
+            crate::index::records::sidecars(&workspace).unwrap().len(),
+            1
+        );
+        assert_eq!(server.join().unwrap().len(), 3);
+        episode.time.mappings.get_mut("short").unwrap().b_us = 10_000_000;
+        let error = run(
+            &episode,
+            "short",
+            "subtask",
+            &sidecar,
+            &workspace,
+            &provider,
+            &Options::default(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("no stream coverage"));
     }
     #[tokio::test]
     async fn subtask_resumes_failed_window_and_preserves_whole_episode_coverage() {
