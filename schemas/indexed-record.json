@@ -1,0 +1,58 @@
+{
+  "$id": "https://cerul.ai/schemas/indexed-record/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Row",
+  "type": "object",
+  "properties": {
+    "annotation": {
+      "type": "string"
+    },
+    "episode": {
+      "type": "string"
+    },
+    "record": {
+      "$ref": "#/$defs/Record"
+    },
+    "stream": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "episode",
+    "stream",
+    "annotation",
+    "record"
+  ],
+  "$defs": {
+    "Record": {
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "id": {
+          "type": "string"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "start_us",
+        "end_us"
+      ]
+    }
+  }
+}

@@ -1,0 +1,228 @@
+{
+  "$id": "https://cerul.ai/schemas/status/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Status",
+  "type": "object",
+  "properties": {
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      }
+    },
+    "episodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EpisodeStatus"
+      }
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/ProviderStatus"
+      }
+    },
+    "space_details": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/SpaceMetadata"
+      }
+    },
+    "spaces": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "version": {
+      "type": "string"
+    },
+    "workspace": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "workspace",
+    "episodes",
+    "spaces",
+    "space_details",
+    "capabilities",
+    "providers"
+  ],
+  "$defs": {
+    "EmbeddingStatus": {
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "space_id": {
+          "type": "string"
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stream",
+        "space_id",
+        "complete"
+      ]
+    },
+    "EpisodeStatus": {
+      "type": "object",
+      "properties": {
+        "annotations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "embedding_spaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "embeddings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EmbeddingStatus"
+          }
+        },
+        "episode_id": {
+          "type": "string"
+        },
+        "media": {
+          "type": "string"
+        },
+        "media_present": {
+          "type": "boolean"
+        },
+        "sidecar": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "episode_id",
+        "media",
+        "sidecar",
+        "media_present",
+        "annotations",
+        "embedding_spaces",
+        "embeddings"
+      ]
+    },
+    "PerceptionCapabilities": {
+      "type": "object",
+      "properties": {
+        "models": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "tasks",
+        "models"
+      ]
+    },
+    "ProviderStatus": {
+      "type": "object",
+      "properties": {
+        "advertised": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PerceptionCapabilities"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "checked_at": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "supported": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "base_url"
+      ]
+    },
+    "SpaceMetadata": {
+      "description": "Public vector-space identity. Credentials and key environment names are excluded.",
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string"
+        },
+        "dims": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "query_template": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "base_url",
+        "model",
+        "dims",
+        "query_template"
+      ]
+    }
+  }
+}

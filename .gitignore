@@ -1,40 +1,24 @@
 .DS_Store
 .env
-.env.production
-.env.local
-.env.*.local
-.venv/
-venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+.env.*
+.dev.vars
+.claude/
+.codex/
+.cerul/
+*.cerul/
+target/
 node_modules/
-.next/
-*.tsbuildinfo
 dist/
 build/
 coverage/
 test-results/
-tmp/
-.turbo/
 artifacts/
+tmp/
 *.log
-scripts/.seed_broll_state.json
-eval/.video_cache/
-eval/*_log.txt
-eval/*_details.json
-eval/*_results.tsv
-
-# CF Workers local secrets
-api/.dev.vars
+# Preserve exclusions for local artifacts from the retired implementation.
+.next/
+.vercel/
 .wrangler/
-.vercel
-
-# Claude Code local config
-.claude/
-
-# Multi-language package outputs
-target/
-*.egg-info/
+__pycache__/
+*.pyc
+.venv/

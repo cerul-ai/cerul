@@ -1,0 +1,72 @@
+{
+  "$id": "https://cerul.ai/schemas/annotation-header/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Header",
+  "type": "object",
+  "properties": {
+    "$cerul": {
+      "type": "string"
+    },
+    "cerul_version": {
+      "type": "string"
+    },
+    "created": {
+      "type": "string"
+    },
+    "episode": {
+      "type": "string"
+    },
+    "input_hash": {
+      "type": "string"
+    },
+    "model": {
+      "$ref": "#/$defs/Model"
+    },
+    "name": {
+      "type": "string"
+    },
+    "params": true,
+    "record_schema": {
+      "type": "string"
+    },
+    "stream": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "$cerul",
+    "name",
+    "episode",
+    "stream",
+    "model",
+    "params",
+    "created",
+    "cerul_version",
+    "input_hash",
+    "record_schema"
+  ],
+  "$defs": {
+    "Model": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    }
+  }
+}

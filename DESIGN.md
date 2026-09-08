@@ -1,122 +1,127 @@
 # Cerul CLI
 
-定稿 2026-09-08。本仓库全部重写，旧内容不保留（只留 LICENSE、Git 历史、Releases 里的 `ffmpeg-vendor-*` 资产，Desktop 构建依赖它们）。本文只写接下来要做的东西。
+Implementation baseline, 2026-09-08. This repository is being rewritten. Retain LICENSE, Git history, and the existing `ffmpeg-vendor-*` release assets used by Desktop builds; retire the old client surfaces.
 
-**一句话**：`cerul` 把视频变成可搜索、可标注、可用于训练的数据。装上即用，自己填模型 Key，不需要 Cerul 账号。
+**Purpose:** `cerul` turns video into searchable, annotated data suitable for downstream training workflows. Users supply their own model keys. No Cerul account is required.
 
----
+## 1. Decisions
 
-## 1. 决策
+| Area | Decision |
+| --- | --- |
+| Language | Rust, one crate with a library and one binary. ffmpeg subprocesses, four endpoint types, LanceDB, and embedded OCR. No PyTorch, GPU runtime, Python runtime, or plugins. |
+| Commands | M1: `index`, `annotate`, `search`, `status`, `clean`. HTTP and MCP `serve` belong to M2. |
+| Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
+| Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
+| Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, and query instruction template. The same model name at different endpoints is a different space. Queries must match exactly. |
+| Endpoints | `embedding`, `vision`, and `transcription` support `kind = gemini \| openai` with user keys. `perception` follows the Cerul contract and defaults to Cerul Cloud; perception processing is not implemented in M1. Missing perception must not block indexing/search. |
+| Default models | One Gemini key: `gemini-embedding-2` at 1536 dimensions and `gemini-3.8-flash`. |
+| OCR | Embedded PP-OCRv6 small, approximately 31 MB of weights, CPU inference through `tract-onnx`, enabled by default. This is the only embedded model and the only exception to endpoint-based inference. |
+| Retrieval | One multimodal space. Each 30-second unit has up to three independently embedded rows: video, transcript, screen text. The embedding endpoint must accept video and images; unsupported endpoints fail, without a text-only fallback. No BM25 or fusion. Exact strings use `--text` substring matching. Annotation filtering happens before vector search. |
+| Annotations | Three fixed families: `semantic`, `grounding`, `world`. Subtypes may grow. All derived records are annotations. |
+| Time | Integer microseconds, half-open intervals, episode-relative time derived from PTS. |
+| Cameras | Process the primary camera by default; `--streams all` expands selection. |
+| Language | Annotation text fields are English. |
+| LeRobot | Read v3.0 and v3.1 and produce sidecars. Writeback accepts only an existing compatible v3.1 dataset and writes subtask language entries. v3.0 writeback is unsupported; Cerul does not upgrade formats. Events and flags remain in sidecars. |
+| Platforms | M1: macOS arm64 and Linux x86_64. Windows is M2. |
+| Versions | Increment `v0.0.x` without alpha/beta suffixes. The old npm package reached 0.0.2; the first rewritten release is **v0.0.3**, with the same version on crates.io. Milestones M1/M2/M3 are not fixed version numbers. |
+| Distribution | cargo-dist shell installer, Homebrew formula, and npm `cerul` wrapper. |
+| Telemetry | None. |
+| Cloud | Consumes the same binary through `serve`. Quota accounting and hosted perception implementation stay in the private cloud product; the CLI passes `CERUL_API_KEY`. |
+| Scope | M1 is a complete video retrieval and semantic annotation CLI requiring only third-party model credentials. Pose, depth, and segmentation depend on later perception services and must not be advertised as available. |
 
-| 项 | 选择 |
-|---|---|
-| 语言 | Rust，单 crate，单二进制。里面只有：ffmpeg 子进程、四种模型端点客户端、LanceDB、内置 OCR。没有 PyTorch、GPU、Python、插件 |
-| 命令 | M1 五个：`index` `annotate` `search` `status` `clean`。`serve`（HTTP 与 MCP）整体在 M2 |
-| 结构 | 逻辑全在 `lib.rs`，`main.rs` 只解析参数、调库、打印。Desktop 可直接链接库，或起子进程读 `--json` 进度事件，不依赖 `serve` |
-| 真相 | 每个 episode 一个旁车目录（普通视频：`demo1.mp4.cerul/`），jsonl 与 parquet，**含 embedding 向量**。索引是可从旁车零调用重建的缓存 |
-| 索引 | LanceDB，每个 `space_id` 一个目录。`space_id` = hash(kind, base_url, model, dims, 查询指令模板)，同名模型不同端点即不同空间，查询严格匹配 |
-| 模型端点 | `embedding` `vision` `transcription`（`kind = gemini \| openai`，用户自己的 Key）+ `perception`（Cerul 契约，默认 Cerul Cloud，M1 阶段不实现）。能力检查按当前命令所需执行，缺 perception 不影响 index/search |
-| 默认模型 | 全 Gemini 一把 Key：`gemini-embedding-2`（1536 维）、`gemini-3.8-flash` |
-| OCR | 内置 PP-OCRv6 small（31MB，`tract-onnx`，CPU），默认开。二进制里唯一的模型，唯一例外 |
-| 检索 | 一个多模态向量空间：每 30 秒单元最多三行（视频、转录文本、屏幕文字）同一模型嵌入。**embedding 端点必须支持视频与图像输入，否则报不支持，没有纯文本回退**。无 BM25、无融合。精确字符串走 `--text` 子串模式。annotation 过滤在向量检索**之前**生效 |
-| 标注 | 三大类固定：`semantic` `grounding` `world`；子项可增。派生数据统称 annotation |
-| 时间 | 整数微秒，半开区间，episode 时间轴，来自 PTS |
-| 多相机 | 默认只处理主相机，`--streams all` 扩大 |
-| 语言 | annotation 文本字段固定英文 |
-| LeRobot | v3.0 与 v3.1 都能读取并生成旁车；`--write-lerobot` 只对已经是 v3.1 的数据集写回（language 列是 v3.1 引入的），v3.0 数据集报不支持，不做格式升级。M1 只写回 `subtask`，event/flag 留在旁车 |
-| 平台 | M1：macOS arm64、Linux x86_64。Windows M2 |
-| 版本 | 只用 `v0.0.x` 递增，没有 alpha 或 beta 后缀。npm 已发到 0.0.2，首个发布是 **v0.0.3**，crates.io 同号。里程碑用 M1/M2/M3 指代，不绑具体版本号 |
-| 发布 | cargo-dist：curl 脚本、Homebrew、npm `cerul` 壳 |
-| 遥测 | 零 |
-| 云端 | 消费同一个二进制的 `serve`；额度计量与 perception 实现都在云端，CLI 只透传 `CERUL_API_KEY` |
-| 范围 | M1 是完整的视频检索与语义标注 CLI，只需第三方 Key；姿态、深度、分割依赖后续 perception 服务，不宣传为现在可用 |
+## 2. Usage
 
----
+The intended release installation entry point is shown below. It must be connected and verified before being advertised as live.
 
-## 2. 用法
-
-```bash
+~~~sh
 curl -fsSL https://cerul.ai/install.sh | sh
 export GEMINI_API_KEY=...
 
-cerul index ./videos                          # 登记、probe、转录、OCR、embedding
-cerul search "拿起杯子后又放回桌上"
+cerul index ./videos
+cerul search "Pick up the cup, then put it on the table"
 cerul search --image ref.png --save ./clips
 cerul search --text "ECONNREFUSED"
 cerul annotate ./videos --semantic
 cerul search --filter semantic.event.verb=regrasp
 cerul status
-```
+~~~
 
-依赖：`ffmpeg`/`ffprobe` ≥ 6.0 在 PATH。工作区默认 `~/.cerul/`，`--workspace` 或 `CERUL_WORKSPACE` 覆盖。
+Runtime prerequisite: ffmpeg and ffprobe 6.0 or later on PATH. The default workspace is `~/.cerul/`, overridden by `--workspace` or `CERUL_WORKSPACE`. Source-build instructions are in README until publication is verified.
 
----
+## 3. Commands
 
-## 3. 命令
+Global options: `--json`, `--workspace`, `--recompute`, `--dry-run`, `--yes`, `-q`, `-v`. Configuration overrides use repeated `--set KEY=TOML_VALUE`.
 
-全局：`--json`（stdout 只出一个最终 JSON；stderr 每行一个 JSON 事件：`{"event":"progress","episode":…,"station":"embed","done":37,"total":120}` 与 `{"event":"log","level":…,"msg":…}`，Desktop 起子进程即可读进度）、`--workspace`、`--recompute`、`--dry-run`、`--yes`、`-q`/`-v`。退出码：0 成功，2 参数或配置，3 缺依赖或能力，4 执行失败，5 取消，6 部分成功。
+In JSON mode, stdout contains exactly one final JSON object. Each stderr line is a JSON event, for example:
+
+~~~json
+{"event":"progress","episode":"dataset/12","station":"embed","done":37,"total":120}
+{"event":"log","level":"info","msg":"Indexing started"}
+~~~
+
+Exit codes: 0 success; 2 arguments/configuration; 3 missing dependency or unsupported capability; 4 execution failure; 5 cancellation; 6 partial success.
 
 ### `index <path>...`
 
-`<path>`：文件、目录、LeRobot v3 数据集，自动识别。
+Accept files, directories, and automatically detected LeRobot v3 datasets.
 
-| 参数 | 默认 |
-|---|---|
-| `--chunk 30s` `--overlap 5s` | 单元 ≤ 32s（Gemini 视频 embedding 按 1 fps 采样上限） |
-| `--no-audio` `--no-ocr` `--skip-still` | 转录按 probe 自动，OCR 默认开；静止单元不嵌入 |
-| `--streams primary\|all\|a,b` | primary |
-| `--only SEL` | 全部 |
-| `--jobs 4` `--rpm N` | |
-| `--sidecar-dir DIR` | 媒体目录不可写时用 `~/.cerul/sidecars/<sha256>/` |
+| Options | Behavior/default |
+| --- | --- |
+| `--chunk 30s`, `--overlap 5s` | Default units stay within 32 seconds to retain Gemini's 1 fps sampling density. This is not a hard endpoint duration limit. |
+| `--no-audio`, `--no-ocr`, `--skip-still` | Transcribe when an audio track is present; OCR is enabled by default. Skip embedding stationary units when requested. |
+| `--streams primary\|all\|a,b` | Default: primary. |
+| `--only SEL` | Default: all episodes. |
+| `--jobs 4`, `--rpm N` | Bound remote concurrency and request rate. Local OCR uses at most --jobs workers and the available CPU count; results remain ordered by source time. |
+| `--sidecar-dir DIR` | Override sidecar placement. Unwritable ordinary media use workspace `sidecars/<sha256>/`. Unwritable LeRobot datasets use `sidecars/<dataset_id>/<episode_index>/`; their stable identity is cached under workspace `datasets/` using the canonical source path. |
 
-流程：发现 → sha256 → ffprobe → 站（transcript / screen_text / embed）→ 写 Lance。已存在且哈希、模型、参数未变的产物跳过。
+Pipeline: discover → SHA-256 → ffprobe → transcript/screen_text/embed stations → Lance publication. Skip completed outputs when content, model, and parameters match.
 
 ### `annotate <path>... --semantic [items] --grounding [items] --world [items]`
 
-| 参数 | 默认 |
-|---|---|
-| `--semantic` | LeRobot 数据集：`task,subtask,event,interaction,state,flag,progress`；普通视频：`task,subtask,flag`，其余三个显式指定 |
-| `--grounding` | `box,affordance`（`mask` `track` `keypoint` 需 perception，M2） |
-| `--world` | `camera,hand,object,depth,points`，全部需 perception，M2 起 |
-| `--streams` `--only` `--ontology FILE` `--window 30s` `--fps 2` | 词表：LeRobot 默认 `cerul.verbs.v1` 并校验 verb；普通视频不给 `--ontology` 时 verb 为自由文本，不校验 |
-| `--write-lerobot` `--out DIR` | 默认不动用户数据集；只接受 v3.1 数据集 |
+| Options | Behavior/default |
+| --- | --- |
+| `--semantic` | LeRobot: task, subtask, event, interaction, state, flag, progress. Ordinary video: task, subtask, flag; the other four are explicit selections. |
+| `--grounding` | M2: box and affordance. Mask, track, and keypoint require perception and are later capabilities. |
+| `--world` | Camera, hand, object, depth, points; all require perception, M2 onward. |
+| `--streams`, `--only`, `--ontology FILE`, `--window 30s`, `--fps 2` | LeRobot defaults to `cerul.verbs.v1` with verb validation. Ordinary videos have unrestricted verbs unless an ontology is supplied. |
+| `--write-lerobot`, `--out DIR` | No dataset mutation by default. Writeback accepts only an existing compatible v3.1 dataset. |
 
-每个子项一个模块：抽帧 → 带时间戳接触表 → 模型调用（JSON Schema 约束）→ `staging/` → 校验 → 写 annotation 文件 → 更新 `records` 表。校验失败整模块不落盘，其他模块不受影响。
+Each subtype is a module: frames → timestamped contact sheet → schema-constrained model response → staging → validation → annotation publication → records index update. Invalid modules publish nothing; independent modules can still succeed.
 
 ### `search [query]`
 
-| 参数 | 默认 |
-|---|---|
-| `--image PATH` | query、`--image`、`--filter` 至少一个；只给 `--filter` 时不算向量，按时间顺序返回匹配记录 |
-| `--limit 10` `--threshold X` | M1 无默认阈值 |
-| `--filter k=v`（可重复） | 键：`<annotation>.<field>`、`episode`、`stream`、`kind`；运算 `= != > < ~`。先解析成时间范围，再在范围内做向量检索（预过滤，不是取前 k 再过滤） |
-| `--in PATH` | |
-| `--count` | 只与 `--filter` 连用，返回精确标签的记录数与 episode 数。不提供自然语言探针计数 |
-| `--save DIR` `--pad 2s` | 命中切 mp4 |
-| `--rerank` | vision 模型重排前 20（M2） |
-| `--text` | 子串匹配转录与屏幕文字，不走向量 |
+| Options | Behavior/default |
+| --- | --- |
+| `--image PATH` | Supply a text query, image, or filter. Filters alone skip embeddings and return records in time order. |
+| `--limit 10`, `--threshold X` | No default score threshold in M1. |
+| Repeated `--filter k=v` | Keys: `<annotation>.<field>`, episode, stream, kind. Operators: `= != > < ~`. Convert filters to temporal ranges before vector ranking; do not filter only the top-k results. |
+| `--in PATH` | Restrict the searched input scope. |
+| `--count` | Filters only: return exact-label record and episode counts. No natural-language probe counting. |
+| `--save DIR`, `--pad 2s` | Save matched MP4 clips. |
+| `--rerank` | M2: vision reranking of the first 20 candidates. |
+| `--text` | Substring match over transcript and screen text without vectors. |
 
-返回 `hits[]: {episode, stream, start_us, end_us, frame_range?, score, matched: video|speech|screen, excerpt, annotations[]}`。
+Results: `hits[]` containing episode, stream, start_us, end_us, optional frame_range, score, matched (video/speech/screen), excerpt, and annotations.
 
 ### `status [path]`
 
-工作区总览或某 episode 的 annotation 清单。`--providers` 探测四种端点能力并缓存 7 天。`--json` 根对象含 `capabilities`。`cerul` 不带子命令等于 `status`。
+Return a workspace overview or an episode's annotation inventory. Running `cerul` without a command is equivalent to status.
+
+Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes all four endpoints, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not imply that M1 implements grounding/world.
 
 ### `clean`
 
-`--index SPACE_ID`（`status` 列出 space_id 与对应模型）`--all-indexes` `--cache` `--compact`；`--sidecars PATH --yes` 是唯一删旁车的方式。全部支持 `--dry-run`。
+Options: `--index SPACE_ID`, `--all-indexes`, `--cache`, `--compact`. Status lists space IDs and corresponding models. Only `--sidecars PATH --yes` deletes sidecars. All cleanup operations support `--dry-run`. Explicit sidecar deletion records durable intent before removing index rows and files. If interrupted, repeating the same explicit cleanup resumes even when the sidecar is partially removed or absent. Dry runs never record intent or delete data.
 
-### `serve`（M2）
+### `serve` (M2)
 
-`--mcp`：stdio MCP，暴露 index/annotate/search/status，schema 与 `--json` 一致。HTTP：`--host 127.0.0.1` `--port 0` `--token`（自动，`<workspace>/runtime/token`），供 Cloud 使用。M1 不实现；Desktop 在 M1 用子进程加 `--json` 事件接入。
+`--mcp` serves stdio MCP tools for index, annotate, search, and status with schemas matching CLI JSON. HTTP options: `--host 127.0.0.1`, `--port 0`, and an automatic token under workspace `runtime/token`. Desktop M1 integration uses the library or subprocess NDJSON events.
 
----
+## 4. Configuration and models
 
-## 4. 配置与模型
+Precedence: CLI overrides → environment → current-directory `cerul.toml` → `~/.cerul/config.toml` → defaults. Configuration stores key environment variable names, not secret values.
 
-优先级：命令行 > 环境变量 > `./cerul.toml` > `~/.cerul/config.toml`。只记 Key 的环境变量名。
-
-```toml
+~~~toml
 [embedding]
 kind = "gemini"
 model = "gemini-embedding-2"
@@ -130,7 +135,7 @@ model = "gemini-3.8-flash"
 kind = "gemini"
 model = "gemini-3.8-flash"
 
-# 换本地或第三方端点的写法：
+# Example local or third-party endpoints:
 # [vision]
 # kind = "openai"
 # base_url = "http://localhost:11434/v1"
@@ -142,203 +147,218 @@ model = "gemini-3.8-flash"
 # model = "whisper-large-v3-turbo"
 # api_key_env = "GROQ_API_KEY"
 #
-# [perception]                     # 默认值，M1 不用写
+# [perception]  # Defaults; unnecessary for M1 processing.
 # base_url = "https://api.cerul.ai"
 # api_key_env = "CERUL_API_KEY"
-```
+~~~
 
-| 能力 | gemini | openai |
-|---|---|---|
-| embedding | `embedContent`，`outputDimensionality=1536`，文本查询前加 "Retrieve video segments matching:" | `/v1/embeddings`。**必须接受图像与视频输入**，探测时发一张图与一段 2 秒视频；只支持文本的端点直接报不支持 |
-| vision | `generateContent` + `responseSchema` | `/v1/chat/completions` + `image_url` + `json_schema` |
-| transcription | `generateContent` 输入音频，schema 分段 | `/v1/audio/transcriptions`，`verbose_json`，segment 粒度 |
+| Capability | Gemini | OpenAI-compatible |
+| --- | --- | --- |
+| Embedding | `embedContent`, outputDimensionality=1536. Text query instruction: `task: search result \| query: {query}`. | `/v1/embeddings` with text, image, and video support. Reject text-only endpoints. |
+| Vision | `generateContent` with responseSchema. | `/v1/chat/completions` with image_url and json_schema. |
+| Transcription | Audio `generateContent` with a segment schema. | `/v1/audio/transcriptions`, verbose_json, segment timestamps. |
 
-探测只针对本次真正要发出的远程调用，不按命令名：`index` 在有待嵌入的单元时探测 embedding、有待转录的音轨时探测 transcription；`annotate` 按所选子项探测 vision 或 perception；`search` 只在要算查询向量时探测 embedding。纯 `--filter` 查询、`--text`、从旁车重建索引、`status`、`clean` 不发任何探测。`status --providers` 全查。embedding 发一句话、一张图、一段 2 秒视频核维度与模态；vision 发 64×64 图要 `{"ok":true}`；transcription 发 1 秒静音；perception 读 `/capabilities`。所需能力探测失败退出码 3，不开始处理媒体。首次向某端点发送媒体打印一次提示，`--yes` 跳过。
+Probe the remote calls actually needed, not command names. Index probes embedding only for pending vectors and transcription only for pending audio. Annotate probes selected vision/perception capabilities. Search probes only when computing a query vector. Filters alone, exact text, sidecar rebuilds, ordinary status, and cleanup make no probe calls.
 
-请求一律内联，编码后按真实字节数检查端点上限（Gemini 20MB），超限先降码率再切分。
+Embedding probes send a sentence, image, and two-second video and check dimensions/modalities. Vision requests `{"ok":true}` from a 64×64 image. Transcription uses one second of silence. Perception reads `/capabilities`. Explicitly unsupported required capabilities fail with code 3 before processing media. Temporary network failures allow local probe/frame/OCR stations to finish, mark remote work incomplete, and return code 6; a later run fills the gaps.
 
-### perception 契约（M2 起，CLI 只认契约）
+Print a notice before the first media request to each endpoint; `--yes` suppresses it. Requests are inline. Check the actual encoded request byte size against endpoint limits (Gemini: 20 MB); reduce bitrate, then split if needed.
 
-| 路由 | 入 | 出 | 子项 |
-|---|---|---|---|
-| `GET /capabilities` | | `{version, tasks[], models{}}` | |
-| `POST /segment` | 帧 zip + 文本或框提示 | 每帧 RLE | `grounding.mask` |
-| `POST /track` | 代理片段 + 起始点/框 | `[[t_us,x,y,visible]]` | `grounding.track` |
-| `POST /depth` | 帧 zip | 16 位 png + scale | `world.depth` |
-| `POST /camera` | 代理片段 + 可选内参 | 位姿序列 + 点云 | `world.camera` `world.points` |
-| `POST /hand` | 代理片段 | 双手关节序列 + valid | `world.hand` |
+### Perception contract (M2 onward)
 
-输入是 CLI 上传的字节，服务端不读调用方路径。
+The CLI consumes the contract; hosted inference implementation stays outside this repository.
 
----
+| Route | Input | Output | Annotation |
+| --- | --- | --- | --- |
+| GET /capabilities | — | version, tasks[], models{} | — |
+| POST /segment | Frame ZIP plus text/box prompt | Per-frame RLE | grounding.mask |
+| POST /track | Proxy clip plus initial point/box | [[t_us,x,y,visible]] | grounding.track |
+| POST /depth | Frame ZIP | 16-bit PNG plus scale | world.depth |
+| POST /camera | Proxy clip plus optional intrinsics | Poses and point cloud | world.camera, world.points |
+| POST /hand | Proxy clip | Both hands' joints plus valid | world.hand |
 
-## 5. 存储
+Inputs are uploaded bytes. The server must not read caller-local paths.
 
-```text
+## 5. Storage
+
+~~~text
 videos/
   demo1.mp4
   demo1.mp4.cerul/
-    episode.json                # 流列表（sha256、probe、primary）、时间轴、任务
-    transcript.jsonl            # 以下皆 annotation，文件名 = annotation 名
+    episode.json
+    transcript.jsonl
     screen_text.jsonl
     semantic.subtask.jsonl
-    grounding.box.jsonl
-    world.hand.parquet          # 逐帧稠密数据用 parquet
-    embeddings/<space_id>.parquet   # 向量：stream, kind, start_us, end_us, vector, params_hash。索引从它重建，clean 不删
-    staging/  log.jsonl
+    grounding.box.jsonl              # Later milestone.
+    world.hand.parquet              # Later, dense per-frame data.
+    embeddings/<space_id>.parquet    # Authoritative vectors and ranges.
+    embeddings/<space_id>.json       # Public space metadata, no keys.
+    streams/<stream_id>/             # Non-primary stream annotations.
+    staging/
+    log.jsonl
 
-my_dataset/                     # LeRobot v3
+my_dataset/
   meta/ data/ videos/
-  .cerul/dataset.json           # dataset_id（首次 index 生成的 uuid）+ 根路径 + info.json 哈希
-  .cerul/episodes/000012/       # 同上结构
+  .cerul/dataset.json                # UUID, root, info.json hash.
+  .cerul/episodes/000012/             # Per-episode sidecar.
 
 ~/.cerul/
-  config.toml  providers.json  runtime/token
-  registry.jsonl                # index 过的根路径 + sha256→旁车；视频移动后按哈希找回
-  cache/<sha256>/proxy.mp4
-  sidecars/<sha256>/
-  index/<space_id>/chunks.lance  records.lance
-```
+  config.toml
+  providers.json
+  runtime/token
+  runtime/lock
+  registry.jsonl                    # Input paths and media hash -> sidecar.
+  cache/<sha256>/proxies/<recipe_hash>.mp4
+  cache/<sha256>/proxies/<recipe_hash>.json
+  cache/<sha256>/contact/<recipe_hash>.mp4
+  cache/<sha256>/contact/<recipe_hash>.json
+  datasets/                         # Read-only dataset identity cache.
+  sidecars/<sha256>/                # Ordinary-video fallback.
+  sidecars/<dataset_id>/<local_id>/ # LeRobot fallback.
+  index/<space_id>/chunks.lance
+  index/<space_id>/records.lance
+~~~
 
-单机单写：`runtime/lock` 文件锁，拿不到锁退出码 4。
+Embedding Parquet rows contain stream, kind, start_us, end_us, vector, and params_hash. The adjacent JSON records kind/base_url/model/dims/query_template for status inspection. Primary annotations remain at the sidecar root; non-primary annotations cannot overwrite them.
 
-**写入与恢复规则**（M1 只有这两条）：
+Proxy metadata stores the recipe and output hash; missing/corrupt files are rebuilt. Contact proxy metadata additionally preserves original source-relative PTS for each sampled frame. It must not substitute the proxy encoder's frame clock.
 
-1. 任何产物先写 `staging/` 临时文件，校验通过后原子改名到正式位置；正式位置不存在半成品。
-2. `index` 与 `annotate` 幂等：旁车里已完成的站跳过，只补缺的；旁车完成但 Lance 缺行时只补索引，零模型调用。`--recompute` 整文件重写。
+One workspace writer holds `runtime/lock`; contention returns code 4. LeRobot directory locks coordinate different workspaces: shared for reads and output copies, exclusive for in-place replacement and recovery. Read-only dataset directories need no new lock file.
 
-M2 随 `serve` 一起加：job 状态文件与 `/jobs/{id}`；随 Desktop 编辑入口一起加：人工修订记录与 `supersedes` 读取规则。M1 没有这两者的消费者。
+M1 publication and recovery rules:
 
----
+1. Write outputs to temporary staging files, validate, then atomically rename to their final location. No incomplete artifact occupies a final path.
+2. Index and annotate are idempotent: skip completed stations and resume missing work. If sidecars exist but Lance rows are absent, restore the index with zero model calls. `--recompute` rewrites complete artifacts. Persist validated, cache-keyed per-unit checkpoints so successful units survive interruptions. Replace indexed rows by episode, stream, and artifact version, including removal of stale rows. An index update failure preserves valid sidecars; subsequent commands resynchronize the corresponding projection.
 
-## 6. 数据模型
+M2 adds job state and /jobs/{id} alongside serve. Human revisions and supersedes semantics arrive with the Desktop editing consumer. Neither has an M1 consumer.
 
-**episode**：一次录制，一到多条流与共同时间轴。M1 识别规则只有两条：LeRobot 数据集按其元数据；其余每个视频各自是单流 episode。用户手写 `episode.json` 描述多相机目录在 M2。
+## 6. Data model
 
-**身份**：全局 `episode_id = <dataset_id>/<local_id>`。单流视频的 `dataset_id` 是视频 sha256 前 16 位，`local_id` 固定 `0`；LeRobot 的 `dataset_id` 是 `.cerul/dataset.json` 里首次 index 生成的 uuid，`local_id` 是原 episode_index，显示时保留原编号。两个数据集的 `000012` 永不相撞。
+**Episode:** one recording, one or more streams, and a common timeline. M1 recognizes LeRobot episodes from metadata; each other video is a single-stream episode. User-authored multi-camera episode directories are M2.
 
-**时间**：三个时间轴，转换规则固定。源文件时间 `t_src`（该 mp4 的 PTS）；episode 时间 `t_ep = t_src - range_us[0]`（主流），其他流再经 `mappings` 的 `a, b_us`；模型输入片段时间 `t_clip`，片段从 `t_ep = clip_start_us` 切出，模型返回的任何时间 `t` 一律换算 `t_ep = clip_start_us + t`。所有 annotation 与 chunks 只存 `t_ep`。例：episode 占源视频 120–150 秒，模型对该片段返回 5 秒，落盘为 `t_ep = 5 s`，对应源视频 125 秒。
+**Identity:** `episode_id = <dataset_id>/<local_id>`. For ordinary video, dataset_id is the first 16 characters of video SHA-256 and local_id is 0. LeRobot uses the persistent UUID in .cerul/dataset.json and the original episode_index. Identically numbered episodes in different datasets cannot collide.
 
-```json
-{"$cerul":"episode/1","episode_id":"9f3c2a7b1e4d5c60/000012","dataset_id":"9f3c2a7b1e4d5c60","local_id":"000012",
- "streams":[
-   {"id":"front","kind":"video","primary":true,"sha256":"…","path":"videos/front/file-0000.mp4","range_us":[120000000,150000000],
-    "probe":{"duration_us":…,"fps":30,"width":1920,"height":1080,"has_audio":false,"codec":"h264"}},
-   {"id":"state","kind":"parquet","path":"data/chunk-000/file-0000.parquet","columns":["observation.state","action"],"row_range":[3600,4500]}],
- "time":{"reference":"front","mappings":{"wrist":{"a":1.0,"b_us":0,"status":"calibrated|estimated|unknown"}}},
- "task":"Grab the black cube","source":{"format":"lerobot/3.0","root":"./my_dataset"}}
-```
+**Time:** source time `t_src` is MP4 PTS. For the primary stream, `t_ep = t_src - range_us[0]`; other streams also use their affine mapping a,b_us. Model clip time maps as `t_ep = clip_start_us + t_clip`. Annotations and chunks store only episode time. Example: an episode occupies source seconds 120–150; a model timestamp of 5 seconds becomes episode second 5, corresponding to source second 125.
 
-**annotation 文件**：jsonl，首行文件头，其后每行一条记录。
+An episode schema includes:
 
-```json
-{"$cerul":"annotation/1","name":"semantic.event","episode":"9f3c2a7b1e4d5c60/000012","stream":"front",
- "model":{"kind":"gemini","name":"gemini-3.8-flash"},"params":{…},"created":"…",
- "cerul_version":"0.0.3","input_hash":"sha256:…","record_schema":"semantic.event/1"}
-```
+- $cerul: episode/1; episode_id, dataset_id, local_id.
+- Video streams: id, kind=video, primary, SHA-256, path, source range_us, and probe (duration_us, fps, width, height, has_audio, codec).
+- Parquet streams: id, kind=parquet, path, selected columns such as observation.state/action, and row_range.
+- Time reference and mappings: a, b_us, status (calibrated/estimated/unknown).
+- Task and source format/root.
 
-记录公共字段：`id` `start_us` `end_us` `confidence`（模型自报，未校准）。读取端接受旧版本 schema，缺字段为 null；破坏性变更升主版本换文件名。
+An annotation JSONL file starts with a header containing $cerul=annotation/1, name, episode, stream, model kind/name, params, created, cerul_version, input_hash, and record_schema. Remaining lines are records. Common fields are id, start_us, end_us, and confidence (uncalibrated model self-report). Readers accept older schema versions and treat absent optional fields as null. Breaking changes increment the major schema version and use a new filename.
 
-| 类 | 子项与字段 |
-|---|---|
-| semantic | `task{text}` `subtask{text,index}`（无缝覆盖）`event{verb,objects[],actor,outcome}` `interaction{hand,object,contact}` `state{object,attribute,before,after}` `flag{kind,note}` `progress{value,done}` |
-| grounding | 坐标归一化 `[0,1]`，附 `frame_w/h`。`box{t_us,label,xyxy,track_id?}` `affordance{t_us,label,points,action_hint}` `trace{points[[t_us,x,y]],subject,label}` `keypoint` `mask{rle}` |
-| world | `frame: T_<a>_from_<b>`、`unit: m\|relative`、四元数 `xyzw`、`valid`，缺值 null。`camera{t_us,T_world_from_camera[7],intrinsics?,scale,valid}` `hand{t_us,side,joints[21][3],valid}` `object` `depth{t_us,path,scale}` `points` |
+| Family | Record subtypes and fields |
+| --- | --- |
+| semantic | task{text}; subtask{text,index}, with continuous coverage; event{verb,objects[],actor,outcome}; interaction{hand,object,contact}; state{object,attribute,before,after}; flag{kind,note}; progress{value,done}. |
+| grounding | Coordinates normalized to [0,1] with frame_w/h. box{t_us,label,xyxy,track_id?}; affordance{t_us,label,points,action_hint}; trace{points[[t_us,x,y]],subject,label}; keypoint; mask{rle}. |
+| world | Frames use T_<a>_from_<b>, units m or relative, xyzw quaternions, valid flags, null for missing values. camera{t_us,T_world_from_camera[7],intrinsics?,scale,valid}; hand{t_us,side,joints[21][3],valid}; object; depth{t_us,path,scale}; points. |
 
-**索引单元**：某视频流 30 秒区间（episode 时间），最多三行向量，`kind = video | speech | screen`。向量先落旁车 `embeddings/<space_id>.parquet`，再进 `chunks` 表。`chunks` 表列：`id, episode, stream, kind, start_us, end_us, vector[1536], text, still, space_id, params_hash`。`records` 表由旁车重建：`episode, stream, annotation, id, start_us, end_us, fields`。
+**Index unit:** a 30-second video-stream interval in episode time, with up to three rows of kind video, speech, or screen. Write vectors to sidecars before indexing.
 
-默认词表 `cerul.verbs.v1`：`reach grasp regrasp lift carry place release push pull open close insert rotate pour wipe`。
+Chunks columns: id, episode, stream, kind, start_us, end_us, vector[1536] for the default space, text, still, space_id, params_hash. Records columns: episode, stream, annotation, id, start_us, end_us, fields. Both tables are rebuildable from sidecars.
 
----
+Default `cerul.verbs.v1` vocabulary: reach, grasp, regrasp, lift, carry, place, release, push, pull, open, close, insert, rotate, pour, wipe.
 
-## 7. 关键行为
+## 7. Required behavior
 
-**index 各站**
+### Index stations
 
-- transcript：音频 ≤ 10 分钟一段，输出 `{start_us,end_us,text,lang}`。
-- screen_text：PP-OCRv6 det 跑 0.5 fps **原分辨率**关键帧（上限 1080p 长边），有框才跑 rec；DBNet 后处理与 CTC 解码 Rust 实现；连续相同文本合并。不用 480p 代理，屏幕小字会丢。性能与体积以实测为准（见第 10 节）。
-- keyframes：0.5 fps，原分辨率（上限 1080p），按需从源文件抽到临时目录，用完即删，不落 cache。proxy：480p 2 fps h264，进 cache，只用于 embedding 与接触表。
-- embed：每单元最多三次 `embedContent`，各自独立包装；请求体编码后检查真实字节数，超过端点上限（Gemini 内联 20MB）先降码率再切分，仍超则报错。向量写 `embeddings/<space_id>.parquet` 后再入 Lance。失败进 `log.jsonl`，重跑只补失败项。
-- 缓存键：`(episode_id, stream, stream_sha256, range_us, 时间映射, station, space_id 或 model, params_hash, 站版本)`。身份说明是哪份数据，内容哈希说明数据有没有变，缺一不可：同一分片里的两个 episode 靠 `range_us` 区分，编号不变但视频被替换靠 `stream_sha256` 区分。
+- **Transcript:** audio segments no longer than ten minutes; records contain start_us, end_us, text, lang.
+- **Screen text:** PP-OCRv6 detection at 0.5 fps on source-resolution frames, with a 1080-pixel maximum long edge. Recognition runs only on detected boxes. Rust implements DBNet postprocessing and CTC decoding; repeated consecutive text is merged. Do not use a 480p proxy for OCR.
+- **Frames and proxies:** 0.5 fps source keyframes (maximum 1080-pixel long edge) are temporary and removed after use. Cache 480p H.264 proxies for embeddings and contact sheets. Embedding uses 2 fps. Contact sheets default to 2 fps but honor --fps, sampling source frames before encoding and preserving their original PTS separately.
+- **Embedding:** up to three independent calls per unit. Measure the actual encoded body against the endpoint limit; reduce bitrate then split, failing explicitly if still oversized. Persist vectors before Lance. Log failures and retry only missing units.
+- **Cache identity:** episode_id, stream, stream_sha256, range_us, time mapping, station, space_id or model, params_hash, station version. Identity distinguishes datasets; content hashes detect replacement; ranges distinguish episodes sharing a shard.
 
-**annotate**：`--fps 2` 抽帧，5 列网格，每帧角上烧入**片段相对时间**（每个窗口从 0 起），模型返回的时间只加一次该窗口的 `clip_start_us`，不再叠加；subtask 先描述再切分；边界定义固定（持住、释放、到位、状态改变）；窗口重叠 5 秒，冲突写 `flag`。校验：边界吸附真实帧 PTS、subtask 无缝、verb 在词表、坐标在 `[0,1]`。
+### Semantic annotation
 
-`--write-lerobot`（M1 只写 `subtask`；输入必须已是 v3.1，否则退出码 3 并提示用 LeRobot 官方工具升级）：按 LeRobot v3.1 语言列规范写 `language_persistent`，style 固定 `subtask`，每帧恰好一条活动 subtask，时间戳直接取源 parquet 的帧时间不重算；已有的 `language_persistent`/`language_events` 内容、action、state、tasks 原样保留，只追加或替换 style 为 `subtask` 的条目；`meta/info.json` 不改动。event/flag 没有官方 style，留在旁车，不写入。写回前后各读一次同一帧做对拍。
+Sample at --fps (default 2), use a five-column contact grid, and burn **clip-relative** timestamps into frames. Each window starts at zero. Add clip_start_us exactly once to returned model times.
 
-**search**：先解析 `--filter` → 从 `records` 表得到 `(episode, stream, [start_us,end_us))` 集合 → 只对落在集合内的 `chunks` 行做向量检索（Lance `where` 预过滤）→ 同区间取最高分并记 `matched` → 相邻合并 → `--rerank`。无 `--filter` 时对全表检索。只有 `--filter` 时跳过向量，按时间返回记录。查询向量的 `space_id` 必须与索引一致，否则退出码 3。annotation 未生成时 filter 报能力缺失（退出码 3），不是空结果。
+Subtask annotation describes first, then segments. Define boundaries using holding, release, arrival, and state change. Windows overlap by five seconds; conflicting outputs produce flags. Snap boundaries to real frame PTS, require continuous subtask coverage, validate ontology verbs where applicable, and keep normalized coordinates within [0,1].
 
-**serve** HTTP 端点（M2）：`GET /status` `GET /episodes[/{id}]` `POST /index` `POST /annotate` `POST /search` `POST /clip` `GET /jobs/{id}`（`Accept: application/x-ndjson` 流式）`GET /annotations/{episode}/{name}?format=json|srt|vtt` `GET /media/{episode}/{stream}`（Range）。错误 `{code, message, retryable, request_id}`。OpenAPI 由 `utoipa` 生成并提交。
+### LeRobot writeback
 
----
+M1 writes only subtask language entries to an already compatible v3.1 dataset. v3.0 returns code 3 and directs users to official format tooling; Cerul performs no upgrade. The pinned upstream recorder/compatibility-fixture distinction is documented in docs/lerobot.md and must not be misrepresented as an available official upgrade command.
 
-## 8. 仓库
+Use language_persistent with style=subtask, exactly one active subtask per frame, and timestamps from the source Parquet frame values without recalculation. Preserve action, state, tasks, language_events, and all non-subtask language_persistent entries. Add or replace only subtask entries. Retain info.json content, updating only necessary language feature metadata when adding a column. Events/flags stay in sidecars because they have no defined official style.
 
-```text
-cerul/
-├── Cargo.toml                  # lib + bin = cerul
-├── src/
-│   ├── lib.rs                  # 全部逻辑的公开入口
-│   ├── main.rs cli.rs          # 只解析参数、调库、打印
-│   ├── config.rs
-│   ├── providers/{gemini,openai,perception}.rs
-│   ├── media/{ffmpeg,probe,keyframes,proxy,contact_sheet}.rs
-│   ├── ocr/{det,rec,postprocess}.rs      # tract-onnx，模型 include_bytes!
-│   ├── annotations/{schema,io,records}.rs
-│   ├── episode.rs lerobot.rs
-│   ├── index/{discover,hash,stations,chunk,embed,lance}.rs
-│   ├── annotate/{contact,prompt,validate,semantic,grounding,world}.rs
-│   ├── search.rs status.rs clean.rs
-│   └── serve/{http,mcp,openapi}.rs  # M2
-├── models/                     # det.onnx rec.onnx 字典 + README（来源、版本、Apache-2.0）
-├── prompts/                    # 每模块一个 .md，内嵌
-├── schemas/                    # schemars 生成，提交入库；第一个 PR 就交付，Desktop/Cloud 对着它开工
-├── tests/                      # ≤10 秒许可清晰的样例；录制的端点响应回放
-├── examples/                   # 普通视频、多相机目录、LeRobot 数据集三个教程
-├── dist-workspace.toml  npm/
-└── README.md  DESIGN.md  LICENSE
-```
+Prefer --out. Stage a complete dataset, perform native field/timeline validation, then publish. Release acceptance additionally uses the official Python loader to read all sample frames; Python is an acceptance dependency, not a runtime dependency. In-place writeback requires recoverable file replacement records and must preserve unselected episodes in shared shards. Compare all affected shards' protected fields and existing annotations, not just one sampled frame.
 
-依赖：`clap` `tokio` `reqwest` `serde` `serde_json` `schemars` `lancedb 0.38` `arrow` `parquet` `image` `sha2` `axum` `utoipa` `indicatif` `tracing` `tract-onnx`。`rerun` 放 feature，M2。ffmpeg 子进程调用。二进制约 60MB。
+### Search
 
-CI：每个 PR 跑离线测试与双平台构建；受保护分支跑一组真实 Gemini 小调用；fork PR 不注入 Key。
+Parse filters into episode/stream half-open time intervals, then apply them as Lance prefilters to intersecting chunks before vector ranking. Group the same interval by highest score and retain matched provenance; merge adjacent results. Reranking is M2.
 
----
+Repeated filters are AND. Conditions on one annotation must match the same record. Different annotations join by temporal intersection. Episode/stream/kind constrain scope. A chunk is eligible when its interval intersects the event interval; the hit time is that intersection.
 
-## 9. 里程碑与验收
+Without a filter, search the whole selected space. Filters alone skip vectors and return time-ordered records. A query space mismatch returns code 3. Missing required annotations return a capability error, not an empty result.
 
-| 版本 | 内容 |
-|---|---|
-| **M1**（首发 v0.0.3） | `index`（transcript、OCR、embed、still）、`search`（向量、image、预过滤 filter、filter 计数、save、text）、`status`、`clean`、`annotate --semantic`、LeRobot 读取与 subtask 写回、mac + Linux 发布、npm `cerul` 壳替换旧包 |
-| M2 | `serve`（HTTP + MCP）、Windows、`grounding` box/affordance、perception 契约 + 云端 segment/depth/track、`--rerank`、Rerun `.rrd` |
-| M3 | 云端 camera/hand、`keypoint`、`--target cloud` |
+### Serve endpoints (M2)
 
-实施顺序（每个 PR 独立可跑）：① 类型与 `schemas/`、config、`status`、端点探测 ② media 四站 + 旁车 + Lance ③ `search` ④ `annotate --semantic` + LeRobot ⑤ cargo-dist 发布 + npm 壳。
+GET /status; GET /episodes[/{id}]; POST /index; POST /annotate; POST /search; POST /clip; GET /jobs/{id}, streaming for Accept: application/x-ndjson; GET /annotations/{episode}/{name}?format=json|srt|vtt; GET /media/{episode}/{stream} with Range support.
 
-M1 验收：
+Errors contain code, message, retryable, request_id. Generate OpenAPI with utoipa and commit it.
 
-1. 全新 mac/Linux，一条安装命令加 `GEMINI_API_KEY`，10 分钟内 index 一段 10 分钟带语音视频并搜到正确时刻。
-2. 对样例视频人工写 10 个问题（画面、语音、屏幕文字各至少 3 个），Recall@5 ≥ 8/10；语音类问题由 `speech` 行命中，屏幕文字类由 `screen` 行命中。
-3. 5 个 LeRobot episode `annotate --semantic`：subtask 无缝、边界在真实帧；`--write-lerobot --out` 后用 `lerobot` 加载并读取指定帧，`language_persistent` 的 subtask 内容与时间正确，原有 action/state 与已有注释逐字段保留。
-3a. 同一分片 mp4 内相邻两个 episode 分别标注，记录时间互不串位；两个数据集各自的 `000012` 互不覆盖。
-4. 重跑零模型调用；改 embedding 模型只重算 embed 站。
-5. `search --json`、`status --json` 输出符合 `schemas/`；`--json` 的 stderr 进度事件能被逐行解析。
-6. vision 指向本地 Ollama 可完成 semantic；embedding 指向不支持图像输入的端点时探测失败、退出码 3，不建索引。
-7. 删 `~/.cerul/index/` 后从旁车 `embeddings/*.parquet` 零调用重建；`index` 跑到一半 Ctrl-C，重跑只补缺的站，正式位置没有半成品文件。
-7a. `--filter semantic.event.verb=regrasp` 在命中排在向量前 10 之外时仍能返回。
-8. 断网时 `index --no-audio` 完成 probe、关键帧、OCR，退出码 6，报告"本地站完成、embed 未完成"，`status` 显示该 episode 未索引；联网后重跑只补 embed。
-9. 内置 OCR 在 20 段样例上不低于 cerul-platform 现有 Python sidecar。
-10. 二进制不依赖 Python、CUDA、动态 ML 库；只要 ffmpeg。
+## 8. Repository structure
 
----
+One root Cargo.toml defines lib and bin. Modules cover configuration, providers, media, OCR, annotation schemas/I/O, episodes, LeRobot, indexing, semantic annotation, search, status, and cleanup. Serve modules are M2.
 
-## 10. 开工时核对
+- models/: embedded detection/recognition ONNX and dictionary, with provenance, versions, and Apache-2.0 license.
+- prompts/: one embedded English Markdown prompt per module.
+- schemas/: generated with schemars and committed. Deliver in the first implementation step so Desktop/Cloud can build against them.
+- tests/: short, clearly licensed fixtures (at most ten seconds) and recorded endpoint-response replay.
+- examples/: ordinary-video and LeRobot tutorials in M1; authored multi-camera directory tutorial in M2.
+- dist-workspace.toml and the generated npm wrapper.
+- README.md, DESIGN.md, LICENSE, and third-party notices.
 
-- `gemini-3.8-flash` 现行 id、价格、音频转录的段级时间戳精度（不达标则默认 transcription 改 whisper 端点，配置形状不变）。
-- `tract-onnx` 对 PP-OCRv6 det/rec 算子覆盖；不覆盖退 `ort` 静态链接。实测双平台 CPU 吞吐与最终二进制体积，文档里的"一小时 1–2 分钟""约 60MB"在实测前只是估计。
-- `lancedb 0.38` Rust API，特别是向量检索的 `where` 预过滤。
-- 样例：`~/cerul-ai/` 下的产品录屏做屏幕样例；挑一个小的公开 LeRobot 数据集并核许可。
-- `cerul.verbs.v1` 十五词过目。
+Dependencies include clap, tokio, reqwest, serde, serde_json, schemars, lancedb 0.38, arrow, parquet, image, sha2, indicatif, tracing, tract-onnx. axum/utoipa and optional rerun belong to the later serving/visualization milestones. Invoke ffmpeg as a subprocess.
 
-## 11. 不做
+The initial macOS arm64 release binary measured approximately 228 MiB uncompressed on 2026-09-08. Final archive size and CPU throughput require release acceptance; the original 60 MB estimate is not a promise.
 
-DAG/profile/Run 状态机、SSE、幂等键、插件、bundle 格式、`ask`、`export`、`init`、`rm`、SQLite、Python SDK/PyO3、OCR 之外的内置推理、Temporal、多租户 `serve`、知识图谱、聊天 UI、`action` 类、retargeting、训练。第五个站、第二个 embedding 供应商、第四类标注出现前不抽象接口。
+Every PR runs offline tests and two-platform builds. Protected-branch validation includes small real Gemini calls; never inject model keys into fork PRs.
+
+## 9. Milestones and acceptance
+
+| Milestone | Scope |
+| --- | --- |
+| **M1**, first release v0.0.3 | Index (transcript, OCR, embedding, still detection); search (vectors, images, prefilters, filter counts, saving clips, exact text); status; clean; semantic annotation; LeRobot reading and subtask writeback; macOS/Linux distribution; replace the old npm cerul wrapper. |
+| M2 | HTTP/MCP serve, Windows, grounding box/affordance, perception contract and hosted segment/depth/track, reranking, Rerun .rrd. |
+| M3 | Hosted camera/hand, keypoint, --target cloud. |
+
+Implementation order, each step independently runnable:
+
+1. Types/schemas, configuration, status, endpoint probes.
+2. Media stations, sidecars, Lance.
+3. Search.
+4. Semantic annotation and LeRobot.
+5. cargo-dist distribution and npm wrapper.
+
+M1 acceptance:
+
+1. On fresh macOS/Linux, an installation command plus GEMINI_API_KEY enables indexing a ten-minute video with speech in under ten minutes and finding the correct moment.
+2. Ask ten manually chosen questions, including at least three each about visuals, speech, and screen text. Recall@5 is at least 8/10. Speech questions match speech rows; screen-text questions match screen rows. No separate large gold-set project is required.
+3. Annotate five LeRobot episodes: subtasks cover the full timeline without gaps and use real frame boundaries. Official-loader readback of --write-lerobot --out verifies subtask content/timestamps and preserves all original action/state/annotation fields.
+3a. Adjacent episodes sharing one MP4 do not mix timestamps. Two datasets with episode 000012 do not overwrite each other.
+4. Repeating unchanged commands makes zero model calls. Changing only the embedding model recomputes only embeddings.
+5. search/status JSON conforms to schemas. JSON-mode stderr parses line by line.
+6. Gemini performs semantic annotation. Ollama and alternative vision endpoints are optional configurations, not M1 acceptance gates. An embedding endpoint without image support fails probing with code 3 and creates no index.
+7. Deleting the workspace index permits zero-model-call rebuild from sidecar vectors. Ctrl-C during indexing preserves completed units; resumption fills gaps and leaves no incomplete final artifacts.
+7a. A filtered event can be returned even when its unfiltered vector rank is below the first ten candidates.
+8. Offline index --no-audio completes local probing, frames, and OCR, returns code 6 with embedding incomplete, and status reports the episode unindexed. Reconnection resumes embedding only.
+9. Embedded OCR on twenty sample clips is no worse than the existing platform Python sidecar.
+10. The binary requires no Python, CUDA, or dynamic ML libraries; ffmpeg is the external media dependency.
+
+## 10. Implementation checks
+
+- Verify the current gemini-3.8-flash model ID, pricing, and segment-level transcription timestamp quality. If timestamp quality fails acceptance, use a Whisper-compatible transcription default without changing the configuration shape.
+- Verify tract-onnx operator coverage for PP-OCRv6 detection/recognition. If unsupported, investigate statically linked ort. Measure both platforms' CPU throughput and final binary size. Earlier throughput/size estimates remain unproven until measured.
+- Verify lancedb 0.38 Rust APIs, particularly vector prefilter behavior.
+- Use local product recordings for screen-text acceptance and a small, appropriately licensed public LeRobot dataset. Keep private recordings and derived acceptance outputs out of the public repository.
+- Review the fifteen-verb default vocabulary.
+
+## 11. Out of scope
+
+DAG/profile/Run state machines, SSE, idempotency keys, plugins, bundle formats, ask/export/init/rm commands, SQLite, Python SDK/PyO3, embedded inference beyond OCR, Temporal, multi-tenant serve, knowledge graphs, chat UI, an action annotation family, retargeting, and training.
+
+Do not add speculative interface layers before a fifth station, second embedding provider, or fourth annotation family creates a concrete need.

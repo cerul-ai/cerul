@@ -1,0 +1,34 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for 'dist'
+[dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.32.0"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell", "npm", "homebrew"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"]
+# Path that installers should place binaries in
+install-path = "CARGO_HOME"
+# Whether to install an updater program
+install-updater = false
+# Embedded OCR licensing must travel with binaries and npm installers.
+include = ["THIRD_PARTY_NOTICES.md"]
+
+[dist.github-custom-runners]
+x86_64-unknown-linux-gnu = "ubuntu-24.04"
+global = "ubuntu-24.04"
+
+[dist.dependencies.homebrew]
+protobuf = "*"
+ffmpeg = { version = "*", stage = ["build", "run"] }
+
+[dist.dependencies.apt]
+protobuf-compiler = "*"
+libprotobuf-dev = "*"
+pkg-config = "*"
+libssl-dev = "*"
+ffmpeg = "*"

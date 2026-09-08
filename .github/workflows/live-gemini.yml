@@ -1,0 +1,38 @@
+name: Live Gemini acceptance
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-gemini-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  default-endpoints:
+    if: github.repository == 'cerul-ai/cerul' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Require live acceptance credential
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo '::error::Configure GEMINI_API_KEY for live acceptance. Missing credentials are not a passing check.'
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install build and media dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg protobuf-compiler libprotobuf-dev pkg-config libssl-dev
+      - run: cargo build --locked --example verify_gemini
+      - name: Probe default text, image, video, vision, and transcription capabilities
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: ./target/debug/examples/verify_gemini

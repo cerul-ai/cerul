@@ -1,59 +1,95 @@
-# Cerul developer surface
+# Cerul
 
-**Help AI understand, remember, and access video.**
+Open-source video processing core and CLI. Turn video into searchable,
+annotated data using your own model endpoints, without a Cerul account.
 
-Video memory infrastructure for AI products.
+Cerul indexes local videos and LeRobot datasets, searches moments using text or
+images, and generates semantic annotations. Transcripts, annotations, and
+embedding vectors live in sidecar files. The vector index is a disposable cache
+that can be rebuilt without calling a model.
 
-Cerul turns video and other long-form media into searchable evidence and
-structured artifacts. This repository is the public integration surface for
-the Cerul platform.
+The v0.0.3 rewrite is undergoing release acceptance. The commands below use a
+local source build; they do not assume that the new package has been published.
 
-The product implementation is private. This repository contains only:
+## Build and try it
 
-- the sanitized [OpenAPI 3.1 contract](./openapi.json);
-- the TypeScript and Python SDKs;
-- the `cerul` command-line client;
-- MCP and Claude Code integrations;
-- public examples, compatibility notes, and release links.
-
-Local and cloud runtimes use the same contract. Choose a base URL:
-
-```text
-Cloud: https://api.cerul.ai/v1
-Local: http://127.0.0.1:<dynamic-port>/v1
-```
-
-The local runtime requires its installation token. The cloud runtime accepts a
-Workspace API key or OAuth access token. Call `GET /v1/capabilities` before
-requesting optional capabilities; clients must not assume local and cloud
-offer identical execution.
-
-## Packages
-
-| Path | Purpose |
-|---|---|
-| `apps/cli` | CLI commands for search, ask, AgentSession, jobs, and export |
-| `integrations/mcp` | Remote MCP projection of the Capability Registry |
-| `integrations/claude-code` | Installable Claude Code integration |
-
-## Verify
+M1 supports macOS arm64 and Linux x86_64. Install a current stable Rust toolchain,
+ffmpeg/ffprobe 6.0 or later, and the build dependencies:
 
 ```sh
-corepack pnpm install --frozen-lockfile
-corepack pnpm check
-cargo test --manifest-path apps/cli/Cargo.toml --locked
+# macOS
+brew install ffmpeg protobuf
+
+# Ubuntu 24.04
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config libssl-dev protobuf-compiler libprotobuf-dev ffmpeg
+
+cargo build --release --locked
+./target/release/cerul --version
 ```
 
-## SDKs
+Make `target/release/cerul` available on your PATH. Configure `GEMINI_API_KEY` in
+your shell, or choose other compatible endpoints in `cerul.toml` using the
+[configuration guide](docs/configuration.md). Keep keys out of configuration
+files and source control.
 
-The TypeScript and Python SDKs are retired while the `/v1` API is redesigned.
-The published `cerul` packages on npm and PyPI are deprecated and receive no
-updates. Use the REST API directly, or the MCP integration, until generated
-SDKs return with the new contract.
+```sh
+cerul index ./videos
+cerul search "A person puts a cup on the table"
+cerul search --image ./reference.png --save ./clips
+cerul search --text "ECONNREFUSED"
+cerul annotate ./videos --semantic
+cerul status
+```
 
-The public OpenAPI and generated client surfaces are produced from the private
-`cerul-platform/contracts/openapi.yaml`; they are not independently authored
-here. See [ARCHITECTURE.md](./ARCHITECTURE.md) for the publication boundary.
+OCR runs locally on CPU using embedded weights. Video embedding, transcription,
+and semantic annotation send inputs to the configured model endpoints. Embedding
+requires a model with text, image, and video support; text-only embedding APIs
+are not substitutes. Cerul collects no telemetry.
 
-No package publishing, binary release, or production deployment occurs from a
-source change alone.
+## Work with results
+
+- [Video search and annotation tutorial](examples/video-search.md)
+- [LeRobot subtask tutorial](examples/lerobot-subtasks.md)
+- [LeRobot format and writeback compatibility](docs/lerobot.md)
+- [Configuration, capabilities, and exit codes](docs/configuration.md)
+- [Generated JSON schemas](schemas)
+- [Release artifacts and installer verification](docs/releases.md)
+
+Repeated commands reuse completed work. Ctrl-C cancels a command; rerunning
+completes missing work. `clean --all-indexes` and `clean --cache` preserve source
+media and sidecars. Deleting sidecars is an explicit operation requiring `--yes`.
+
+Ordinary videos default to task, subtask, and flag annotations. LeRobot datasets
+also default to event, interaction, state, and progress. Writeback is opt-in,
+limited to supported v3.1 subtask language entries, and can publish a separate
+output dataset with `--out`.
+
+## Integrate the core
+
+The Rust library exposes processing functions independently of process
+arguments and terminal output. Desktop applications can link it or run the CLI
+with `--json`: stdout contains one final JSON object and stderr contains NDJSON
+progress/log events. Annotation times are episode-relative integer microseconds.
+
+HTTP/MCP serving, grounding, world annotations, and Windows support are later
+milestones. Hosted tenancy, billing, and perception implementation remain in the
+private product repository. See [DESIGN.md](DESIGN.md) and
+[ARCHITECTURE.md](ARCHITECTURE.md) for boundaries.
+
+## Development and licensing
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+cargo run --locked --example generate_schemas -- --check
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for validation requirements. The Rust
+source is licensed under Apache-2.0. Embedded OCR provenance is recorded in
+[models/README.md](models/README.md); binary distributions include
+[third-party notices](THIRD_PARTY_NOTICES.md).
+
+Existing Git history, tags, and `ffmpeg-vendor-*` release assets are retained.
+The retired platform API client and MCP projection are replaced by this core.

@@ -1,33 +1,24 @@
-# Public integration architecture
+# Core and product boundary
 
-This repository is a generated and reviewable projection of the private Cerul
-platform contract. It contains no model routing, prompts, workflow internals,
-storage implementation, queue implementation, desktop source, Web source,
-Worker source, provider secrets, or operational admin endpoints.
+Cerul is a single Rust crate with a reusable library and a thin CLI. The library
+owns local media processing, OCR, endpoint adapters, episode timelines,
+annotations, sidecars, indexing, and retrieval. It receives configuration and
+emits structured events without assuming a terminal or process lifecycle.
 
-## Contract flow
+Sidecars contain authoritative outputs, including embedding vectors. An index
+can be rebuilt without calling a model. All stored intervals use half-open,
+integer-microsecond episode time. Model-relative time is converted exactly once.
+Completed units are recoverable from checkpoints; final files are atomically
+published. The workspace admits one writer at a time.
 
-```text
-private contracts/openapi.yaml
-  -> remove operations marked x-cerul-visibility: internal
-  -> retain only transitively referenced public components
-  -> openapi.json
-  -> TypeScript schema and Python operation registry
-  -> SDK, CLI, MCP, and examples
-```
+Desktop UI, authentication, cloud billing, tenant isolation, and hosted
+perception implementations belong to private products. HTTP and MCP adapters
+are planned for M2 and must call the same core rather than duplicate processing.
 
-`openapi.json` is generated output. Contract changes begin in the private
-platform repository. Public CI verifies that internal paths and metadata are
-absent and that every client operation exists in the generated manifest.
+Rust types produce public schemas. Legacy platform OpenAPI projections are
+retired rather than hand-modified into a second contract.
 
-## Runtime rules
-
-- Cloud and local clients differ only in base URL, authentication, advertised
-  capabilities, and execution location.
-- A local installation token is not a Cerul Account credential.
-- Login never implies upload. `local_only` requests may not cause cloud content
-  egress.
-- MCP maps advertised capabilities to remote tools and creates platform Jobs;
-  it does not implement a second planner.
-- Artifact, Evidence, AgentSession, Response, Job, Usage, and error shapes come
-  from the same OpenAPI contract used by the product runtimes.
+LanceDB 0.38.0 currently needs its `remote` Cargo feature to compile: its job
+error conversion references a feature-gated HTTP error type. Cerul nevertheless
+opens only the configured local workspace directory. This compatibility feature
+does not enable a cloud connection or implement the M2 server.

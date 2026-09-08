@@ -1,0 +1,120 @@
+{
+  "$id": "https://cerul.ai/schemas/annotation/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnnotationFile",
+  "type": "object",
+  "properties": {
+    "header": {
+      "$ref": "#/$defs/Header"
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Record"
+      }
+    }
+  },
+  "required": [
+    "header",
+    "records"
+  ],
+  "$defs": {
+    "Header": {
+      "type": "object",
+      "properties": {
+        "$cerul": {
+          "type": "string"
+        },
+        "cerul_version": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "input_hash": {
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/Model"
+        },
+        "name": {
+          "type": "string"
+        },
+        "params": true,
+        "record_schema": {
+          "type": "string"
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "$cerul",
+        "name",
+        "episode",
+        "stream",
+        "model",
+        "params",
+        "created",
+        "cerul_version",
+        "input_hash",
+        "record_schema"
+      ]
+    },
+    "Model": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    },
+    "Record": {
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "id": {
+          "type": "string"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "start_us",
+        "end_us"
+      ]
+    }
+  }
+}

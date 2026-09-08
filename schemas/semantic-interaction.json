@@ -1,0 +1,59 @@
+{
+  "$id": "https://cerul.ai/schemas/semantic-interaction/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Window",
+  "type": "object",
+  "properties": {
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Interaction"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "records"
+  ],
+  "$defs": {
+    "Interaction": {
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "contact": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "hand": {
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start_us",
+        "end_us",
+        "hand",
+        "object"
+      ]
+    }
+  }
+}
