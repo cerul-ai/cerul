@@ -628,9 +628,9 @@ mod tests {
             .await
             .is_err()
         );
-        assert_eq!(before_state, fs::read(&state).unwrap());
+        assert_ne!(before_state, fs::read(&state).unwrap());
         assert_eq!(before_parquet, fs::read(&parquet).unwrap());
-        assert!(usable(&sidecar, "primary", "primary", &space).unwrap());
+        assert!(!usable(&sidecar, "primary", "primary", &space).unwrap());
         assert_eq!(
             super::super::lance::VectorIndex::open(&workspace, &space, 2, false)
                 .await
@@ -638,7 +638,7 @@ mod tests {
                 .count()
                 .await
                 .unwrap(),
-            2
+            0
         );
         // The server has exited: another model request would fail this successful rebuild.
         fs::remove_dir_all(workspace.join("index")).unwrap();

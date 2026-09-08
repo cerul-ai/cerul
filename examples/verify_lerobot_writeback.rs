@@ -27,39 +27,45 @@ fn main() -> Result<()> {
         .collect();
     let files: Vec<_> = selected
         .iter()
-        .map(|episode| AnnotationFile {
-            header: Header {
-                schema: "annotation/1".into(),
-                name: "semantic.subtask".into(),
-                episode: episode.episode_id.clone(),
-                stream: episode.time.reference.clone(),
-                model: Model {
-                    kind: "fixture".into(),
-                    name: "acceptance".into(),
-                    base_url: None,
+        .map(|episode| -> Result<AnnotationFile> {
+            let name = "semantic.subtask";
+            let stream = episode.time.reference.clone();
+            let params = json!({});
+            let input_hash = cerul::index::stations::station_key(episode, &stream, name, &params)?;
+            Ok(AnnotationFile {
+                header: Header {
+                    schema: "annotation/1".into(),
+                    name: name.into(),
+                    episode: episode.episode_id.clone(),
+                    stream,
+                    model: Model {
+                        kind: "fixture".into(),
+                        name: "acceptance".into(),
+                        base_url: None,
+                    },
+                    params,
+                    created: "2026-09-08T00:00:00Z".into(),
+                    cerul_version: env!("CARGO_PKG_VERSION").into(),
+                    input_hash,
+                    record_schema: "semantic.subtask/1".into(),
                 },
-                params: json!({}),
-                created: "2026-09-08T00:00:00Z".into(),
-                cerul_version: env!("CARGO_PKG_VERSION").into(),
-                input_hash: "acceptance".into(),
-                record_schema: "semantic.subtask/1".into(),
-            },
-            records: ["First subtask", "Second subtask"]
-                .into_iter()
-                .enumerate()
-                .map(|(i, text)| Record {
-                    id: format!("subtask-{i}"),
-                    start_us: i as i64 * 2_000_000,
-                    end_us: (i + 1) as i64 * 2_000_000,
-                    confidence: None,
-                    fields: BTreeMap::from([
-                        ("text".into(), json!(text)),
-                        ("index".into(), json!(i)),
-                    ]),
-                })
-                .collect(),
+                records: ["First subtask", "Second subtask"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, text)| Record {
+                        id: format!("subtask-{i}"),
+                        start_us: i as i64 * 2_000_000,
+                        end_us: (i + 1) as i64 * 2_000_000,
+                        confidence: None,
+                        fields: BTreeMap::from([
+                            ("text".into(), json!(text)),
+                            ("index".into(), json!(i)),
+                        ]),
+                    })
+                    .collect(),
+            })
         })
-        .collect();
+        .collect::<Result<_>>()?;
     let assignments: Vec<_> = selected
         .iter()
         .zip(&files)
