@@ -387,7 +387,7 @@ async fn run_inner(
             }
             Err(error) => return Err(error),
         };
-        index.prune_incomplete(workspace).await?;
+        index.prune_incomplete(workspace, &cancel).await?;
         let allowed: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen]
             .into_iter()
             .filter(|kind| kind_allowed(&filters, *kind))

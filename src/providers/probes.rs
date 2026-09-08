@@ -186,8 +186,22 @@ async fn check_inner(
             provider
                 .embed(Input::Image(image()?, "image/png".into()), false)
                 .await?;
-            let probe_video = video()
-                .map_err(|error| super::failure(super::Failure::Unsupported, error.to_string()))?;
+            let probe_video = match video() {
+                Ok(video) => video,
+                Err(error)
+                    if error.chain().any(|cause| {
+                        cause
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+                    }) =>
+                {
+                    return Err(super::failure(
+                        super::Failure::Unsupported,
+                        "ffmpeg is required for the embedding video capability probe",
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
             provider
                 .embed(Input::Video(probe_video, "video/mp4".into()), false)
                 .await?;

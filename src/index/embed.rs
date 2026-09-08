@@ -458,6 +458,10 @@ pub async fn run(
     all.retain(|row| row.stream != stream);
     all.extend(rows.clone());
     vectors::write(&path, &all, dims)?;
+    index.replace(&episode.episode_id, stream, &rows).await?;
+    // The Lance projection and its state are one publication unit.  A state that
+    // advertises these rows as complete must never become visible before Lance
+    // has committed its replacement.
     storage::write_json(
         &state_path,
         &State {
@@ -466,7 +470,6 @@ pub async fn run(
             error: None,
         },
     )?;
-    index.replace(&episode.episode_id, stream, &rows).await?;
     Ok(count)
 }
 

@@ -11,6 +11,7 @@ use lancedb::{
     query::{ExecutableQuery, QueryBase},
 };
 use std::{fs, path::Path};
+use tokio_util::sync::CancellationToken;
 
 pub struct VectorIndex {
     table: Table,
@@ -113,14 +114,20 @@ impl VectorIndex {
     /// Remove only projections whose authoritative embedding state is no longer usable.
     /// This keeps ordinary searches incremental while an interrupted upstream station
     /// refresh cannot leave stale Lance rows queryable.
-    pub async fn prune_incomplete(&self, workspace: &Path) -> Result<()> {
+    pub async fn prune_incomplete(
+        &self,
+        workspace: &Path,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
         for entry in read_registry(workspace)? {
+            check_cancelled(cancel)?;
             let metadata = entry.sidecar.join("episode.json");
             if !metadata.is_file() {
                 continue;
             }
             let episode: crate::episode::Episode = serde_json::from_slice(&fs::read(metadata)?)?;
             for stream in &episode.streams {
+                check_cancelled(cancel)?;
                 if !matches!(stream, crate::episode::Stream::Video { .. }) {
                     continue;
                 }
@@ -131,6 +138,7 @@ impl VectorIndex {
                     &self.space,
                 )? {
                     self.replace(&episode.episode_id, stream.id(), &[]).await?;
+                    check_cancelled(cancel)?;
                 }
             }
         }
@@ -175,6 +183,16 @@ impl VectorIndex {
         }
         Ok(result)
     }
+}
+fn check_cancelled(cancel: &CancellationToken) -> Result<()> {
+    if cancel.is_cancelled() {
+        return Err(crate::providers::ProviderError {
+            kind: crate::providers::Failure::Cancelled,
+            message: "operation cancelled".into(),
+        }
+        .into());
+    }
+    Ok(())
 }
 
 /// Rebuild only from saved vectors; this module has no model endpoint dependency.
