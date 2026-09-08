@@ -553,6 +553,98 @@ mod tests {
         );
         assert_eq!(fs::read(parquet).unwrap(), bytes);
     }
+    #[tokio::test]
+    async fn reference_duration_growth_invalidates_newly_exposed_secondary_coverage() {
+        use super::super::{
+            embed, lance,
+            vectors::{self, Kind, VectorRow},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dataset");
+        crate::lerobot::tests::fixture(&root, "v3.1");
+        let workspace = dir.path().join("workspace");
+        let extended = crate::lerobot::read_with_workspace(&root, &workspace)
+            .unwrap()
+            .remove(0);
+        let front = "observation.images.front";
+        let wrist = "observation.images.wrist";
+        let mut shorter = extended.clone();
+        for stream in &mut shorter.streams {
+            if let Stream::Video { id, range_us, .. } = stream
+                && id == front
+            {
+                range_us[1] = range_us[0] + 2_000_000;
+            }
+        }
+        assert_eq!(
+            shorter.video_coverage(wrist).unwrap().unwrap().end_us,
+            2_000_000
+        );
+        assert_eq!(
+            extended.video_coverage(wrist).unwrap().unwrap().end_us,
+            4_000_000
+        );
+        let sidecar = publish_episode(&workspace, &shorter, None).unwrap();
+        let space = "a".repeat(64);
+        let parquet = sidecar.join("embeddings").join(format!("{space}.parquet"));
+        vectors::write(
+            &parquet,
+            &[VectorRow {
+                id: "wrist".into(),
+                episode: shorter.episode_id.clone(),
+                stream: wrist.into(),
+                kind: Kind::Video,
+                start_us: 0,
+                end_us: 2_000_000,
+                vector: vec![1., 0.],
+                text: String::new(),
+                still: false,
+                space_id: space.clone(),
+                params_hash: "fixture".into(),
+            }],
+            2,
+        )
+        .unwrap();
+        storage::write_json(
+            &embed::state_path(&sidecar, wrist, front, &space),
+            &embed::State {
+                input_hash: embed::fingerprint(
+                    &shorter,
+                    wrist,
+                    &space,
+                    &embed::Options::default(),
+                    None,
+                    None,
+                )
+                .unwrap(),
+                complete: true,
+                error: None,
+            },
+        )
+        .unwrap();
+        let bytes = fs::read(&parquet).unwrap();
+        let params = serde_json::json!({});
+        assert_ne!(
+            super::super::stations::station_key(&shorter, wrist, "semantic.subtask", &params)
+                .unwrap(),
+            super::super::stations::station_key(&extended, wrist, "semantic.subtask", &params)
+                .unwrap()
+        );
+        assert!(embed::usable(&sidecar, wrist, front, &space).unwrap());
+        publish_episode(&workspace, &extended, None).unwrap();
+        assert!(!embed::usable(&sidecar, wrist, front, &space).unwrap());
+        assert_eq!(
+            lance::rebuild(&workspace, &space, 2)
+                .await
+                .unwrap()
+                .count()
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(fs::read(&parquet).unwrap(), bytes);
+    }
+
     #[test]
     fn registry_replaces_shared_sidecar_but_preserves_shared_media_episodes() {
         let dir = tempfile::tempdir().unwrap();

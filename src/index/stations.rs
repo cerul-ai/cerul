@@ -40,6 +40,7 @@ pub fn station_key(
         sha256,
         range_us,
         &episode.time.reference,
+        episode.duration_us()?,
         (stream != episode.time.reference).then(|| episode.time.mappings.get(stream)),
         station,
         params,
