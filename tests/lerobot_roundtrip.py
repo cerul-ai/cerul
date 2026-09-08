@@ -17,7 +17,7 @@ from lerobot.datasets.language import (
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
-def create(root):
+def create(root, with_language=True):
     camera = "observation.images.front"
     features = {
         "action": {"dtype": "float32", "shape": (2,), "names": None},
@@ -41,7 +41,10 @@ def create(root):
             })
         dataset.save_episode(parallel_encoding=False)
     dataset.finalize()
-    add_language_fixture(root)
+    if with_language:
+        add_language_fixture(root)
+    else:
+        mark_v31(root)
 
 
 def language_array(rows, target):
@@ -69,6 +72,14 @@ def add_language_fixture(root):
     info["features"].update(language_feature_info())
     info_path.write_text(json.dumps(info, indent=2) + "\n")
     print(json.dumps({"created": str(root), "episodes": 5, "frames": 40}))
+
+
+def mark_v31(root):
+    info_path = root / "meta/info.json"
+    info = json.loads(info_path.read_text())
+    info["codebase_version"] = "v3.1"
+    info_path.write_text(json.dumps(info, indent=2) + "\n")
+    print(json.dumps({"created": str(root), "episodes": 5, "frames": 40, "language": False}))
 
 
 def verify(source, output):
@@ -106,7 +117,7 @@ def verify(source, output):
 
 if __name__ == "__main__":
     if sys.argv[1] == "create":
-        create(Path(sys.argv[2]))
+        create(Path(sys.argv[2]), "--without-language" not in sys.argv[3:])
     elif sys.argv[1] == "add-language-fixture":
         add_language_fixture(Path(sys.argv[2]))
     elif sys.argv[1] == "verify":

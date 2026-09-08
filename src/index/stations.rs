@@ -40,7 +40,7 @@ pub fn station_key(
         sha256,
         range_us,
         &episode.time.reference,
-        episode.duration_us()?,
+        episode.video_coverage(stream)?,
         (stream != episode.time.reference).then(|| episode.time.mappings.get(stream)),
         station,
         params,
@@ -262,6 +262,24 @@ pub fn screen_text(
         records,
     };
     media::with_sync_cancellation(cancel.clone(), media::check_cancellation)?;
+    let changed = match path
+        .is_file()
+        .then(|| AnnotationFile::read(&path))
+        .transpose()?
+    {
+        Some(previous) => {
+            storage::cache_key(&previous.records)? != storage::cache_key(&file.records)?
+        }
+        None => true,
+    };
+    if changed {
+        crate::index::embed::invalidate_stream_states(
+            sidecar,
+            stream,
+            &episode.time.reference,
+            "upstream screen text changed; run index to refresh vectors",
+        )?;
+    }
     file.publish(&path, duration, None)?;
     Ok(file)
 }
@@ -418,6 +436,24 @@ pub async fn transcript(
         ),
         records,
     };
+    let changed = match path
+        .is_file()
+        .then(|| AnnotationFile::read(&path))
+        .transpose()?
+    {
+        Some(previous) => {
+            storage::cache_key(&previous.records)? != storage::cache_key(&file.records)?
+        }
+        None => true,
+    };
+    if changed {
+        crate::index::embed::invalidate_stream_states(
+            sidecar,
+            stream,
+            &episode.time.reference,
+            "upstream transcript changed; run index to refresh vectors",
+        )?;
+    }
     file.publish(&path, duration, None)?;
     Ok(file)
 }

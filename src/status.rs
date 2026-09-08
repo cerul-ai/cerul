@@ -258,7 +258,12 @@ pub async fn check_providers(
             base_url: endpoint.base_url.clone(),
             model: (name != "perception").then(|| endpoint.model.clone()),
             supported: None,
-            checked_at: None,
+            checked_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
             error: None,
             advertised: None,
         };

@@ -158,6 +158,10 @@ async fn check_inner(
     {
         return Ok(found.clone());
     }
+    if force {
+        cached.retain(|entry| entry.key != key);
+        crate::storage::write_json(&path, &cached)?;
+    }
     let mut perception = None;
     match capability {
         Capability::Perception => {
@@ -182,8 +186,10 @@ async fn check_inner(
             provider
                 .embed(Input::Image(image()?, "image/png".into()), false)
                 .await?;
+            let probe_video = video()
+                .map_err(|error| super::failure(super::Failure::Unsupported, error.to_string()))?;
             provider
-                .embed(Input::Video(video()?, "video/mp4".into()), false)
+                .embed(Input::Video(probe_video, "video/mp4".into()), false)
                 .await?;
         }
         Capability::Vision => {
@@ -351,5 +357,32 @@ mod tests {
         check(&provider, Capability::Embedding, dir.path(), false)
             .await
             .unwrap();
+    }
+    #[tokio::test]
+    async fn forced_failed_probe_evicts_an_old_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut endpoint = crate::config::Config::default().embedding;
+        endpoint.base_url = "http://127.0.0.1:9".into();
+        let provider = Provider::new(
+            endpoint,
+            None,
+            1,
+            None,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .unwrap();
+        let old = CachedProbe {
+            key: key(&provider, Capability::Embedding).unwrap(),
+            capability: Capability::Embedding,
+            checked_at: now(),
+            perception: None,
+        };
+        crate::storage::write_json(&dir.path().join("providers.json"), &vec![old]).unwrap();
+        assert!(
+            check(&provider, Capability::Embedding, dir.path(), true)
+                .await
+                .is_err()
+        );
+        assert!(read(&dir.path().join("providers.json")).unwrap().is_empty());
     }
 }

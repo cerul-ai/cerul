@@ -174,7 +174,9 @@ pub(crate) fn publish_conflicts(episode: &Episode, stream: &str, sidecar: &Path)
             annotation.header.episode == episode.episode_id && annotation.header.stream == stream,
             "conflict source provenance mismatch"
         );
-        if storage::cache_key(&annotation)? != storage::cache_key(&product.annotation)? {
+        let mut model_records = annotation.records.clone();
+        model_records.retain(|record| !record.id.starts_with("window-conflict-"));
+        if storage::cache_key(&model_records)? != storage::cache_key(&product.annotation.records)? {
             // A torn module publication must not overwrite the last coherent flags.
             // Re-running that module repairs its pair from completed checkpoints.
             return Ok(());

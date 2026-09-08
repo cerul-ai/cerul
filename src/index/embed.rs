@@ -56,6 +56,37 @@ pub fn usable(sidecar: &Path, stream: &str, primary: &str, space: &str) -> Resul
     }
     Ok(serde_json::from_slice::<State>(&fs::read(path)?)?.complete)
 }
+/// An upstream station changed. Keep its vectors on disk for recovery, but never
+/// project them until embeddings have been regenerated against the new input.
+pub fn invalidate_stream_states(
+    sidecar: &Path,
+    stream: &str,
+    primary: &str,
+    message: &str,
+) -> Result<()> {
+    let directory = stations::stream_directory(sidecar, stream, primary);
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let path = entry?.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("index.") || !name.ends_with(".json") {
+            continue;
+        }
+        let mut state: State = serde_json::from_slice(&fs::read(&path)?)?;
+        if state.complete {
+            state.complete = false;
+            state.error = Some(message.into());
+            storage::write_json(&path, &state)?;
+        }
+    }
+    Ok(())
+}
 pub fn fingerprint(
     episode: &Episode,
     stream: &str,
@@ -442,6 +473,34 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn upstream_annotation_invalidation_withdraws_every_saved_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = "a".repeat(64);
+        let second = "b".repeat(64);
+        fs::create_dir_all(dir.path()).unwrap();
+        for space in [&first, &second] {
+            let path = state_path(dir.path(), "front", "front", space);
+            storage::write_json(
+                &path,
+                &State {
+                    input_hash: "old".into(),
+                    complete: true,
+                    error: None,
+                },
+            )
+            .unwrap();
+        }
+        invalidate_stream_states(dir.path(), "front", "front", "upstream changed").unwrap();
+        for space in [&first, &second] {
+            let state: State = serde_json::from_slice(
+                &fs::read(state_path(dir.path(), "front", "front", space)).unwrap(),
+            )
+            .unwrap();
+            assert!(!state.complete);
+            assert_eq!(state.error.as_deref(), Some("upstream changed"));
+        }
+    }
     #[tokio::test]
     async fn interrupted_unit_resumes_only_missing_call_and_rebuild_uses_zero_calls() {
         let ok = json!({"embedding":{"values":[0.5,0.5]}});

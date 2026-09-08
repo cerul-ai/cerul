@@ -107,6 +107,13 @@ impl Options {
                 || !filters.iter().any(|f| f.key == "kind"),
             "kind requires vector or text search"
         );
+        if let Some(path) = &self.image {
+            let bytes = fs::read(path)?;
+            match image::guess_format(&bytes)? {
+                image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP => {}
+                _ => anyhow::bail!("query image must be PNG, JPEG, or WebP"),
+            }
+        }
         Ok(filters)
     }
 }
@@ -373,7 +380,14 @@ async fn run_inner(
             .embedding
             .dims
             .context("embedding dimensions missing")?;
-        let index = lance::rebuild(workspace, &space, dims).await?;
+        let index = match lance::VectorIndex::open(workspace, &space, dims, false).await {
+            Ok(index) => index,
+            Err(error) if error.to_string().contains("embedding index is missing") => {
+                lance::rebuild(workspace, &space, dims).await?
+            }
+            Err(error) => return Err(error),
+        };
+        index.prune_incomplete(workspace).await?;
         let allowed: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen]
             .into_iter()
             .filter(|kind| kind_allowed(&filters, *kind))

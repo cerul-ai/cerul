@@ -27,7 +27,10 @@ pub struct Identity {
 pub fn parquet_batches(path: &Path) -> Result<Vec<RecordBatch>> {
     ParquetRecordBatchReaderBuilder::try_new(File::open(path)?)?
         .build()?
-        .map(|batch| Ok(batch?))
+        .map(|batch| {
+            media::check_cancellation()?;
+            Ok(batch?)
+        })
         .collect()
 }
 pub fn json_rows(batches: &[RecordBatch]) -> Result<Vec<Value>> {
@@ -59,7 +62,11 @@ fn data_metadata(path: &Path) -> Result<(Vec<String>, Vec<Value>)> {
     let batches = builder
         .with_projection(projection)
         .build()?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        .map(|batch| {
+            media::check_cancellation()?;
+            Ok(batch?)
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok((columns, json_rows(&batches)?))
 }
 fn number(row: &Value, key: &str) -> Result<u64> {
@@ -189,6 +196,7 @@ fn read_inner(root: &Path, workspace: Option<&Path>) -> Result<Vec<Episode>> {
     );
     let mut metadata = Vec::new();
     for path in files(&root.join("meta/episodes"))? {
+        media::check_cancellation()?;
         metadata.extend(json_rows(&parquet_batches(&path)?)?);
     }
     metadata.sort_by_key(|row| row["episode_index"].as_u64().unwrap_or(u64::MAX));
@@ -197,6 +205,7 @@ fn read_inner(root: &Path, workspace: Option<&Path>) -> Result<Vec<Episode>> {
     let mut video_cache = BTreeMap::new();
     let mut episodes = Vec::new();
     for row in metadata {
+        media::check_cancellation()?;
         let index = number(&row, "episode_index")?;
         ensure!(seen.insert(index), "duplicate dataset episode_index");
         let data = relative(

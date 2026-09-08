@@ -208,7 +208,9 @@ pub async fn run(
     let common = include_str!("../../prompts/semantic-common.md");
     let instruction = prompt(item)?;
     let name = format!("semantic.{item}");
-    let params = json!({"stream_coverage_recipe":1,"contact_recipe":media::contact_proxy::RECIPE_VERSION,"window_us":options.window_us,"overlap_us":5_000_000,"fps":options.fps,"ontology":options.ontology,"prompt_hash":storage::cache_key(&(common,instruction,1))?,"kind":provider.endpoint.kind,"base_url":provider.endpoint.base_url,"model":provider.endpoint.model});
+    let ontology = (item == "event").then_some(&options.ontology);
+    let ontology = ontology.and_then(|value| value.as_ref());
+    let params = json!({"stream_coverage_recipe":1,"contact_recipe":media::contact_proxy::RECIPE_VERSION,"window_us":options.window_us,"overlap_us":5_000_000,"fps":options.fps,"ontology":ontology,"prompt_hash":storage::cache_key(&(common,instruction,1))?,"kind":provider.endpoint.kind,"base_url":provider.endpoint.base_url,"model":provider.endpoint.model});
     let key = station_key(episode, stream, &name, &params)?;
     let directory = stream_directory(sidecar, stream, &episode.time.reference);
     let path = directory.join(format!("{name}.jsonl"));
@@ -223,7 +225,7 @@ pub async fn run(
             && saved.annotation.header.input_hash == key
             && storage::cache_key(&annotation)? == storage::cache_key(&saved.annotation)?
         {
-            annotation.validate_in_range(coverage, options.ontology.as_ref())?;
+            annotation.validate_in_range(coverage, ontology)?;
             return Ok(Product {
                 annotation,
                 conflicts: saved.conflicts,
@@ -269,7 +271,7 @@ pub async fn run(
         if !options.recompute
             && let Some(unit) = checkpoints.load::<Unit>(&unit_key)?
             && unit.window == *window
-            && normalize(item, &unit, &header, &pts, options.ontology.as_ref()).is_ok()
+            && normalize(item, &unit, &header, &pts, ontology).is_ok()
         {
             units.push(unit);
             continue;
@@ -299,7 +301,7 @@ pub async fn run(
         let request = format!(
             "{common}\n{instruction}\nwindow_duration_us: {}\nallowed_verbs: {}\nfirst_pass_description: {}",
             window.end_us - window.start_us,
-            serde_json::to_string(&options.ontology)?,
+            serde_json::to_string(&ontology)?,
             serde_json::to_string(&description)?
         );
         let response = provider
@@ -309,7 +311,7 @@ pub async fn run(
             window: *window,
             records: schema::records(item, response)?,
         };
-        normalize(item, &unit, &header, &pts, options.ontology.as_ref())?;
+        normalize(item, &unit, &header, &pts, ontology)?;
         checkpoints.save(&unit_key, &unit)?;
         units.push(unit);
         events.emit(Event::Progress {
@@ -319,19 +321,12 @@ pub async fn run(
             total: windows.len() as u64,
         });
     }
-    let product = reconcile(
-        item,
-        &units,
-        &header,
-        &pts,
-        coverage,
-        options.ontology.as_ref(),
-    )?;
+    let product = reconcile(item, &units, &header, &pts, coverage, ontology)?;
     // Keep the conflict provenance recoverable if publication is interrupted.
     storage::write_json(&product_path, &product)?;
     product
         .annotation
-        .publish_in_range(&path, coverage, options.ontology.as_ref())?;
+        .publish_in_range(&path, coverage, ontology)?;
     Ok(product)
 }
 

@@ -330,6 +330,17 @@ fn search_rejects_invalid_kind_and_missing_save_tools_before_workspace_writes() 
 }
 
 #[test]
+fn invalid_query_image_is_rejected_before_workspace_or_provider_setup() {
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("query.gif");
+    std::fs::write(&image, b"GIF89a").unwrap();
+    let output = cli(dir.path(), &["--json", "search", "--image", "query.gif"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(final_json(&output).get("error").is_some());
+    assert!(!dir.path().join(".cerul").exists());
+}
+
+#[test]
 fn invalid_ontology_is_a_configuration_error_without_workspace_writes() {
     use std::fs;
     let dir = tempfile::tempdir().unwrap();

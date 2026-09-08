@@ -110,6 +110,32 @@ impl VectorIndex {
     pub async fn count(&self) -> Result<usize> {
         Ok(self.table.count_rows(None).await?)
     }
+    /// Remove only projections whose authoritative embedding state is no longer usable.
+    /// This keeps ordinary searches incremental while an interrupted upstream station
+    /// refresh cannot leave stale Lance rows queryable.
+    pub async fn prune_incomplete(&self, workspace: &Path) -> Result<()> {
+        for entry in read_registry(workspace)? {
+            let metadata = entry.sidecar.join("episode.json");
+            if !metadata.is_file() {
+                continue;
+            }
+            let episode: crate::episode::Episode = serde_json::from_slice(&fs::read(metadata)?)?;
+            for stream in &episode.streams {
+                if !matches!(stream, crate::episode::Stream::Video { .. }) {
+                    continue;
+                }
+                if !super::embed::usable(
+                    &entry.sidecar,
+                    stream.id(),
+                    &episode.time.reference,
+                    &self.space,
+                )? {
+                    self.replace(&episode.episode_id, stream.id(), &[]).await?;
+                }
+            }
+        }
+        Ok(())
+    }
     pub async fn search(
         &self,
         query: &[f32],
