@@ -133,3 +133,9 @@ OCR keeps recognized lines with confidence of at least 0.75. This suppresses
 low-confidence output from motion-blurred frames; it does not guarantee that
 every retained character is correct. The threshold is part of the station's
 cache identity, so results produced with an older threshold are recomputed.
+
+When a video is replaced at the same path, Cerul registers only its current
+content identity. If the adjacent sidecar belongs to the previous content, the
+new sidecar uses `<media>.<sha256>.cerul`; the previous annotations are preserved
+on disk and are not included in the current registry. Shared LeRobot video
+shards continue to keep one registry entry and sidecar per episode.

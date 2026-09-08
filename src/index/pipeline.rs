@@ -248,6 +248,36 @@ async fn run_inner(
             &discover::read_registry(workspace)?,
             options.sidecar_dir.as_deref(),
         )?;
+        // Probe only uncached audio work, before OCR. Offline endpoints may still
+        // leave useful local output; unsupported protocols and credentials are hard errors.
+        if !options.no_audio {
+            for stream in &selected {
+                if !stations::transcript_pending(
+                    &episode,
+                    stream,
+                    &planned,
+                    &transcription,
+                    options.embedding.recompute,
+                )? {
+                    continue;
+                }
+                match probes::check(
+                    &transcription,
+                    probes::Capability::Transcription,
+                    workspace,
+                    false,
+                )
+                .await
+                {
+                    Ok(_) => {}
+                    Err(error)
+                        if error
+                            .downcast_ref::<ProviderError>()
+                            .is_some_and(|e| e.kind == Failure::Unavailable) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
         let mut blocked = None;
         // Preflight before expensive local processing, but never for a complete cached product.
         for stream in &selected {
@@ -336,6 +366,16 @@ async fn run_inner(
                 .await
                 {
                     Ok(file) => Some(file),
+                    Err(error)
+                        if error.downcast_ref::<ProviderError>().is_some_and(|e| {
+                            matches!(
+                                e.kind,
+                                Failure::Unsupported | Failure::MissingKey | Failure::Cancelled
+                            )
+                        }) =>
+                    {
+                        return Err(error);
+                    }
                     Err(error) => {
                         errors.push(error.to_string());
                         None
@@ -372,26 +412,56 @@ async fn run_inner(
             };
             if !errors.is_empty() {
                 report.partial = true;
-                storage::write_json(
-                    &embed::state_path(&sidecar, &stream, &episode.time.reference, &space),
-                    &embed::State {
-                        input_hash: embed::fingerprint(
-                            &episode,
-                            &stream,
-                            &space,
-                            &options.embedding,
-                            transcript.as_ref(),
-                            screen.as_ref(),
-                        )?,
-                        complete: false,
-                        error: Some(errors.join("; ")),
-                    },
+                let state_path =
+                    embed::state_path(&sidecar, &stream, &episode.time.reference, &space);
+                let saved_transcript = existing_annotation(
+                    &sidecar,
+                    &episode,
+                    &stream,
+                    "transcript",
+                    options.no_audio,
                 )?;
-                if workspace.join("index").join(&space).is_dir() {
-                    super::lance::VectorIndex::open(workspace, &space, dims, true)
-                        .await?
-                        .replace(&episode.episode_id, &stream, &[])
-                        .await?;
+                let saved_screen = existing_annotation(
+                    &sidecar,
+                    &episode,
+                    &stream,
+                    "screen_text",
+                    options.no_ocr,
+                )?;
+                let input_hash = embed::fingerprint(
+                    &episode,
+                    &stream,
+                    &space,
+                    &options.embedding,
+                    saved_transcript.as_ref(),
+                    saved_screen.as_ref(),
+                )?;
+                let preserve = if state_path.is_file() {
+                    let state: embed::State = serde_json::from_slice(&fs::read(&state_path)?)?;
+                    state.complete
+                        && state.input_hash == input_hash
+                        && sidecar
+                            .join("embeddings")
+                            .join(format!("{space}.parquet"))
+                            .is_file()
+                } else {
+                    false
+                };
+                if !preserve {
+                    storage::write_json(
+                        &state_path,
+                        &embed::State {
+                            input_hash,
+                            complete: false,
+                            error: Some(errors.join("; ")),
+                        },
+                    )?;
+                    if workspace.join("index").join(&space).is_dir() {
+                        super::lance::VectorIndex::open(workspace, &space, dims, true)
+                            .await?
+                            .replace(&episode.episode_id, &stream, &[])
+                            .await?;
+                    }
                 }
                 events.emit(Event::Log {
                     level: "error".into(),
@@ -417,6 +487,57 @@ async fn run_inner(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn unsupported_transcription_fails_before_ocr_or_sidecar_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("audio.mp4");
+        crate::media::run(
+            std::process::Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=64x64:rate=2:duration=1",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=r=16000:cl=mono",
+                    "-t",
+                    "1",
+                    "-c:v",
+                    "libx264",
+                    "-c:a",
+                    "aac",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let (base, server) = crate::providers::tests::server(vec![(
+            400,
+            serde_json::json!({"error":"unsupported"}),
+        )]);
+        let mut config = Config::default();
+        config.transcription.base_url = base;
+        let workspace = dir.path().join("workspace");
+        let error = run(
+            &[source],
+            &workspace,
+            &config,
+            &Options::default(),
+            CancellationToken::new(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<ProviderError>().unwrap().kind,
+            Failure::Unsupported
+        );
+        assert_eq!(server.join().unwrap().len(), 1);
+        assert!(discover::read_registry(&workspace).unwrap().is_empty());
+    }
     #[tokio::test]
     async fn offline_index_preserves_local_ocr_and_reports_incomplete_embedding() {
         let dir = tempfile::tempdir().unwrap();

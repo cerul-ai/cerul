@@ -251,6 +251,53 @@ pub fn screen_text(
     Ok(file)
 }
 
+const WINDOW_US: i64 = 60_000_000;
+fn transcript_params(provider: &Provider) -> serde_json::Value {
+    json!({"kind":provider.endpoint.kind,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"window_us":WINDOW_US,"timestamp_protocol":"seconds/1"})
+}
+fn transcript_key(episode: &Episode, stream: &str, provider: &Provider) -> Result<String> {
+    // Short audio windows avoid long-context timestamp drift and keep inline
+    // mono 16 kHz PCM requests well below the encoded request-size limit.
+    let params = transcript_params(provider);
+    station_key(episode, stream, "transcript", &params)
+}
+
+pub fn transcript_pending(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    provider: &Provider,
+    recompute: bool,
+) -> Result<bool> {
+    let Stream::Video {
+        probe, range_us, ..
+    } = episode.video(stream)?
+    else {
+        unreachable!()
+    };
+    if !probe.has_audio {
+        return Ok(false);
+    }
+    let key = transcript_key(episode, stream, provider)?;
+    let path = stream_directory(sidecar, stream, &episode.time.reference).join("transcript.jsonl");
+    if existing(&path, &key, episode.duration_us()?, recompute)?.is_some() {
+        return Ok(false);
+    }
+    if recompute {
+        return Ok(true);
+    }
+    let checkpoints = Checkpoints::new(sidecar);
+    for window in media::chunks(range_us[1] - range_us[0], WINDOW_US, 0)? {
+        if checkpoints
+            .load::<Vec<Record>>(&storage::cache_key(&(&key, window))?)?
+            .is_none()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub async fn transcript(
     episode: &Episode,
     stream: &str,
@@ -260,11 +307,8 @@ pub async fn transcript(
     recompute: bool,
     events: &mut dyn EventSink,
 ) -> Result<AnnotationFile> {
-    // Short audio windows avoid long-context timestamp drift and keep inline
-    // mono 16 kHz PCM requests well below the encoded request-size limit.
-    const WINDOW_US: i64 = 60_000_000;
-    let params = json!({"kind":provider.endpoint.kind,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"window_us":WINDOW_US,"timestamp_protocol":"seconds/1"});
-    let key = station_key(episode, stream, "transcript", &params)?;
+    let key = transcript_key(episode, stream, provider)?;
+    let params = transcript_params(provider);
     let duration = episode.duration_us()?;
     let directory = stream_directory(sidecar, stream, &episode.time.reference);
     let path = directory.join("transcript.jsonl");
@@ -282,13 +326,6 @@ pub async fn transcript(
     };
     let mut records = Vec::new();
     if probe.has_audio {
-        probes::check(
-            provider,
-            probes::Capability::Transcription,
-            workspace,
-            false,
-        )
-        .await?;
         let source = episode.source.root.join(source);
         let checkpoints = Checkpoints::new(sidecar);
         let windows = media::chunks(range_us[1] - range_us[0], WINDOW_US, 0)?;
@@ -302,6 +339,14 @@ pub async fn transcript(
             let mut segment_records = match cached {
                 Some(records) => records,
                 None => {
+                    probes::check(
+                        provider,
+                        probes::Capability::Transcription,
+                        workspace,
+                        false,
+                    )
+                    .await?;
+
                     let temporary = tempfile::tempdir()?;
                     let audio = temporary.path().join("audio.wav");
                     media::extract::audio(

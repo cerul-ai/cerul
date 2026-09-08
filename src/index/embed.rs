@@ -324,26 +324,32 @@ pub async fn run(
     let state_path = state_path(sidecar, stream, &episode.time.reference, &space);
     let input_hash = fingerprint(episode, stream, &space, options, transcript, screen)?;
     let index = super::lance::VectorIndex::open(workspace, &space, dims, true).await?;
-    if !options.recompute && path.is_file() && state_path.is_file() {
+    let previous_complete = if path.is_file() && state_path.is_file() {
         let state: State = serde_json::from_slice(&fs::read(&state_path)?)?;
-        if state.complete && state.input_hash == input_hash {
-            let rows: Vec<_> = vectors::read(&path, dims)?
-                .into_iter()
-                .filter(|row| row.stream == stream)
-                .collect();
-            index.replace(&episode.episode_id, stream, &rows).await?;
-            return Ok(rows.len());
-        }
+        state.complete && state.input_hash == input_hash
+    } else {
+        false
+    };
+    if previous_complete && !options.recompute {
+        let rows: Vec<_> = vectors::read(&path, dims)?
+            .into_iter()
+            .filter(|row| row.stream == stream)
+            .collect();
+        index.replace(&episode.episode_id, stream, &rows).await?;
+        return Ok(rows.len());
     }
-    storage::write_json(
-        &state_path,
-        &State {
-            input_hash: input_hash.clone(),
-            complete: false,
-            error: None,
-        },
-    )?;
-    index.replace(&episode.episode_id, stream, &[]).await?;
+    // A failed refresh of identical inputs must not withdraw a valid generation.
+    if !previous_complete {
+        storage::write_json(
+            &state_path,
+            &State {
+                input_hash: input_hash.clone(),
+                complete: false,
+                error: None,
+            },
+        )?;
+        index.replace(&episode.episode_id, stream, &[]).await?;
+    }
     let context = EmbeddingContext {
         episode,
         stream,
@@ -395,14 +401,16 @@ pub async fn run(
     }
     drop(pending);
     if let Some(error) = errors.into_iter().next() {
-        storage::write_json(
-            &state_path,
-            &State {
-                input_hash,
-                complete: false,
-                error: Some(error.to_string()),
-            },
-        )?;
+        if !previous_complete {
+            storage::write_json(
+                &state_path,
+                &State {
+                    input_hash,
+                    complete: false,
+                    error: Some(error.to_string()),
+                },
+            )?;
+        }
         return Err(error);
     }
     rows.sort_by(|a, b| {
@@ -534,6 +542,43 @@ mod tests {
             !serde_json::to_string(&status.space_details)
                 .unwrap()
                 .contains("api_key")
+        );
+        let space = config.space_id().unwrap();
+        let state = state_path(&sidecar, "primary", "primary", &space);
+        let parquet = sidecar.join("embeddings").join(format!("{space}.parquet"));
+        let before_state = fs::read(&state).unwrap();
+        let before_parquet = fs::read(&parquet).unwrap();
+        let refresh = Options {
+            recompute: true,
+            ..options.clone()
+        };
+        assert!(
+            run(
+                &episode,
+                "primary",
+                &sidecar,
+                &workspace,
+                &config,
+                &provider,
+                &refresh,
+                None,
+                None,
+                &mut |_| {}
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(before_state, fs::read(&state).unwrap());
+        assert_eq!(before_parquet, fs::read(&parquet).unwrap());
+        assert!(usable(&sidecar, "primary", "primary", &space).unwrap());
+        assert_eq!(
+            super::super::lance::VectorIndex::open(&workspace, &space, 2, false)
+                .await
+                .unwrap()
+                .count()
+                .await
+                .unwrap(),
+            2
         );
         // The server has exited: another model request would fail this successful rebuild.
         fs::remove_dir_all(workspace.join("index")).unwrap();

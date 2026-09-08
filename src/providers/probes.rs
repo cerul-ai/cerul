@@ -43,6 +43,11 @@ fn now() -> u64 {
 }
 fn key(provider: &Provider, capability: Capability) -> Result<String> {
     let endpoint = &provider.endpoint;
+    // Only the digest is persisted. A rotated credential cannot inherit a probe.
+    let credential = provider.key.as_ref().map(|key| {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(key.as_bytes()))
+    });
     crate::storage::cache_key(&(
         &endpoint.kind,
         &endpoint.base_url,
@@ -50,7 +55,8 @@ fn key(provider: &Provider, capability: Capability) -> Result<String> {
         endpoint.dims,
         &endpoint.api_key_env,
         capability,
-        1,
+        credential,
+        2,
     ))
 }
 fn read(path: &Path) -> Result<Vec<CachedProbe>> {
@@ -130,6 +136,14 @@ async fn check_inner(
     force: bool,
 ) -> Result<CachedProbe> {
     let _guard = tokio::select! {biased; _=provider.cancel.cancelled()=>return Err(super::failure(super::Failure::Cancelled,"operation cancelled")),guard=CACHE_LOCK.lock()=>guard};
+    let url = url::Url::parse(&provider.endpoint.base_url)?;
+    let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    if provider.key.is_none() && !loopback && capability != Capability::Perception {
+        return Err(super::failure(
+            super::Failure::MissingKey,
+            format!("set {} for this endpoint", provider.endpoint.api_key_env),
+        ));
+    }
     let path = workspace.join("providers.json");
     let mut cached = read(&path)?;
     let key = key(provider, capability)?;
@@ -247,6 +261,47 @@ pub fn segments(response: Value, duration_us: i64) -> Result<Vec<crate::annotati
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn credentials_scope_success_cache_and_missing_key_is_not_supported() {
+        let dir = tempfile::tempdir().unwrap();
+        let create = |key| {
+            Provider::new(
+                crate::config::Config::default().embedding,
+                key,
+                1,
+                None,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .unwrap()
+        };
+        let first = create(Some("fixture-first-key".into()));
+        let second = create(Some("fixture-second-key".into()));
+        let missing = create(None);
+        assert_ne!(
+            key(&first, Capability::Embedding).unwrap(),
+            key(&second, Capability::Embedding).unwrap()
+        );
+        crate::storage::write_json(
+            &dir.path().join("providers.json"),
+            &vec![CachedProbe {
+                key: key(&missing, Capability::Embedding).unwrap(),
+                capability: Capability::Embedding,
+                checked_at: now(),
+                perception: None,
+            }],
+        )
+        .unwrap();
+        let error = check(&missing, Capability::Embedding, dir.path(), false)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<super::super::ProviderError>()
+                .unwrap()
+                .kind,
+            super::super::Failure::MissingKey
+        );
+    }
     #[test]
     fn transcript_validation_rejects_time_outside_input() {
         assert!(

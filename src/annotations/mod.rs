@@ -145,8 +145,16 @@ impl AnnotationFile {
                     required_text(record, "text")?;
                     optional_string(record, "lang")?;
                 }
-                "screen_text" | "semantic.task" => {
+                "screen_text" => {
                     required_text(record, "text")?;
+                }
+                "semantic.task" => {
+                    required_text(record, "text")?;
+                    ensure!(
+                        range.start_us == expected_subtask_start,
+                        "task coverage has gap, overlap, or out-of-order records"
+                    );
+                    expected_subtask_start = range.end_us;
                 }
                 "semantic.subtask" => {
                     required_text(record, "text")?;
@@ -217,10 +225,10 @@ impl AnnotationFile {
                 _ => bail!("unsupported annotation"),
             }
         }
-        if h.name == "semantic.subtask" {
+        if matches!(h.name.as_str(), "semantic.subtask" | "semantic.task") {
             ensure!(
                 expected_subtask_start == duration_us,
-                "subtasks do not cover the whole episode"
+                "tasks or subtasks do not cover the whole episode"
             );
         }
         Ok(())
@@ -274,6 +282,25 @@ mod tests {
                 ]),
             }],
         }
+    }
+    #[test]
+    fn task_requires_contiguous_complete_coverage() {
+        let mut file = sample();
+        file.header.name = "semantic.task".into();
+        file.header.record_schema = "semantic.task/1".into();
+        file.validate(100, None).unwrap();
+        file.records[0].end_us = 50;
+        assert!(file.validate(100, None).is_err());
+        let mut second = file.records[0].clone();
+        second.id = "two".into();
+        second.start_us = 51;
+        second.end_us = 100;
+        file.records.push(second);
+        assert!(file.validate(100, None).is_err());
+        file.records[1].start_us = 50;
+        file.validate(100, None).unwrap();
+        file.records.clear();
+        assert!(file.validate(100, None).is_err());
     }
     #[test]
     fn invalid_module_cannot_replace_valid_sidecar() {

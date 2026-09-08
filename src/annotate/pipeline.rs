@@ -87,6 +87,10 @@ impl Options {
             "semantic FPS must be in (0,10]"
         );
         ensure!(
+            (self.window_us as f64 / 1_000_000. * self.fps).ceil() <= 600.,
+            "semantic window and FPS must produce at most 600 contact-sheet frames"
+        );
+        ensure!(
             self.jobs > 0 && self.rpm != Some(0),
             "jobs and RPM must be positive"
         );
@@ -462,6 +466,19 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reject_contact_sheet_overflow_before_processing() {
+        let mut options = Options {
+            window_us: 300_000_000,
+            fps: 10.,
+            ..Default::default()
+        };
+        assert!(options.validate().is_err());
+        options.fps = 2.;
+        options.validate().unwrap();
+        options.fps = 2.001;
+        assert!(options.validate().is_err());
+    }
     fn response(value: serde_json::Value) -> serde_json::Value {
         json!({"candidates":[{"content":{"parts":[{"text":value.to_string()}]}}]})
     }

@@ -38,8 +38,16 @@ pub fn read_registry(workspace: &Path) -> Result<Vec<RegistryEntry>> {
 
 /// Caller holds the workspace write lock; registry publication is atomic.
 pub fn register(workspace: &Path, entry: RegistryEntry) -> Result<()> {
+    register_inner(workspace, entry, false)
+}
+fn register_inner(workspace: &Path, entry: RegistryEntry, replace_media: bool) -> Result<()> {
     let mut entries = read_registry(workspace)?;
-    entries.retain(|existing| existing.episode_id != entry.episode_id);
+    // LeRobot episodes may share one media shard, but never one sidecar.
+    entries.retain(|existing| {
+        existing.episode_id != entry.episode_id
+            && existing.sidecar != entry.sidecar
+            && !(replace_media && existing.media == entry.media)
+    });
     entries.push(entry);
     entries.sort_by(|a, b| a.episode_id.cmp(&b.episode_id));
     let mut bytes = Vec::new();
@@ -184,7 +192,18 @@ pub fn sidecar_path(
     let media = episode.source.root.join(path);
     let mut name = media.as_os_str().to_os_string();
     name.push(".cerul");
-    Ok(name.into())
+    let preferred = PathBuf::from(name);
+    if preferred.join("episode.json").is_file() {
+        let previous: Episode = serde_json::from_slice(&fs::read(preferred.join("episode.json"))?)?;
+        if previous.episode_id != episode.episode_id {
+            // Preserve annotations belonging to the replaced content. Publishing
+            // a new episode over them would make provenance validation fail.
+            let mut versioned = media.as_os_str().to_os_string();
+            versioned.push(format!(".{sha256}.cerul"));
+            return Ok(versioned.into());
+        }
+    }
+    Ok(preferred)
 }
 
 /// Publish only local metadata here. Remote station work follows separately.
@@ -219,7 +238,7 @@ pub fn publish_episode(
         }
         Err(error) => return Err(error),
     };
-    register(
+    register_inner(
         workspace,
         RegistryEntry {
             episode_id: episode.episode_id.clone(),
@@ -228,6 +247,7 @@ pub fn publish_episode(
             sidecar: sidecar.clone(),
             pending_deletion: false,
         },
+        episode.source.format == "video",
     )?;
     Ok(sidecar)
 }
@@ -235,6 +255,30 @@ pub fn publish_episode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn registry_replaces_shared_sidecar_but_preserves_shared_media_episodes() {
+        let dir = tempfile::tempdir().unwrap();
+        for (id, sidecar) in [
+            ("old/0", "video.cerul"),
+            ("new/0", "video.cerul"),
+            ("dataset/1", "episode1"),
+        ] {
+            register(
+                dir.path(),
+                RegistryEntry {
+                    episode_id: id.into(),
+                    sha256: id.into(),
+                    media: "shared.mp4".into(),
+                    sidecar: sidecar.into(),
+                    pending_deletion: false,
+                },
+            )
+            .unwrap();
+        }
+        let entries = read_registry(dir.path()).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|e| e.episode_id != "old/0"));
+    }
     #[test]
     fn discovery_skips_sidecars_and_recognizes_dataset_once() {
         let dir = tempfile::tempdir().unwrap();
@@ -277,6 +321,64 @@ mod tests {
         assert_eq!(publish_episode(&workspace, &moved, None).unwrap(), sidecar);
         let registry = read_registry(&workspace).unwrap();
         assert_eq!(registry.len(), 1);
-        assert_eq!(registry[0].media, fs::canonicalize(second).unwrap());
+        assert_eq!(registry[0].media, fs::canonicalize(&second).unwrap());
+        media::run(
+            std::process::Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=red:size=64x64:rate=2:duration=1",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&second),
+        )
+        .unwrap();
+        let replacement = ordinary_episode(&second).unwrap();
+        assert_ne!(replacement.episode_id, moved.episode_id);
+        let replacement_sidecar = publish_episode(&workspace, &replacement, None).unwrap();
+        // Replacing the same path again must preserve the prior content sidecar.
+        media::run(
+            std::process::Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=blue:size=64x64:rate=2:duration=1",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&second),
+        )
+        .unwrap();
+        let newest = ordinary_episode(&second).unwrap();
+        assert_ne!(
+            publish_episode(&workspace, &newest, None).unwrap(),
+            replacement_sidecar
+        );
+        let preserved: Episode =
+            serde_json::from_slice(&fs::read(replacement_sidecar.join("episode.json")).unwrap())
+                .unwrap();
+        assert_eq!(preserved.episode_id, replacement.episode_id);
+        let registry = read_registry(&workspace).unwrap();
+        assert_eq!(registry.len(), 1);
+        assert!(
+            !registry
+                .iter()
+                .any(|entry| entry.episode_id == replacement.episode_id)
+        );
+        for entry in registry {
+            let stored: Episode =
+                serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json")).unwrap())
+                    .unwrap();
+            assert_eq!(stored.episode_id, entry.episode_id);
+        }
     }
 }

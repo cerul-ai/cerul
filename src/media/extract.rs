@@ -170,10 +170,19 @@ pub fn keyframes(
     let pattern = directory.join("frame-%08d.png");
     let filter_path = directory.join("selection.filter");
     fs::write(&filter_path, &filter)?;
+    // New FFmpeg releases removed filter_script in favor of file-valued options.
+    // Detect the legacy option instead of parsing distributor-specific versions.
+    let help = run(Command::new("ffmpeg").args(["-hide_banner", "-h", "full"]))?;
+    let legacy = String::from_utf8_lossy(&help.stdout).contains("-filter_script");
+    let filter_option = if legacy {
+        "-filter_script:v"
+    } else {
+        "-/filter:v"
+    };
     let mut command = Command::new("ffmpeg");
     seek_input(&mut command, source, source_range)?;
     command
-        .args(["-map", "0:v:0", "-filter_script:v"])
+        .args(["-map", "0:v:0", filter_option])
         .arg(&filter_path)
         .args(["-frames:v", &selected.len().to_string(), "-fps_mode", "vfr"])
         .arg(&pattern);
