@@ -301,6 +301,12 @@ async fn run_inner(
             for row in crate::index::vectors::read(&path, dims)? {
                 if row.episode == entry.episode_id
                     && row.space_id == space
+                    && kind_allowed(&filters, row.kind)
+                    && filters.iter().all(|filter| match filter.key.as_str() {
+                        "episode" => filter.matches(Some(&Value::String(row.episode.clone()))),
+                        "stream" => filter.matches(Some(&Value::String(row.stream.clone()))),
+                        _ => true,
+                    })
                     && episode.video(&row.stream).is_ok()
                     && crate::index::embed::usable(
                         &entry.sidecar,

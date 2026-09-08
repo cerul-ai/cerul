@@ -272,7 +272,6 @@ async fn execute(cli: &Cli, cancel: CancellationToken) -> Result<(Value, u8)> {
                 )
             );
             let config = config(cli).map_err(|e| category(2, e))?;
-            cerul::media::check_dependencies().map_err(|e| category(3, e))?;
             let json = cli.json;
             let quiet = cli.quiet;
             let seen = Mutex::new(BTreeSet::new());
@@ -312,6 +311,7 @@ async fn execute(cli: &Cli, cancel: CancellationToken) -> Result<(Value, u8)> {
                 request_notice: (!cli.yes).then_some(notice),
             };
             options.validate().map_err(|e| category(2, e))?;
+            cerul::media::check_dependencies().map_err(|e| category(3, e))?;
             let report = cerul::annotate::pipeline::run(
                 &args.paths,
                 &workspace,
@@ -377,7 +377,9 @@ async fn execute(cli: &Cli, cancel: CancellationToken) -> Result<(Value, u8)> {
             };
             cerul::clean::plan(&workspace, &options).map_err(|e| category(2, e))?;
             Ok((
-                serde_json::to_value(cerul::clean::run(&workspace, &options).await?)?,
+                serde_json::to_value(
+                    cerul::clean::run_with_cancellation(&workspace, &options, cancel).await?,
+                )?,
                 0,
             ))
         }

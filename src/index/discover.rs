@@ -469,7 +469,54 @@ mod tests {
                 .unwrap()
                 .complete
         );
+        for filter in [format!("stream={front}"), format!("stream!={wrist}")] {
+            let error = crate::search::run(
+                &workspace,
+                &config,
+                &crate::search::Options {
+                    query: Some("cup".into()),
+                    filters: vec![filter],
+                    ..Default::default()
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(
+                error
+                    .downcast_ref::<crate::providers::ProviderError>()
+                    .unwrap()
+                    .kind,
+                crate::providers::Failure::Unsupported
+            );
+        }
+        // An unrelated camera mapping must not invalidate this stream's products.
+        let previous_keys = source_keys(&changed).unwrap();
+        let front_fingerprint = embed::fingerprint(
+            &changed,
+            front,
+            &space,
+            &embed::Options::default(),
+            None,
+            None,
+        )
+        .unwrap();
         changed.time.mappings.get_mut(wrist).unwrap().b_us += 1;
+        let changed_keys = source_keys(&changed).unwrap();
+        assert_eq!(previous_keys[front], changed_keys[front]);
+        assert_ne!(previous_keys[wrist], changed_keys[wrist]);
+        assert_eq!(
+            front_fingerprint,
+            embed::fingerprint(
+                &changed,
+                front,
+                &space,
+                &embed::Options::default(),
+                None,
+                None,
+            )
+            .unwrap()
+        );
         publish_episode(&workspace, &changed, None).unwrap();
         assert!(!embed::usable(&sidecar, wrist, front, &space).unwrap());
         assert_eq!(

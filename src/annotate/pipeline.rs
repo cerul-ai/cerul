@@ -94,6 +94,7 @@ impl Options {
             self.jobs > 0 && self.rpm != Some(0),
             "jobs and RPM must be positive"
         );
+        ontology(self, false)?;
         Ok(())
     }
 }
@@ -133,7 +134,9 @@ fn interrupted(cancel: &CancellationToken) -> Result<()> {
 fn ontology(options: &Options, dataset: bool) -> Result<Option<BTreeSet<String>>> {
     if let Some(path) = &options.ontology {
         let text = fs::read_to_string(path)?;
-        let words = if text.trim_start().starts_with('[') {
+        let words = if path.extension().is_some_and(|ext| ext == "json")
+            || text.trim_start().starts_with(['[', '{'])
+        {
             serde_json::from_str::<Vec<String>>(&text)?
         } else {
             text.lines()

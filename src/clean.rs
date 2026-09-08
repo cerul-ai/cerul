@@ -235,6 +235,35 @@ async fn connection(path: &Path) -> Result<lancedb::Connection> {
     )
 }
 pub async fn run(workspace: &Path, options: &Options) -> Result<Report> {
+    run_with_cancellation(
+        workspace,
+        options,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+}
+
+/// Stop scheduling cleanup work when cancelled, including pending index compaction.
+pub async fn run_with_cancellation(
+    workspace: &Path,
+    options: &Options,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<Report> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(crate::providers::ProviderError {
+            kind: crate::providers::Failure::Cancelled,
+            message: "operation cancelled".into(),
+        }.into()),
+        result = run_inner(workspace, options, &cancel) => result,
+    }
+}
+
+async fn run_inner(
+    workspace: &Path,
+    options: &Options,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<Report> {
     if options.dry_run {
         return plan(workspace, options);
     }
@@ -245,12 +274,21 @@ pub async fn run(workspace: &Path, options: &Options) -> Result<Report> {
     let workspace = root.as_path();
     let report = plan(workspace, options)?;
     for item in &report.items {
+        tokio::task::yield_now().await;
+        if cancel.is_cancelled() {
+            return Err(crate::providers::ProviderError {
+                kind: crate::providers::Failure::Cancelled,
+                message: "operation cancelled".into(),
+            }
+            .into());
+        }
         no_symlinks(&item.path)?;
         match item.action {
             Action::RemoveIndex | Action::RemoveCache => fs::remove_dir_all(&item.path)?,
             Action::Compact => {
                 let db = connection(&item.path).await?;
                 for table in db.table_names().execute().await? {
+                    tokio::task::yield_now().await;
                     db.open_table(&table)
                         .execute()
                         .await?
@@ -309,6 +347,46 @@ pub async fn run(workspace: &Path, options: &Options) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cancellation_prevents_cleanup_before_start_and_between_actions() {
+        for cancelled_before_start in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let workspace = dir.path().join("workspace");
+            let index = workspace.join("index").join("a".repeat(64));
+            fs::create_dir_all(&index).unwrap();
+            fs::write(index.join("sentinel"), "preserve").unwrap();
+            let cancel = tokio_util::sync::CancellationToken::new();
+            if cancelled_before_start {
+                cancel.cancel();
+            }
+            let options = Options {
+                all_indexes: true,
+                ..Default::default()
+            };
+            let (result, ()) = tokio::join!(
+                run_with_cancellation(&workspace, &options, cancel.clone()),
+                async {
+                    cancel.cancel();
+                },
+            );
+            assert_eq!(
+                result
+                    .unwrap_err()
+                    .downcast_ref::<crate::providers::ProviderError>()
+                    .unwrap()
+                    .kind,
+                crate::providers::Failure::Cancelled
+            );
+            assert_eq!(
+                fs::read_to_string(index.join("sentinel")).unwrap(),
+                "preserve"
+            );
+            if cancelled_before_start {
+                assert!(!workspace.join("runtime").exists());
+            }
+        }
+    }
+
     #[tokio::test]
     async fn interrupted_sidecar_removal_resumes_for_partial_and_missing_directories() {
         let dir = tempfile::tempdir().unwrap();
