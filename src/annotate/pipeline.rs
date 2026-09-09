@@ -636,7 +636,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("source.mp4");
         crate::media::run(
-            std::process::Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args([
                     "-v",
                     "error",

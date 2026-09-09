@@ -20,6 +20,13 @@ these model IDs. Text queries use the embedding guide's `task: search result | q
 instruction. Account access and timestamp quality require real-request acceptance.
 Store only the key's environment variable name in configuration, never the key.
 
+The CLI can save a validated default Gemini key in `~/.cerul/credentials.json`
+(mode 0600). Stored keys are scoped to endpoint kind, service URL, and key
+variable name. Environment values override saved keys. The first interactive
+processing command offers hidden setup when needed; JSON, quiet, yes, dry-run,
+and non-terminal calls never prompt. See [installation](installation.md) for
+storage, removal, and agent setup. Library callers do not read this file.
+
 ```toml
 [embedding]
 kind = "gemini"

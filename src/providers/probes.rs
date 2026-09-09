@@ -76,7 +76,7 @@ fn video() -> Result<Vec<u8>> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("probe.mp4");
     crate::media::run(
-        std::process::Command::new("ffmpeg")
+        crate::media::command("ffmpeg")
             .args([
                 "-nostdin",
                 "-v",
@@ -96,10 +96,7 @@ fn video() -> Result<Vec<u8>> {
     Ok(fs::read(path)?)
 }
 fn ffmpeg_available() -> Result<bool> {
-    match std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-    {
+    match crate::media::command("ffmpeg").arg("-version").output() {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.into()),

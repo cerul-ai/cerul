@@ -421,7 +421,7 @@ mod tests {
             unreachable!()
         };
         media::run(
-            std::process::Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args([
                     "-v",
                     "error",
@@ -701,7 +701,7 @@ mod tests {
         let workspace = dir.path().join("workspace");
         let first = dir.path().join("first.mp4");
         media::run(
-            std::process::Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args([
                     "-v",
                     "error",
@@ -726,7 +726,7 @@ mod tests {
         assert_eq!(registry.len(), 1);
         assert_eq!(registry[0].media, fs::canonicalize(&second).unwrap());
         media::run(
-            std::process::Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args([
                     "-v",
                     "error",
@@ -746,7 +746,7 @@ mod tests {
         let replacement_sidecar = publish_episode(&workspace, &replacement, None).unwrap();
         // Replacing the same path again must preserve the prior content sidecar.
         media::run(
-            std::process::Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args([
                     "-v",
                     "error",

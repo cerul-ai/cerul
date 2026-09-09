@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     path::{Path, PathBuf},
-    process::Command,
 };
 pub const RECIPE_VERSION: &str = "contact-proxy/1";
 #[derive(Serialize, Deserialize)]
@@ -88,7 +87,7 @@ pub fn frames(
                 "invalid contact sample timeline"
             );
             let encoded = stage.path().join("contact.mp4");
-            super::run(Command::new("ffmpeg").args(["-v", "error", "-framerate", &fps.to_string(), "-i"])
+            super::run(crate::media::command("ffmpeg").args(["-v", "error", "-framerate", &fps.to_string(), "-i"])
                 .arg(stage.path().join("frame-%08d.png"))
                 .args(["-vf", "scale='min(480,iw)':'min(480,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", "-c:v", "libx264", "-crf", "24", "-preset", "fast", "-pix_fmt", "yuv420p", "-an", "-movflags", "+faststart"])
                 .arg(&encoded))?;
@@ -112,7 +111,7 @@ pub fn frames(
     };
     fs::create_dir_all(destination)?;
     super::run(
-        Command::new("ffmpeg")
+        crate::media::command("ffmpeg")
             .args(["-v", "error", "-y", "-i"])
             .arg(&video)
             .args(["-fps_mode", "passthrough"])

@@ -1,6 +1,6 @@
 # Cerul CLI
 
-Implementation baseline, 2026-09-08. This repository is being rewritten. Retain LICENSE, Git history, and the existing `ffmpeg-vendor-*` release assets used by Desktop builds; retire the old client surfaces.
+Public design reference for the local video processing core.
 
 **Purpose:** `cerul` turns video into searchable, annotated data suitable for downstream training workflows. Users supply their own model keys. No Cerul account is required.
 
@@ -13,7 +13,7 @@ Implementation baseline, 2026-09-08. This repository is being rewritten. Retain 
 | Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
 | Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
 | Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, and query instruction template. The same model name at different endpoints is a different space. Queries must match exactly. |
-| Endpoints | `embedding`, `vision`, and `transcription` support `kind = gemini \| openai` with user keys. `perception` follows the Cerul contract and defaults to Cerul Cloud; perception processing is not implemented in M1. Missing perception must not block indexing/search. |
+| Endpoints | `embedding`, `vision`, and `transcription` support `kind = gemini \| openai` with user keys. `perception` is reserved and processing is not implemented. Missing perception must not block indexing/search. |
 | Default models | One Gemini key: `gemini-embedding-2` at 1536 dimensions and `gemini-3.8-flash`. |
 | OCR | Embedded PP-OCRv6 small, approximately 31 MB of weights, CPU inference through `tract-onnx`, enabled by default. This is the only embedded model and the only exception to endpoint-based inference. |
 | Retrieval | One multimodal space. Each 30-second unit has up to three independently embedded rows: video, transcript, screen text. The embedding endpoint must accept video and images; unsupported endpoints fail, without a text-only fallback. No BM25 or fusion. Exact strings use `--text` substring matching. Annotation filtering happens before vector search. |
@@ -26,7 +26,6 @@ Implementation baseline, 2026-09-08. This repository is being rewritten. Retain 
 | Versions | Increment `v0.0.x` without alpha/beta suffixes. The old npm package reached 0.0.2; the first rewritten release is **v0.0.3**, with the same version on crates.io. Milestones M1/M2/M3 are not fixed version numbers. |
 | Distribution | cargo-dist shell installer, Homebrew formula, and npm `cerul` wrapper. |
 | Telemetry | None. |
-| Cloud | Consumes the same binary through `serve`. Quota accounting and hosted perception implementation stay in the private cloud product; the CLI passes `CERUL_API_KEY`. |
 | Scope | M1 is a complete video retrieval and semantic annotation CLI requiring only third-party model credentials. Pose, depth, and segmentation depend on later perception services and must not be advertised as available. |
 
 ## 2. Usage
@@ -46,7 +45,7 @@ cerul search --filter semantic.event.verb=regrasp
 cerul status
 ~~~
 
-Runtime prerequisite: ffmpeg and ffprobe 6.0 or later on PATH. The default workspace is `~/.cerul/`, overridden by `--workspace` or `CERUL_WORKSPACE`. Source-build instructions are in README until publication is verified.
+Complete distributions install `cerul-ffmpeg` and `cerul-ffprobe` beside the CLI. Source-only builds can use ffmpeg/ffprobe 6.0+ on PATH; explicit `CERUL_FFMPEG` and `CERUL_FFPROBE` overrides take precedence. The default workspace is `~/.cerul/`, overridden by `--workspace` or `CERUL_WORKSPACE`. Source-build instructions are in README until publication is verified.
 
 ## 3. Commands
 
@@ -113,10 +112,6 @@ Ordinary status does not probe remote endpoints; remote capabilities are null (u
 
 Options: `--index SPACE_ID`, `--all-indexes`, `--cache`, `--compact`. Status lists space IDs and corresponding models. Only `--sidecars PATH --yes` deletes sidecars. All cleanup operations support `--dry-run`. Explicit sidecar deletion records durable intent before removing index rows and files. If interrupted, repeating the same explicit cleanup resumes even when the sidecar is partially removed or absent. Dry runs never record intent or delete data.
 
-### `serve` (M2)
-
-`--mcp` serves stdio MCP tools for index, annotate, search, and status with schemas matching CLI JSON. HTTP options: `--host 127.0.0.1`, `--port 0`, and an automatic token under workspace `runtime/token`. Desktop M1 integration uses the library or subprocess NDJSON events.
-
 ## 4. Configuration and models
 
 Precedence: CLI overrides → environment → current-directory `cerul.toml` → `~/.cerul/config.toml` → defaults. Configuration stores key environment variable names, not secret values.
@@ -164,21 +159,6 @@ Embedding probes send a sentence, image, and two-second video and check dimensio
 
 Print a notice before the first media request to each endpoint; `--yes` suppresses it. Requests are inline. Check the actual encoded request byte size against endpoint limits (Gemini: 20 MB); reduce bitrate, then split if needed.
 
-### Perception contract (M2 onward)
-
-The CLI consumes the contract; hosted inference implementation stays outside this repository.
-
-| Route | Input | Output | Annotation |
-| --- | --- | --- | --- |
-| GET /capabilities | — | version, tasks[], models{} | — |
-| POST /segment | Frame ZIP plus text/box prompt | Per-frame RLE | grounding.mask |
-| POST /track | Proxy clip plus initial point/box | [[t_us,x,y,visible]] | grounding.track |
-| POST /depth | Frame ZIP | 16-bit PNG plus scale | world.depth |
-| POST /camera | Proxy clip plus optional intrinsics | Poses and point cloud | world.camera, world.points |
-| POST /hand | Proxy clip | Both hands' joints plus valid | world.hand |
-
-Inputs are uploaded bytes. The server must not read caller-local paths.
-
 ## 5. Storage
 
 ~~~text
@@ -205,7 +185,6 @@ my_dataset/
 ~/.cerul/
   config.toml
   providers.json
-  runtime/token
   runtime/lock
   registry.jsonl                    # Input paths and media hash -> sidecar.
   cache/<sha256>/proxies/<recipe_hash>.mp4
@@ -230,7 +209,6 @@ M1 publication and recovery rules:
 1. Write outputs to temporary staging files, validate, then atomically rename to their final location. No incomplete artifact occupies a final path.
 2. Index and annotate are idempotent: skip completed stations and resume missing work. If sidecars exist but Lance rows are absent, restore the index with zero model calls. `--recompute` rewrites complete artifacts. Persist validated, cache-keyed per-unit checkpoints so successful units survive interruptions. Replace indexed rows by episode, stream, and artifact version, including removal of stale rows. An index update failure preserves valid sidecars; subsequent commands resynchronize the corresponding projection.
 
-M2 adds job state and /jobs/{id} alongside serve. Human revisions and supersedes semantics arrive with the Desktop editing consumer. Neither has an M1 consumer.
 
 ## 6. Data model
 
@@ -294,19 +272,13 @@ Repeated filters are AND. Conditions on one annotation must match the same recor
 
 Without a filter, search the whole selected space. Filters alone skip vectors and return time-ordered records. A query space mismatch returns code 3. Missing required annotations return a capability error, not an empty result.
 
-### Serve endpoints (M2)
-
-GET /status; GET /episodes[/{id}]; POST /index; POST /annotate; POST /search; POST /clip; GET /jobs/{id}, streaming for Accept: application/x-ndjson; GET /annotations/{episode}/{name}?format=json|srt|vtt; GET /media/{episode}/{stream} with Range support.
-
-Errors contain code, message, retryable, request_id. Generate OpenAPI with utoipa and commit it.
-
 ## 8. Repository structure
 
 One root Cargo.toml defines lib and bin. Modules cover configuration, providers, media, OCR, annotation schemas/I/O, episodes, LeRobot, indexing, semantic annotation, search, status, and cleanup. Serve modules are M2.
 
 - models/: embedded detection/recognition ONNX and dictionary, with provenance, versions, and Apache-2.0 license.
 - prompts/: one embedded English Markdown prompt per module.
-- schemas/: generated with schemars and committed. Deliver in the first implementation step so Desktop/Cloud can build against them.
+- schemas/: generated with schemars and committed. Shared by CLI and library consumers.
 - tests/: short, clearly licensed fixtures (at most ten seconds) and recorded endpoint-response replay.
 - examples/: ordinary-video and LeRobot tutorials in M1; authored multi-camera directory tutorial in M2.
 - dist-workspace.toml and the generated npm wrapper.
@@ -318,23 +290,13 @@ The initial macOS arm64 release binary measured approximately 228 MiB uncompress
 
 Every PR runs offline tests and two-platform builds. Protected-branch validation includes small real Gemini calls; never inject model keys into fork PRs.
 
-## 9. Milestones and acceptance
+## 9. Acceptance
 
 | Milestone | Scope |
 | --- | --- |
 | **M1**, first release v0.0.3 | Index (transcript, OCR, embedding, still detection); search (vectors, images, prefilters, filter counts, saving clips, exact text); status; clean; semantic annotation; LeRobot reading and subtask writeback; macOS/Linux distribution; replace the old npm cerul wrapper. |
-| M2 | HTTP/MCP serve, Windows, grounding box/affordance, perception contract and hosted segment/depth/track, reranking, Rerun .rrd. |
-| M3 | Hosted camera/hand, keypoint, --target cloud. |
 
-Implementation order, each step independently runnable:
-
-1. Types/schemas, configuration, status, endpoint probes.
-2. Media stations, sidecars, Lance.
-3. Search.
-4. Semantic annotation and LeRobot.
-5. cargo-dist distribution and npm wrapper.
-
-M1 acceptance:
+Acceptance requirements:
 
 1. On fresh macOS/Linux, an installation command plus GEMINI_API_KEY enables indexing a ten-minute video with speech in under ten minutes and finding the correct moment.
 2. Ask ten manually chosen questions, including at least three each about visuals, speech, and screen text. Recall@5 is at least 8/10. Speech questions match speech rows; screen-text questions match screen rows. No separate large gold-set project is required.
@@ -346,15 +308,15 @@ M1 acceptance:
 7. Deleting the workspace index permits zero-model-call rebuild from sidecar vectors. Ctrl-C during indexing preserves completed units; resumption fills gaps and leaves no incomplete final artifacts.
 7a. A filtered event can be returned even when its unfiltered vector rank is below the first ten candidates.
 8. Offline index --no-audio completes local probing, frames, and OCR, returns code 6 with embedding incomplete, and status reports the episode unindexed. Reconnection resumes embedding only.
-9. Embedded OCR on twenty sample clips is no worse than the existing platform Python sidecar.
-10. The binary requires no Python, CUDA, or dynamic ML libraries; ffmpeg is the external media dependency.
+9. Embedded OCR on twenty sample clips is no worse than a documented reference implementation.
+10. The binary requires no Python, CUDA, or dynamic ML libraries; FFmpeg and ffprobe run as separately licensed, bundled subprocesses.
 
-## 10. Implementation checks
+## 10. Validation considerations
 
 - Verify the current gemini-3.8-flash model ID, pricing, and segment-level transcription timestamp quality. If timestamp quality fails acceptance, use a Whisper-compatible transcription default without changing the configuration shape.
 - Verify tract-onnx operator coverage for PP-OCRv6 detection/recognition. If unsupported, investigate statically linked ort. Measure both platforms' CPU throughput and final binary size. Earlier throughput/size estimates remain unproven until measured.
 - Verify lancedb 0.38 Rust APIs, particularly vector prefilter behavior.
-- Use local product recordings for screen-text acceptance and a small, appropriately licensed public LeRobot dataset. Keep private recordings and derived acceptance outputs out of the public repository.
+- Use consented or licensed recordings for screen-text acceptance and a small, appropriately licensed public LeRobot dataset. Keep private recordings and derived acceptance outputs out of the public repository.
 - Review the fifteen-verb default vocabulary.
 
 ## 11. Out of scope

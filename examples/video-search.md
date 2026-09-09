@@ -5,10 +5,11 @@ audio, or text to your configured endpoints. The source media stays unchanged.
 
 ## Prepare
 
-Build from this checkout with `cargo build --release --locked`, then put the
-resulting `target/release/cerul` on your PATH. Install ffmpeg and ffprobe 6.0 or
-later. Follow [configuration](../docs/configuration.md) to select models and make
-their key environment variables available in your shell.
+Install a complete bundle or build this checkout following the
+[installation guide](../docs/installation.md). Complete bundles include FFmpeg,
+ffprobe, and OCR weights. The first interactive run guides default Gemini key
+setup; an existing `GEMINI_API_KEY` also works. Use [configuration](../docs/configuration.md)
+for other endpoints.
 
 Choose a dedicated workspace so this example does not mix with other indexes:
 

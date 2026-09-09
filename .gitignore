@@ -22,3 +22,12 @@ tmp/
 __pycache__/
 *.pyc
 .venv/
+
+# Local plans, reports, and trial workspaces are not public source.
+.workspace/
+.try-workspace/
+video-workspace/
+*.pem
+*.key
+
+/cerul-media-source.tar.gz

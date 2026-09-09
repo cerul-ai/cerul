@@ -487,7 +487,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let video = dir.path().join("speech.mp4");
         media::run(
-            std::process::Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args([
                     "-v",
                     "error",
@@ -596,7 +596,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let video = dir.path().join("screen.mp4");
         media::run(
-            std::process::Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args(["-v", "error", "-loop", "1", "-i"])
                 .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ocr-text.png"))
                 .args([

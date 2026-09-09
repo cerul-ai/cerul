@@ -439,7 +439,7 @@ mod tests {
         let workspace = dir.path().join("workspace");
         let source = dir.path().join("source.mp4");
         crate::media::run(
-            std::process::Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args([
                     "-v",
                     "error",

@@ -8,10 +8,10 @@ repository = "https://github.com/cerul-ai/cerul"
 homepage = "https://github.com/cerul-ai/cerul"
 include = [
     "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/THIRD_PARTY_NOTICES.md",
-    "/README.md", "/DESIGN.md", "/ARCHITECTURE.md", "/CONTRIBUTING.md",
-    "/AGENTS.md", "/CODE_OF_CONDUCT.md", "/SECURITY.md",
+    "/README.md", "/README.zh-CN.md", "/README.zh-TW.md", "/DESIGN.md", "/ARCHITECTURE.md", "/CONTRIBUTING.md",
+    "/CODE_OF_CONDUCT.md", "/SECURITY.md",
     "/src/**/*.rs", "/examples/*.rs", "/examples/*.md", "/docs/*.md",
-    "/schemas/*.json", "/prompts/*.md",
+    "/scripts/build-*.sh", "/scripts/package-media-source.sh", "/schemas/*.json", "/prompts/*.md", "/docs/assets/*.png", "/docs/assets/README.md",
     "/models/det.onnx", "/models/rec.onnx", "/models/characters.txt",
     "/models/LICENSE", "/models/README.md",
     "/tests/*.rs", "/tests/*.py",
@@ -45,6 +45,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 imageproc = { version = "0.25", default-features = false }
 
 tempfile = "3"
+rpassword = "7"
 
 [profile.dev]
 debug = 0

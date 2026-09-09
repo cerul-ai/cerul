@@ -377,3 +377,16 @@ fn invalid_ontology_is_a_configuration_error_without_workspace_writes() {
         assert!(!dir.path().join(".cerul").exists());
     }
 }
+
+#[test]
+fn offline_commands_ignore_unusable_saved_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".cerul")).unwrap();
+    std::fs::write(dir.path().join(".cerul/credentials.json"), b"invalid json").unwrap();
+    let status = cli(dir.path(), &["--json", "status"]);
+    assert!(status.status.success());
+    video(dir.path());
+    let dry = cli(dir.path(), &["--json", "--dry-run", "index", "sample.mp4"]);
+    assert!(dry.status.success());
+    assert_eq!(final_json(&dry)["dry_run"], true);
+}

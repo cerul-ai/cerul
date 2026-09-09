@@ -10,6 +10,38 @@ use std::{
     process::{Command, Output},
 };
 
+/// Prefer an explicit override, then the tools shipped alongside this executable.
+/// Source builds can use ffmpeg/ffprobe from PATH.
+pub fn command(tool: &str) -> Command {
+    let variable = match tool {
+        "ffmpeg" => "CERUL_FFMPEG",
+        "ffprobe" => "CERUL_FFPROBE",
+        _ => return Command::new(tool),
+    };
+    let executable = resolve_tool(
+        tool,
+        std::env::var_os(variable),
+        std::env::current_exe().ok(),
+    );
+    Command::new(executable)
+}
+fn resolve_tool(
+    tool: &str,
+    override_path: Option<std::ffi::OsString>,
+    executable: Option<std::path::PathBuf>,
+) -> std::path::PathBuf {
+    if let Some(path) = override_path {
+        return path.into();
+    }
+    if let Some(parent) = executable.as_deref().and_then(Path::parent) {
+        let bundled = parent.join(format!("cerul-{tool}"));
+        if bundled.is_file() {
+            return bundled;
+        }
+    }
+    tool.into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Probe {
     pub duration_us: i64,
@@ -153,7 +185,7 @@ pub fn run_cancellable(
 
 pub fn check_dependencies() -> Result<()> {
     for executable in ["ffmpeg", "ffprobe"] {
-        let output = run(Command::new(executable).arg("-version"))?;
+        let output = run(command(executable).arg("-version"))?;
         let version = String::from_utf8_lossy(&output.stdout);
         let major = version
             .split_whitespace()
@@ -173,7 +205,7 @@ pub fn check_dependencies() -> Result<()> {
 }
 
 pub fn probe(path: &Path) -> Result<Probe> {
-    let output = run(Command::new("ffprobe")
+    let output = run(crate::media::command("ffprobe")
         .args([
             "-v",
             "error",
@@ -254,7 +286,7 @@ pub fn frame_pts(path: &Path) -> Result<Vec<i64>> {
     Ok(points)
 }
 fn frame_pts_uncached(path: &Path) -> Result<Vec<i64>> {
-    let output = run(Command::new("ffprobe")
+    let output = run(crate::media::command("ffprobe")
         .args([
             "-v",
             "error",
@@ -323,7 +355,7 @@ mod tests {
         let source = dir.path().join("source.mp4");
         with_cancellation(tokio_util::sync::CancellationToken::new(), async {
             for rate in [10, 2] {
-                run(Command::new("ffmpeg")
+                run(crate::media::command("ffmpeg")
                     .args([
                         "-v",
                         "error",
@@ -354,7 +386,7 @@ mod tests {
         });
         let started = std::time::Instant::now();
         let error = run_cancellable(
-            Command::new("ffmpeg").args([
+            crate::media::command("ffmpeg").args([
                 "-v",
                 "error",
                 "-re",
@@ -378,7 +410,7 @@ mod tests {
             crate::providers::Failure::Cancelled
         );
         assert!(started.elapsed() < std::time::Duration::from_secs(3));
-        let output = run(Command::new("ffmpeg").args([
+        let output = run(crate::media::command("ffmpeg").args([
             "-v",
             "debug",
             "-debug_ts",
@@ -400,10 +432,10 @@ mod tests {
         stopped.cancel();
         let (first, second) = tokio::join!(
             with_cancellation(stopped, async {
-                run(Command::new("ffprobe").arg("-version"))
+                run(crate::media::command("ffprobe").arg("-version"))
             }),
             with_cancellation(tokio_util::sync::CancellationToken::new(), async {
-                run(Command::new("ffprobe").arg("-version"))
+                run(crate::media::command("ffprobe").arg("-version"))
             }),
         );
         assert!(first.is_err());
@@ -424,7 +456,7 @@ mod tests {
     fn real_video_probe_hash_and_frame_pts() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("sample.mp4");
-        run(Command::new("ffmpeg")
+        run(crate::media::command("ffmpeg")
             .args([
                 "-v",
                 "error",
@@ -458,3 +490,24 @@ pub mod extract;
 pub mod proxy;
 
 pub mod contact_proxy;
+
+#[cfg(test)]
+mod tool_resolution_tests {
+    use super::*;
+    #[test]
+    fn bundle_precedes_path_but_explicit_override_is_authoritative() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("cerul");
+        let bundled = dir.path().join("cerul-ffmpeg");
+        assert_eq!(
+            resolve_tool("ffmpeg", None, Some(exe.clone())),
+            Path::new("ffmpeg")
+        );
+        std::fs::write(&bundled, b"fixture").unwrap();
+        assert_eq!(resolve_tool("ffmpeg", None, Some(exe.clone())), bundled);
+        assert_eq!(
+            resolve_tool("ffmpeg", Some("/missing/explicit-tool".into()), Some(exe)),
+            Path::new("/missing/explicit-tool")
+        );
+    }
+}

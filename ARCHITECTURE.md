@@ -11,9 +11,8 @@ integer-microsecond episode time. Model-relative time is converted exactly once.
 Completed units are recoverable from checkpoints; final files are atomically
 published. The workspace admits one writer at a time.
 
-Desktop UI, authentication, cloud billing, tenant isolation, and hosted
-perception implementations belong to private products. HTTP and MCP adapters
-are planned for M2 and must call the same core rather than duplicate processing.
+This crate exposes local processing and endpoint clients. It does not implement
+a product UI, hosted inference, or HTTP/MCP serving.
 
 Rust types produce public schemas. Legacy platform OpenAPI projections are
 retired rather than hand-modified into a second contract.

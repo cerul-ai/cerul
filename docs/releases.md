@@ -2,8 +2,7 @@
 
 The v0.0.3 rewrite is not published by building or reviewing this branch.
 Package publishing is a separate release operation after M1 acceptance.
-Existing tags and `ffmpeg-vendor-*` assets must be preserved: Desktop releases
-still depend on those assets.
+Existing tags and `ffmpeg-vendor-*` assets must be preserved for downstream compatibility.
 
 ## Build configuration
 
@@ -14,17 +13,19 @@ still depend on those assets.
 | `aarch64-apple-darwin` | macOS 14 |
 | `x86_64-unknown-linux-gnu` | Ubuntu 24.04 |
 
-The `dist` Cargo profile inherits the optimized release profile. OCR weights
-are embedded; archives include Apache-2.0 and third-party license notices. ffmpeg and
-ffprobe 6.0 or later are runtime dependencies. Homebrew's generated formula
-includes ffmpeg as a dependency. Shell and npm users must install it separately.
+A generic cargo-dist package wraps the single Rust crate. Its native build script
+compiles the CLI and pinned FFmpeg/x264 sources, then packages three executables:
+`cerul`, `cerul-ffmpeg`, and `cerul-ffprobe`. Shell, npm, and Homebrew installers
+install them together. No runtime system FFmpeg dependency is required.
+OCR weights are embedded. Each binary archive includes third-party notices. The same release publishes
+`cerul-media-source.tar.gz`, containing the exact FFmpeg, x264, and zlib source
+tarballs (including licenses) and build script in `media-source/`.
+FFmpeg with libx264 is GPL-2.0-or-later; the separately executed Rust CLI retains
+its Apache-2.0 license. Do not advertise the entire bundle as Apache-only.
+
 Linux binaries target glibc; musl/Alpine and other CPU architectures are not M1
 targets. Minimum runtime versions must be checked against the final binary's
 linkage manifest, rather than inferred from its filename.
-
-The first macOS release build measured approximately 228 MiB uncompressed.
-Archive size and final platform requirements are recorded during release
-acceptance; the previous 60 MB estimate is not a size guarantee.
 
 ## Generate and inspect
 

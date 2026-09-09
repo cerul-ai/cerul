@@ -18,7 +18,6 @@ use serde_json::json;
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,7 +113,7 @@ fn cancelled(provider: &Provider) -> Result<()> {
 }
 fn still(path: &Path) -> Result<bool> {
     let output = media::run(
-        Command::new("ffmpeg")
+        crate::media::command("ffmpeg")
             .args(["-nostdin", "-v", "error", "-i"])
             .arg(path)
             .args([
@@ -516,7 +515,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("video.mp4");
         media::run(
-            Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args([
                     "-v",
                     "error",

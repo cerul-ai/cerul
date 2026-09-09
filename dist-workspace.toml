@@ -1,5 +1,5 @@
 [workspace]
-members = ["cargo:."]
+members = ["dist:packaging"]
 
 # Config for 'dist'
 [dist]
@@ -17,6 +17,7 @@ install-path = "CARGO_HOME"
 install-updater = false
 # Embedded OCR licensing must travel with binaries and npm installers.
 include = ["THIRD_PARTY_NOTICES.md"]
+pr-run-mode = "upload"
 
 [dist.github-custom-runners]
 x86_64-unknown-linux-gnu = "ubuntu-24.04"
@@ -24,11 +25,15 @@ global = "ubuntu-24.04"
 
 [dist.dependencies.homebrew]
 protobuf = "*"
-ffmpeg = { version = "*", stage = ["build", "run"] }
+pkgconf = "*"
 
 [dist.dependencies.apt]
 protobuf-compiler = "*"
 libprotobuf-dev = "*"
 pkg-config = "*"
 libssl-dev = "*"
-ffmpeg = "*"
+
+
+[[dist.extra-artifacts]]
+build = ["bash", "scripts/package-media-source.sh"]
+artifacts = ["cerul-media-source.tar.gz"]

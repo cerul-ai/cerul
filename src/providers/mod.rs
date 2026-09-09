@@ -16,6 +16,33 @@ use tokio_util::sync::CancellationToken;
 
 pub mod probes;
 
+tokio::task_local! {
+    static CREDENTIALS: std::collections::BTreeMap<String, String>;
+}
+/// Scope host-supplied credentials to one operation; environment values take precedence.
+/// The library does not read credential files or prompt the user.
+pub async fn with_credentials<T>(
+    credentials: std::collections::BTreeMap<String, String>,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    CREDENTIALS.scope(credentials, future).await
+}
+/// Bind stored credentials to the exact endpoint origin/path and environment name.
+pub fn credential_scope(endpoint: &Endpoint) -> String {
+    use sha2::{Digest, Sha256};
+    format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&(
+                &endpoint.kind,
+                endpoint.base_url.trim_end_matches('/'),
+                &endpoint.api_key_env
+            ))
+            .expect("string tuple serializes")
+        )
+    )
+}
+
 pub const MAX_REQUEST_BYTES: usize = 20_000_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Failure {
@@ -164,7 +191,12 @@ impl Provider {
         rpm: Option<u32>,
         cancel: CancellationToken,
     ) -> Result<Self> {
-        let key = std::env::var(&endpoint.api_key_env).ok();
+        let key = std::env::var(&endpoint.api_key_env).ok().or_else(|| {
+            CREDENTIALS
+                .try_with(|keys| keys.get(&credential_scope(&endpoint)).cloned())
+                .ok()
+                .flatten()
+        });
         Self::new(endpoint, key, jobs, rpm, cancel)
     }
     fn route(&self, action: &str) -> Result<url::Url> {
@@ -780,6 +812,38 @@ pub(crate) mod tests {
                 .unwrap()
                 .kind,
             Failure::TooLarge
+        );
+    }
+}
+
+#[cfg(test)]
+mod credential_scope_tests {
+    use super::*;
+    #[tokio::test]
+    async fn scoped_credentials_do_not_escape_to_other_endpoints_or_tasks() {
+        let mut endpoint = crate::config::Config::default().embedding;
+        endpoint.api_key_env = "CERUL_TEST_SCOPED_KEY_UNSET".into();
+        let keys =
+            std::collections::BTreeMap::from([(credential_scope(&endpoint), "test-key".into())]);
+        with_credentials(keys, async {
+            let provider =
+                Provider::from_env(endpoint.clone(), 1, None, CancellationToken::new()).unwrap();
+            assert!(provider.key.is_some());
+            let mut other = endpoint.clone();
+            other.base_url = "https://other.example/v1".into();
+            assert!(
+                Provider::from_env(other, 1, None, CancellationToken::new())
+                    .unwrap()
+                    .key
+                    .is_none()
+            );
+        })
+        .await;
+        assert!(
+            Provider::from_env(endpoint, 1, None, CancellationToken::new())
+                .unwrap()
+                .key
+                .is_none()
         );
     }
 }

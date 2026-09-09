@@ -1,3 +1,4 @@
+mod credentials;
 use anyhow::{Context, Result};
 use cerul::{
     config::Config,
@@ -525,8 +526,11 @@ async fn main() -> std::process::ExitCode {
             signal.cancel();
         }
     });
-    let result =
-        cerul::media::with_cancellation(cancel.clone(), execute(&cli, cancel.clone())).await;
+    let result = cerul::media::with_cancellation(cancel.clone(), async {
+        let keys = credentials::prepare(&cli, cancel.clone()).await?;
+        cerul::providers::with_credentials(keys, execute(&cli, cancel.clone())).await
+    })
+    .await;
     listener.abort();
     let (value, code) = match result {
         Ok(result) if !cancel.is_cancelled() => result,

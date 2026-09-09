@@ -65,7 +65,7 @@ pub fn video_quality(
     let temp = tempfile::Builder::new()
         .suffix(".mp4")
         .tempfile_in(parent)?;
-    let mut command = Command::new("ffmpeg");
+    let mut command = crate::media::command("ffmpeg");
     input(&mut command, source, source_range)?;
     command.args(["-map", "0:v:0"]);
     if proxy {
@@ -100,7 +100,7 @@ pub fn audio(source: &Path, source_range: SourceRange, destination: &Path) -> Re
     let temp = tempfile::Builder::new()
         .suffix(".wav")
         .tempfile_in(parent)?;
-    let mut command = Command::new("ffmpeg");
+    let mut command = crate::media::command("ffmpeg");
     input(&mut command, source, source_range)?;
     command
         .args([
@@ -172,14 +172,14 @@ pub fn keyframes(
     fs::write(&filter_path, &filter)?;
     // New FFmpeg releases removed filter_script in favor of file-valued options.
     // Detect the legacy option instead of parsing distributor-specific versions.
-    let help = run(Command::new("ffmpeg").args(["-hide_banner", "-h", "full"]))?;
+    let help = run(crate::media::command("ffmpeg").args(["-hide_banner", "-h", "full"]))?;
     let legacy = String::from_utf8_lossy(&help.stdout).contains("-filter_script");
     let filter_option = if legacy {
         "-filter_script:v"
     } else {
         "-/filter:v"
     };
-    let mut command = Command::new("ffmpeg");
+    let mut command = crate::media::command("ffmpeg");
     seek_input(&mut command, source, source_range)?;
     command
         .args(["-map", "0:v:0", filter_option])
@@ -205,7 +205,7 @@ mod tests {
     fn long_selection_extracts_every_requested_frame_without_parser_overflow() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("long.mp4");
-        run(Command::new("ffmpeg")
+        run(crate::media::command("ffmpeg")
             .args([
                 "-v",
                 "error",
@@ -235,7 +235,7 @@ mod tests {
     fn seeked_vfr_frames_match_full_decode_pixels_and_original_pts() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("vfr.mp4");
-        run(Command::new("ffmpeg")
+        run(crate::media::command("ffmpeg")
             .args([
                 "-v",
                 "error",
@@ -258,7 +258,7 @@ mod tests {
         assert!(pts[0] >= 5_000_000);
         let reference = dir.path().join("reference");
         fs::create_dir(&reference).unwrap();
-        run(Command::new("ffmpeg")
+        run(crate::media::command("ffmpeg")
             .args(["-v", "error", "-i"])
             .arg(&source)
             .args(["-fps_mode", "vfr"])
@@ -292,7 +292,7 @@ mod tests {
     fn extracted_clip_and_keyframes_respect_requested_source_interval() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("source.mp4");
-        run(Command::new("ffmpeg")
+        run(crate::media::command("ffmpeg")
             .args([
                 "-v",
                 "error",

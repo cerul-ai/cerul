@@ -516,7 +516,7 @@ mod tests {
         ] {
             let source = dir.path().join(format!("{name}.mp4"));
             crate::media::run(
-                std::process::Command::new("ffmpeg")
+                crate::media::command("ffmpeg")
                     .args([
                         "-v", "error", "-f", "lavfi", "-i", filter, "-c:v", "libx264",
                     ])
@@ -654,7 +654,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("audio.mp4");
         crate::media::run(
-            std::process::Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args([
                     "-v",
                     "error",
@@ -705,7 +705,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("screen.mp4");
         crate::media::run(
-            std::process::Command::new("ffmpeg")
+            crate::media::command("ffmpeg")
                 .args([
                     "-v",
                     "error",

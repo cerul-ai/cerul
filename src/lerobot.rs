@@ -440,7 +440,7 @@ pub(crate) mod tests {
             let path = root.join(format!("videos/{camera}/chunk-000/file-000.mp4"));
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             media::run(
-                std::process::Command::new("ffmpeg")
+                crate::media::command("ffmpeg")
                     .args([
                         "-v",
                         "error",

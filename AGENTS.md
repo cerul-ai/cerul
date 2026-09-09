@@ -6,8 +6,7 @@ code, identifiers, comments, commit messages, and API fields are English.
 This repository is the open-source Cerul video processing core and CLI.
 DESIGN.md is the implementation baseline for the CLI rewrite. The core owns
 local media processing, endpoint clients, embedded OCR, annotations, sidecars,
-and rebuildable indexes. Desktop UI, cloud tenancy, billing, and hosted
-perception implementations remain in the private product repository.
+and rebuildable indexes. Product UI and hosted services are outside this repository's scope.
 
 Do not add product Web or Desktop UI, cloud Workers, billing-provider or
 operational admin implementations. Do not commit secrets, user media, indexes,
