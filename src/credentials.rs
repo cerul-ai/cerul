@@ -50,7 +50,7 @@ fn save(path: &Path, keys: &Keys) -> Result<()> {
     Ok(())
 }
 
-pub async fn prepare(cli: &super::Cli, cancel: CancellationToken) -> Result<Keys> {
+pub async fn prepare(cli: &super::Cli) -> Result<Keys> {
     if cli.dry_run
         || matches!(
             &cli.command,
@@ -64,56 +64,55 @@ pub async fn prepare(cli: &super::Cli, cancel: CancellationToken) -> Result<Keys
     {
         return Ok(Keys::new());
     }
-    let path = path();
-    let mut keys = path.as_deref().map(read).transpose()?.unwrap_or_default();
+    path()
+        .as_deref()
+        .map(read)
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+pub fn resolver(
+    cli: &super::Cli,
+    keys: Keys,
+    cancel: CancellationToken,
+) -> cerul::providers::CredentialResolver {
     let interactive = !cli.json
         && !cli.quiet
         && !cli.yes
         && !cli.dry_run
         && std::io::stdin().is_terminal()
         && std::io::stderr().is_terminal();
-    if !interactive {
-        return Ok(keys);
-    }
-    let config = super::config(cli)?;
-    let endpoint: Option<&Endpoint> = match &cli.command {
-        Some(super::Command::Index(args)) if args.paths.iter().all(|p| p.exists()) => {
-            Some(&config.embedding)
-        }
-        Some(super::Command::Search(args))
-            if !args.text && (args.query.is_some() || args.image.is_some()) =>
-        {
-            Some(&config.embedding)
-        }
-        Some(super::Command::Annotate(args))
-            if args.semantic.is_some()
-                && args.grounding.is_none()
-                && args.world.is_none()
-                && args.paths.iter().all(|p| p.exists()) =>
-        {
-            Some(&config.vision)
-        }
-        _ => None,
-    };
-    let Some(endpoint) = endpoint else {
-        return Ok(keys);
-    };
-    let scope = credential_scope(endpoint);
-    if std::env::var_os(&endpoint.api_key_env).is_some() || keys.contains_key(&scope) {
-        return Ok(keys);
-    }
-    let url = url::Url::parse(&endpoint.base_url)?;
-    if matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")) {
-        return Ok(keys);
-    }
-    // Automatic onboarding is limited to the default Gemini service. Custom providers
-    // keep their explicit environment-variable setup and capability requirements.
+    let keys = std::sync::Arc::new(tokio::sync::Mutex::new(keys));
+    std::sync::Arc::new(move |endpoint| {
+        let keys = keys.clone();
+        let cancel = cancel.clone();
+        Box::pin(async move {
+            if !interactive {
+                return Ok(None);
+            }
+            let mut keys = keys.lock().await;
+            let scope = credential_scope(&endpoint);
+            if let Some(key) = keys.get(&scope) {
+                return Ok(Some(key.clone()));
+            }
+            prompt(&endpoint, &mut keys, cancel).await
+        })
+    })
+}
+
+async fn prompt(
+    endpoint: &Endpoint,
+    keys: &mut Keys,
+    cancel: CancellationToken,
+) -> Result<Option<String>> {
     if endpoint.kind != "gemini"
         || endpoint.base_url.trim_end_matches('/')
             != "https://generativelanguage.googleapis.com/v1beta"
     {
-        return Ok(keys);
+        return Ok(None);
     }
+    let scope = credential_scope(endpoint);
+    let path = path();
     eprintln!(
         "First run: Cerul needs a Gemini API key. Get one at https://aistudio.google.com/apikey"
     );
@@ -141,10 +140,10 @@ pub async fn prepare(cli: &super::Cli, cancel: CancellationToken) -> Result<Keys
     save(
         path.as_deref()
             .context("HOME is required to save credentials")?,
-        &keys,
+        keys,
     )?;
     eprintln!("API key verified and saved. Continuing…");
-    Ok(keys)
+    Ok(Some(key.trim().to_owned()))
 }
 
 #[cfg(test)]

@@ -18,6 +18,7 @@ install-updater = false
 # Embedded OCR licensing must travel with binaries and npm installers.
 include = ["THIRD_PARTY_NOTICES.md"]
 pr-run-mode = "upload"
+github-build-setup = "build-setup.yml"
 
 [dist.github-custom-runners]
 x86_64-unknown-linux-gnu = "ubuntu-24.04"

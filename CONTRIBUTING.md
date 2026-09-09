@@ -36,6 +36,7 @@ HTTP/MCP serving, grounding, world annotations, and Windows are not implemented
 in this version. They must not be advertised as available capabilities.
 
 CLI onboarding owns credential files and prompts. Library hosts may scope
-credentials with `providers::with_credentials`; the library itself never reads
+credentials with `providers::with_credentials` and provide a lazy resolver
+with `providers::with_credential_resolver`; the library itself never reads
 CLI credential files. Environment values take precedence. Bundled media tools
 are resolved by `media::command`; an explicit tool override takes precedence.

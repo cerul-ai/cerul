@@ -18,6 +18,7 @@ pub mod probes;
 
 tokio::task_local! {
     static CREDENTIALS: std::collections::BTreeMap<String, String>;
+    static CREDENTIAL_RESOLVER: CredentialResolver;
 }
 /// Scope host-supplied credentials to one operation; environment values take precedence.
 /// The library does not read credential files or prompt the user.
@@ -26,6 +27,21 @@ pub async fn with_credentials<T>(
     future: impl std::future::Future<Output = T>,
 ) -> T {
     CREDENTIALS.scope(credentials, future).await
+}
+/// Optional host-owned credential acquisition, called only before remote work.
+pub type CredentialResolver = Arc<
+    dyn Fn(
+            Endpoint,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<String>>> + Send>>
+        + Send
+        + Sync,
+>;
+pub async fn with_credential_resolver<T>(
+    resolver: CredentialResolver,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    CREDENTIAL_RESOLVER.scope(resolver, future).await
 }
 /// Bind stored credentials to the exact endpoint origin/path and environment name.
 pub fn credential_scope(endpoint: &Endpoint) -> String {
@@ -77,6 +93,7 @@ fn failure(kind: Failure, message: impl Into<String>) -> anyhow::Error {
 pub struct Provider {
     pub endpoint: Endpoint,
     key: Option<HeaderValue>,
+    acquired_key: Arc<tokio::sync::OnceCell<Option<HeaderValue>>>,
     client: Client,
     permits: Arc<Semaphore>,
     jobs: usize,
@@ -171,6 +188,7 @@ impl Provider {
         Ok(Self {
             endpoint,
             key,
+            acquired_key: Arc::new(tokio::sync::OnceCell::new()),
             client,
             permits: Arc::new(Semaphore::new(jobs)),
             jobs,
@@ -181,6 +199,34 @@ impl Provider {
             cancel,
             request_notice: None,
         })
+    }
+    fn key_header(&self) -> Option<&HeaderValue> {
+        self.key
+            .as_ref()
+            .or_else(|| self.acquired_key.get().and_then(Option::as_ref))
+    }
+    async fn resolve_key(&self) -> Result<()> {
+        if self.key.is_some() {
+            return Ok(());
+        }
+        self.acquired_key
+            .get_or_try_init(|| async {
+                let Some(resolver) = CREDENTIAL_RESOLVER.try_with(Clone::clone).ok() else {
+                    return Ok(None);
+                };
+                let value = resolver(self.endpoint.clone()).await?;
+                value
+                    .filter(|key| !key.is_empty())
+                    .map(|value| {
+                        let mut header = HeaderValue::from_str(&value)
+                            .map_err(|_| failure(Failure::MissingKey, "invalid API key header"))?;
+                        header.set_sensitive(true);
+                        Ok::<_, anyhow::Error>(header)
+                    })
+                    .transpose()
+            })
+            .await?;
+        Ok(())
     }
     pub fn concurrency(&self) -> usize {
         self.jobs
@@ -307,7 +353,10 @@ impl Provider {
         }
         let url = self.route(action)?;
         let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-        if self.key.is_none() && !loopback && !get {
+        if !loopback && !get {
+            self.resolve_key().await?;
+        }
+        if self.key_header().is_none() && !loopback && !get {
             return Err(failure(
                 Failure::MissingKey,
                 format!("set {} for this endpoint", self.endpoint.api_key_env),
@@ -331,7 +380,7 @@ impl Provider {
                 )
                 .header(CONTENT_TYPE, content_type)
                 .body(bytes.clone());
-            if let Some(key) = &self.key {
+            if let Some(key) = self.key_header() {
                 request = if self.endpoint.kind == "gemini" {
                     request.header("x-goog-api-key", key.clone())
                 } else {
@@ -819,6 +868,39 @@ pub(crate) mod tests {
 #[cfg(test)]
 mod credential_scope_tests {
     use super::*;
+    #[tokio::test]
+    async fn host_resolution_is_lazy_and_missing_credentials_are_resolved_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let resolver: CredentialResolver = Arc::new(move |_| {
+            count.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(None) })
+        });
+        with_credential_resolver(resolver, async {
+            let provider = Provider::new(
+                crate::config::Config::default().embedding,
+                None,
+                1,
+                None,
+                CancellationToken::new(),
+            )
+            .unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            for _ in 0..2 {
+                let error = provider
+                    .embed(Input::Text("test".into()), true)
+                    .await
+                    .unwrap_err();
+                assert_eq!(
+                    error.downcast_ref::<ProviderError>().unwrap().kind,
+                    Failure::MissingKey
+                );
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        })
+        .await;
+    }
     #[tokio::test]
     async fn scoped_credentials_do_not_escape_to_other_endpoints_or_tasks() {
         let mut endpoint = crate::config::Config::default().embedding;

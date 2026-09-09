@@ -127,6 +127,11 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
+      - name: "Use the installed build tools without Homebrew environment injection"
+        run: "echo \"DO_NOT_USE_BREWFILE=1\" >> \"$GITHUB_ENV\""
+        shell: "bash"
+      - name: "Install stable Rust"
+        uses: "dtolnay/rust-toolchain@stable"
       - uses: swatinem/rust-cache@v2
         with:
           key: ${{ join(matrix.targets, '-') }}

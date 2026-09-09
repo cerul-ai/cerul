@@ -93,7 +93,8 @@ operation but does not establish that all runtime dependencies work.
 ## Run your first video
 
 The first interactive `index` or semantic `search`/`annotate` using the default
-Gemini endpoint prompts for a hidden API key, validates a small text embedding
+Gemini endpoint prompts for a hidden API key only when remote work is pending,
+validates a small text embedding
 request, and writes `~/.cerul/credentials.json` with mode 0600. This is private
 plaintext storage on your computer, not an encrypted vault. Remove the file to
 forget saved keys. Credentials are scoped to the service URL and key variable;

@@ -44,7 +44,7 @@ fn now() -> u64 {
 fn key(provider: &Provider, capability: Capability) -> Result<String> {
     let endpoint = &provider.endpoint;
     // Only the digest is persisted. A rotated credential cannot inherit a probe.
-    let credential = provider.key.as_ref().map(|key| {
+    let credential = provider.key_header().map(|key| {
         use sha2::{Digest, Sha256};
         format!("{:x}", Sha256::digest(key.as_bytes()))
     });
@@ -142,10 +142,11 @@ async fn check_inner(
     workspace: &Path,
     force: bool,
 ) -> Result<CachedProbe> {
+    provider.resolve_key().await?;
     let _guard = tokio::select! {biased; _=provider.cancel.cancelled()=>return Err(super::failure(super::Failure::Cancelled,"operation cancelled")),guard=CACHE_LOCK.lock()=>guard};
     let url = url::Url::parse(&provider.endpoint.base_url)?;
     let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-    if provider.key.is_none() && !loopback && capability != Capability::Perception {
+    if provider.key_header().is_none() && !loopback && capability != Capability::Perception {
         return Err(super::failure(
             super::Failure::MissingKey,
             format!("set {} for this endpoint", provider.endpoint.api_key_env),

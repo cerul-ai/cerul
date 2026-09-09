@@ -527,8 +527,13 @@ async fn main() -> std::process::ExitCode {
         }
     });
     let result = cerul::media::with_cancellation(cancel.clone(), async {
-        let keys = credentials::prepare(&cli, cancel.clone()).await?;
-        cerul::providers::with_credentials(keys, execute(&cli, cancel.clone())).await
+        let keys = credentials::prepare(&cli).await?;
+        let resolver = credentials::resolver(&cli, keys.clone(), cancel.clone());
+        cerul::providers::with_credential_resolver(
+            resolver,
+            cerul::providers::with_credentials(keys, execute(&cli, cancel.clone())),
+        )
+        .await
     })
     .await;
     listener.abort();
