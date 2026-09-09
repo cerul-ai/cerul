@@ -21,6 +21,7 @@ include = [
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"
@@ -46,6 +47,8 @@ imageproc = { version = "0.25", default-features = false }
 
 tempfile = "3"
 rpassword = "7"
+indicatif = "0.17"
+console = { version = "0.15", default-features = false, features = ["ansi-parsing"] }
 
 [profile.dev]
 debug = 0

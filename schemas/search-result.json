@@ -96,6 +96,22 @@
             }
           ]
         },
+        "media": {
+          "description": "Source media file for the hit's stream, when it is a video stream.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "preview": {
+          "description": "Still frame from the start of the hit, for hosts that show thumbnails.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "score": {
           "type": [
             "number",

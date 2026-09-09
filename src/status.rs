@@ -220,6 +220,18 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
     })
 }
 
+/// Perception belongs to a later milestone, so its default endpoint is not a
+/// service anyone can reach. Probing it would contact Cerul's servers on a plain
+/// status check and report the resulting authentication failure as if the person
+/// had misconfigured something. Only an endpoint someone actually pointed
+/// elsewhere, or gave a key for, is theirs to check.
+fn perception_configured(config: &crate::config::Config) -> bool {
+    let default = crate::config::Config::default();
+    config.perception.base_url.trim_end_matches('/')
+        != default.perception.base_url.trim_end_matches('/')
+        || std::env::var(&config.perception.api_key_env).is_ok_and(|key| !key.trim().is_empty())
+}
+
 /// Explicit remote inspection. A failure does not suppress results for other endpoints.
 pub async fn check_providers(
     status: &mut Status,
@@ -244,7 +256,7 @@ pub async fn check_providers(
         dims: None,
     };
     let mut partial = false;
-    for (name, endpoint, capability) in [
+    let mut endpoints = vec![
         ("embedding", &config.embedding, Capability::Embedding),
         ("vision", &config.vision, Capability::Vision),
         (
@@ -252,8 +264,11 @@ pub async fn check_providers(
             &config.transcription,
             Capability::Transcription,
         ),
-        ("perception", &perception, Capability::Perception),
-    ] {
+    ];
+    if perception_configured(config) {
+        endpoints.push(("perception", &perception, Capability::Perception));
+    }
+    for (name, endpoint, capability) in endpoints {
         let mut result = ProviderStatus {
             base_url: endpoint.base_url.clone(),
             model: (name != "perception").then(|| endpoint.model.clone()),
@@ -370,6 +385,16 @@ mod tests {
         let local = inspect(dir.path(), None).unwrap();
         assert!(local.providers.is_empty());
         assert_eq!(local.capabilities["perception"], None);
+    }
+    #[test]
+    fn unreleased_perception_endpoint_is_not_contacted_by_default() {
+        let mut config = crate::config::Config::default();
+        assert!(
+            !perception_configured(&config),
+            "a plain status check must not reach Cerul's own servers"
+        );
+        config.perception.base_url = "http://127.0.0.1:9/".into();
+        assert!(perception_configured(&config));
     }
     #[test]
     fn fresh_status_does_not_create_workspace_or_assume_remote_capabilities() {

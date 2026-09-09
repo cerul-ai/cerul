@@ -1,5 +1,5 @@
 {
-  "$id": "https://cerul.ai/schemas/clean-result/1",
+  "$id": "https://cerul.ai/schemas/remove-result/1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Report",
   "type": "object",

@@ -50,7 +50,9 @@ curl -fsSL https://cerul.ai/install.sh | sh
 cerul index ./demo.mp4
 ```
 
-第一次使用时，按提示输入 [Gemini API key](https://aistudio.google.com/apikey)，之后无需重复输入。模型处理会将数据发送给 Gemini，并可能产生 API 费用。
+第一次使用时，按提示输入 [Gemini API key](https://aistudio.google.com/apikey)，也可以提前用 `cerul auth set` 保存，之后无需重复输入。模型处理会将数据发送给 Gemini，并可能产生 API 费用。
+
+随时直接运行 `cerul`，可以看到已索引的视频和下一步命令。
 
 ### 3. 搜索并保存片段
 
@@ -58,6 +60,20 @@ cerul index ./demo.mp4
 cerul search "有人把杯子放到桌上"
 cerul search "有人把杯子放到桌上" --save ./clips
 ```
+
+每条结果是一张卡片，显示匹配度、时间区间和链接。在 iTerm2、Ghostty、Kitty 或 WezTerm 中还会显示该瞬间的画面截图，用 `--no-preview` 可以关闭。装了 [IINA](https://iina.io) 时，链接会直接跳到匹配的时间点，而不是从头播放。
+
+结果都有编号，`cerul open 2` 会用播放器直接从第二个片段开始播，不用离开终端。
+
+### 日常维护
+
+```sh
+cerul remove ./demo.mp4      # 忘掉某个视频的索引，视频文件本身保留
+cerul remove --cache         # 释放可再生的磁盘占用
+cerul completions zsh        # 生成 shell 补全脚本
+```
+
+zsh 用户把它放到 `fpath` 里，例如 `cerul completions zsh > ~/.zfunc/_cerul`，并确保 `~/.zfunc` 在 `compinit` 之前加入 `fpath`。
 
 [更多使用示例 →](examples/video-search.md)
 

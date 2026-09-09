@@ -9,7 +9,7 @@ Public design reference for the local video processing core.
 | Area | Decision |
 | --- | --- |
 | Language | Rust, one crate with a library and one binary. ffmpeg subprocesses, four endpoint types, LanceDB, and embedded OCR. No PyTorch, GPU runtime, Python runtime, or plugins. |
-| Commands | M1: `index`, `annotate`, `search`, `status`, `clean`. HTTP and MCP `serve` belong to M2. |
+| Commands | M1: `index`, `search`, `status`, `open`, `auth`, `annotate`, `remove`. HTTP and MCP `serve` belong to M2. |
 | Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
 | Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
 | Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, and query instruction template. The same model name at different endpoints is a different space. Queries must match exactly. |
@@ -26,7 +26,7 @@ Public design reference for the local video processing core.
 | Versions | Increment `v0.0.x` without alpha/beta suffixes. The old npm package reached 0.0.2; the first rewritten release is **v0.0.3**, with the same version on crates.io. Milestones M1/M2/M3 are not fixed version numbers. |
 | Distribution | cargo-dist shell installer, Homebrew formula, and npm `cerul` wrapper. |
 | Telemetry | None. |
-| Scope | M1 is a complete video retrieval and semantic annotation CLI requiring only third-party model credentials. Pose, depth, and segmentation depend on later perception services and must not be advertised as available. |
+| Scope | M1 is a complete video retrieval and semantic annotation CLI requiring only third-party model credentials. `status --providers` probes only the endpoints M1 uses; the later-milestone perception endpoint is contacted solely when configured explicitly. Pose, depth, and segmentation depend on later perception services and must not be advertised as available. |
 
 ## 2. Usage
 
@@ -50,6 +50,8 @@ Complete distributions install `cerul-ffmpeg` and `cerul-ffprobe` beside the CLI
 ## 3. Commands
 
 Global options: `--json`, `--workspace`, `--recompute`, `--dry-run`, `--yes`, `-q`, `-v`. Configuration overrides use repeated `--set KEY=TOML_VALUE`.
+
+Without `--json` the CLI renders text for people: a start page for a bare `cerul` that walks through setup until the first video is searchable, live progress on a terminal (one line per finished station when redirected), one card per matched video listing its moments, and errors with a recovery hint on stderr. Cards carry the file name, match percentage, time range, excerpt, and an OSC 8 link; terminals with the iTerm2 or Kitty graphics protocol also show a still frame. When a player that accepts a start time is installed the link opens the moment rather than the file. Model requests whose duration cannot be predicted show a spinner. `index` prints the stations it will run before the first request, and collapses each finished video into one line so the live area stays the size of the video being worked on. Colour, links, and images follow the terminal and `NO_COLOR`, so redirected output stays plain. `cerul auth [set|remove]` manages the saved Gemini key. Rendering lives in the binary only; the library never touches a terminal.
 
 In JSON mode, stdout contains exactly one final JSON object. Each stderr line is a JSON event, for example:
 
@@ -75,6 +77,32 @@ Accept files, directories, and automatically detected LeRobot v3 datasets.
 
 Pipeline: discover → SHA-256 → ffprobe → transcript/screen_text/embed stations → Lance publication. Skip completed outputs when content, model, and parameters match.
 
+### `remove [path...] [--cache] [--all-indexes] [--index SPACE_ID] [--compact]`
+
+One command gets rid of things, because from a person's side forgetting a video
+and reclaiming disk are the same verb. Named paths delete those episodes'
+sidecars and the projections built from them, leaving the media untouched;
+interactive runs confirm first, `--yes` skips the question, and non-terminal
+callers must pass it. A path that was never indexed is reported, not an error.
+The flags free only regenerable artifacts and never ask, because nothing is
+lost: caches are recreated on demand and search indexes rebuild from sidecars
+with no model calls, which is what acceptance criterion 7 exercises. Status
+lists space IDs. Everything supports `--dry-run`. Sidecar deletion records
+durable intent before removing index rows and files; if interrupted, repeating
+the command resumes even when the sidecar is partially removed or absent. Dry
+runs never record intent or delete data.
+
+### `completions <shell>`
+
+Prints a completion script for bash, zsh, fish, elvish, or powershell to stdout.
+
+### `open [N]`
+
+Plays result `N` (default 1) from the last search, starting at its moment. The
+last search is remembered in workspace `cache/last-search.json`. Players are
+tried in order: mpv, IINA, VLC, ffplay, then the system handler, which cannot
+start at a timestamp and says so.
+
 ### `annotate <path>... --semantic [items] --grounding [items] --world [items]`
 
 | Options | Behavior/default |
@@ -97,6 +125,9 @@ Each subtype is a module: frames → timestamped contact sheet → schema-constr
 | `--in PATH` | Restrict the searched input scope. |
 | `--count` | Filters only: return exact-label record and episode counts. No natural-language probe counting. |
 | `--save DIR`, `--pad 2s` | Save matched MP4 clips. |
+| `--preview`, `--no-preview` | Cache one still frame per hit under workspace `cache/previews/` and expose it as `preview`. Stills use input seeking, so their cost does not grow with recording length. Default: on when the terminal can draw images. |
+
+Query embeddings are cached under workspace `cache/queries/` keyed by embedding space and query, so repeating or refining a search needs no further model call. Both caches are disposable and freed by `remove --cache`.
 | `--rerank` | M2: vision reranking of the first 20 candidates. |
 | `--text` | Substring match over transcript and screen text without vectors. |
 
@@ -107,10 +138,6 @@ Results: `hits[]` containing episode, stream, start_us, end_us, optional frame_r
 Return a workspace overview or an episode's annotation inventory. Running `cerul` without a command is equivalent to status.
 
 Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes all four endpoints, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not imply that M1 implements grounding/world.
-
-### `clean`
-
-Options: `--index SPACE_ID`, `--all-indexes`, `--cache`, `--compact`. Status lists space IDs and corresponding models. Only `--sidecars PATH --yes` deletes sidecars. All cleanup operations support `--dry-run`. Explicit sidecar deletion records durable intent before removing index rows and files. If interrupted, repeating the same explicit cleanup resumes even when the sidecar is partially removed or absent. Dry runs never record intent or delete data.
 
 ## 4. Configuration and models
 
@@ -266,7 +293,7 @@ Prefer --out. Stage a complete dataset, perform native field/timeline validation
 
 ### Search
 
-Parse filters into episode/stream half-open time intervals, then apply them as Lance prefilters to intersecting chunks before vector ranking. Group the same interval by highest score and retain matched provenance; merge adjacent results. Reranking is M2.
+Parse filters into episode/stream half-open time intervals, then apply them as Lance prefilters to intersecting chunks before vector ranking. Group the same interval by highest score and retain matched provenance. Exact-text hits merge when adjacent; ranked vector hits merge only when their windows mostly coincide, so the small overlap between neighbouring index windows never chains a whole video into one hit. Reranking is M2.
 
 Repeated filters are AND. Conditions on one annotation must match the same record. Different annotations join by temporal intersection. Episode/stream/kind constrain scope. A chunk is eligible when its interval intersects the event interval; the hit time is that intersection.
 
@@ -294,7 +321,7 @@ Every PR runs offline tests and two-platform builds. Protected-branch validation
 
 | Milestone | Scope |
 | --- | --- |
-| **M1**, first release v0.0.3 | Index (transcript, OCR, embedding, still detection); search (vectors, images, prefilters, filter counts, saving clips, exact text); status; clean; semantic annotation; LeRobot reading and subtask writeback; macOS/Linux distribution; replace the old npm cerul wrapper. |
+| **M1**, first release v0.0.3 | Index (transcript, OCR, embedding, still detection); search (vectors, images, prefilters, filter counts, saving clips, exact text); status; removal and disk reclamation; semantic annotation; LeRobot reading and subtask writeback; macOS/Linux distribution; replace the old npm cerul wrapper. |
 
 Acceptance requirements:
 
