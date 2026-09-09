@@ -226,13 +226,15 @@ for file hashes and extraction details.
 ## Bundled media executables
 
 Complete distributions include separate `cerul-ffmpeg` and `cerul-ffprobe`
-executables built from FFmpeg 7.1.4 with statically linked x264. These executables
+executables built from FFmpeg 7.1.4 with statically linked x264 and zlib.
+Full media-tool license texts accompany binary archives in `licenses/` (source
+checkout: `packaging/licenses/`). These executables
 are GPL-2.0-or-later, not Apache-2.0. The Cerul Rust program invokes them as
 separate processes and retains its own license.
 
 - FFmpeg source: https://ffmpeg.org/releases/ffmpeg-7.1.4.tar.xz
 - x264 source: https://codeload.github.com/mirror/x264/tar.gz/31e19f92f00c7003fa115047ce50978bc98c3a0d
-- zlib 1.3.1 source (zlib license): https://zlib.net/fossils/zlib-1.3.1.tar.gz
+- zlib 1.3.1 source (zlib license): https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
 - Pinned checksums and complete build commands: `scripts/build-media.sh`
 - The same release publishes `cerul-media-source.tar.gz` with these exact source
   tarballs (including their license texts) and the build script under `media-source/`.

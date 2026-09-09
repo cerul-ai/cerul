@@ -16,7 +16,7 @@ install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
 # Embedded OCR licensing must travel with binaries and npm installers.
-include = ["THIRD_PARTY_NOTICES.md"]
+include = ["THIRD_PARTY_NOTICES.md", "packaging/licenses"]
 pr-run-mode = "upload"
 github-build-setup = "../build-setup.yml"
 

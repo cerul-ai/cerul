@@ -14,7 +14,7 @@ fetch() {
 }
 fetch https://ffmpeg.org/releases/ffmpeg-7.1.4.tar.xz ffmpeg-7.1.4.tar.xz 71f4aac3573ed9060489cb62526a6c7dda815ae10993789611acd7be9fa9fbf4
 fetch https://codeload.github.com/mirror/x264/tar.gz/31e19f92f00c7003fa115047ce50978bc98c3a0d x264.tar.gz d053c9d86988d6bc78237ca5205865c5ddf99c98ef4cd9927eec8f6d388f6dd9
-fetch https://zlib.net/fossils/zlib-1.3.1.tar.gz zlib.tar.gz 9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23
+fetch https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz zlib.tar.gz 9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23
 cp "$work/ffmpeg-7.1.4.tar.xz" "$work/x264.tar.gz" "$work/zlib.tar.gz" "$out/media-source/"
 cp "$0" "$out/media-source/build-media.sh"
 if [[ "${1:-}" == --sources-only ]]; then exit 0; fi
