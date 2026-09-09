@@ -1,6 +1,6 @@
 # Release artifacts
 
-The v0.0.4 rewrite is not published by building or reviewing this branch.
+Building or reviewing a branch never publishes a release.
 Package publishing is a separate release operation after M1 acceptance.
 Existing tags and `ffmpeg-vendor-*` assets must be preserved for downstream compatibility.
 
@@ -10,20 +10,21 @@ The first release uses GitHub Releases and the website installer redirect.
 npm and Homebrew publishing can follow separately.
 
 1. Verify PR checks and acceptance results, then merge the release PR into `main`.
-2. From the merged `main`, confirm Cargo.toml and packaging/dist.toml both use
-   `0.0.4`, then create and push the version tag:
+2. From the merged `main`, confirm Cargo.toml and packaging/dist.toml agree on
+   the version being released, then create and push the matching tag. The
+   commands below use `0.0.5`; substitute the version in the manifests.
 
    ```sh
    git switch main
    git pull --ff-only origin main
-   git tag -a v0.0.4 -m "Release Cerul 0.0.4"
-   git push origin v0.0.4
+   git tag -a v0.0.5 -m "Release Cerul 0.0.5"
+   git push origin v0.0.5
    ```
 
 3. Wait for the Release workflow to publish both platform archives, the shell
    installer, checksums, and corresponding media sources to GitHub Releases.
 4. Configure `https://cerul.ai/install.sh` to redirect temporarily (HTTP 302 or 307)
-   to `https://github.com/cerul-ai/cerul/releases/download/v0.0.4/cerul-installer.sh`.
+   to `https://github.com/cerul-ai/cerul/releases/download/v0.0.5/cerul-installer.sh`.
    Use short caching so the target can be updated for future releases. Verify
    that following the redirect returns the shell script, not an HTML page.
 5. On each supported platform, install from the public README command and verify
@@ -75,7 +76,7 @@ written under `target/distrib/`, including:
 - `cerul-<target>.tar.xz` and SHA-256 files.
 - `cerul-installer.sh`.
 - `cerul.rb`, a Homebrew formula.
-- `cerul-npm-package.tar.gz`, the `cerul` 0.0.4 npm wrapper.
+- `cerul-npm-package.tar.gz`, the `cerul` npm wrapper at the manifest version.
 - A source archive and aggregate checksums.
 
 The source archive uses committed Git content. Regenerate it after committing;

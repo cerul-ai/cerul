@@ -22,7 +22,7 @@ cerul search "A person puts a cup on the table" --save ./clips
 On first use, enter your [Gemini API key](https://aistudio.google.com/apikey)
 when prompted. Model processing sends inputs to Gemini and may incur API charges.
 
-You can also download an archive from [GitHub Releases](https://github.com/cerul-ai/cerul/releases/tag/v0.0.4).
+You can also download an archive from [GitHub Releases](https://github.com/cerul-ai/cerul/releases/tag/v0.0.5).
 Keep `cerul`, `cerul-ffmpeg`, and `cerul-ffprobe` together when moving them.
 
 ## Build from source (developers)
