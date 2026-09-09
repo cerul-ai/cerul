@@ -14,8 +14,9 @@ published. The workspace admits one writer at a time.
 This crate exposes local processing and endpoint clients. It does not implement
 a product UI, hosted inference, or HTTP/MCP serving.
 
-Rust types produce public schemas. Legacy platform OpenAPI projections are
-retired rather than hand-modified into a second contract.
+Rust types produce the public schemas in `schemas/`. Regenerate them with
+`cargo run --locked --example generate_schemas`; add `-- --check` to verify
+that committed schemas match the types.
 
 LanceDB 0.38.0 currently needs its `remote` Cargo feature to compile: its job
 error conversion references a feature-gated HTTP error type. Cerul nevertheless
