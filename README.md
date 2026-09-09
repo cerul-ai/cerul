@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://cerul.ai">Website</a> ·
-  <a href="examples/video-search.md">Quickstart</a> ·
+  <a href="docs/video-search.md">Quickstart</a> ·
   <a href="docs/agent-setup.md">Install with an agent</a> ·
   <a href="docs/configuration.md">Configuration</a> ·
   <a href="https://x.com/cerul_hq">X / Twitter</a> ·
@@ -78,7 +78,7 @@ player without leaving the terminal.
 ### Housekeeping
 
 ```sh
-cerul remove ./demo.mp4      # forget one video; the file itself stays
+cerul remove ./demo.mp4      # remove its index and sidecars; keep the video
 cerul remove --cache         # free regenerable disk space
 cerul completions zsh        # shell completion script
 ```
@@ -88,7 +88,22 @@ For zsh, save it somewhere on your `fpath`, for example
 `fpath` before `compinit` runs. For bash,
 `cerul completions bash > /usr/local/etc/bash_completion.d/cerul`.
 
-[More examples →](examples/video-search.md)
+[More examples →](docs/video-search.md)
+
+## Annotate actions and demonstrations
+
+Label action steps, events, interactions, and state changes in a video, including
+egocentric recordings and robot demonstrations. No indexing step is required.
+
+```sh
+cerul annotate ./video.mp4 --semantic subtask,event,interaction,state
+```
+
+Use `--dry-run` to preview the work. Results are saved in JSONL sidecars;
+`cerul status ./video.mp4` shows their location. For LeRobot datasets, label a
+first episode with `cerul annotate ./dataset --semantic --only 0`.
+
+[Annotation types, outputs, and LeRobot examples →](docs/annotation.md)
 
 ## Let your agent do the setup
 
@@ -116,9 +131,10 @@ writeback is available as an explicit opt-in.
 
 ## Learn more
 
+- [Documentation index](docs/README.md)
 - [Installation and troubleshooting](docs/installation.md)
-- [Video search tutorial](examples/video-search.md)
-- [LeRobot tutorial](examples/lerobot-subtasks.md)
+- [Video search tutorial](docs/video-search.md)
+- [LeRobot tutorial](docs/lerobot-subtasks.md)
 - [Model endpoints and configuration](docs/configuration.md)
 - [Contributing and developer integration](CONTRIBUTING.md)
 

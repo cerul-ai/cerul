@@ -1,41 +1,30 @@
-# Security Policy
+# Security policy
 
-## Supported Scope
+## Supported versions
 
-Cerul is currently in a pre-1.0 bootstrap stage.
+Security fixes target the latest code on the default branch. Use the latest
+release when reporting a problem and include the affected version or commit.
+Older releases do not have a separate maintenance branch.
 
-At this stage, security fixes are only expected for the latest code on the default branch.
+## Report a vulnerability
 
-## Reporting a Vulnerability
+Email [security@cerul.ai](mailto:security@cerul.ai), the reporting address listed
+on the [Cerul security page](https://cerul.ai/security). Please do not disclose
+security-sensitive details in public issues.
 
-Please do not open public issues for security-sensitive reports.
+Include the affected version, reproduction steps, expected and actual behavior,
+and potential impact. Prefer a small synthetic fixture. Remove credentials,
+customer media, and unrelated personal data from attachments.
 
-If GitHub private vulnerability reporting is enabled for this repository, use that channel.
+Maintainers will triage the report, investigate reproducible issues, and
+coordinate a fix and disclosure with the reporter.
 
-If it is not available, contact the maintainer privately through GitHub before sharing details publicly.
+For general support or community conduct reports, contact
+[support@cerul.ai](mailto:support@cerul.ai).
 
-When reporting a vulnerability, include:
+## Scope
 
-- a short description of the issue
-- affected area or files
-- reproduction steps
-- potential impact
-- any suggested mitigation, if available
-
-## Response Expectations
-
-The project is still maintained in a founder-led, early-stage mode, so response times may vary.
-
-The general intent is:
-
-- acknowledge valid reports as soon as practical
-- reproduce and triage the issue
-- fix publicly once the risk is understood
-
-## Out of Scope
-
-The following are typically out of scope unless there is a clear security impact:
-
-- feature requests
-- performance issues without a security dimension
-- issues requiring access to private infrastructure not included in this repository
+This repository covers the local Rust core and CLI, embedded OCR, sidecars,
+endpoint clients, and bundled media tools. Identify the affected component when
+reporting a problem. Feature requests and non-security bugs belong in
+[GitHub issues](https://github.com/cerul-ai/cerul/issues).

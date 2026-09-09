@@ -1,6 +1,7 @@
 # Cerul CLI
 
-Public design reference for the local video processing core.
+Implementation reference for the local video processing core. User commands and
+installation instructions are in the [documentation](docs/README.md).
 
 **Purpose:** `cerul` turns video into searchable, annotated data suitable for downstream training workflows. Users supply their own model keys. No Cerul account is required.
 
@@ -9,7 +10,7 @@ Public design reference for the local video processing core.
 | Area | Decision |
 | --- | --- |
 | Language | Rust, one crate with a library and one binary. ffmpeg subprocesses, four endpoint types, LanceDB, and embedded OCR. No PyTorch, GPU runtime, Python runtime, or plugins. |
-| Commands | M1: `index`, `search`, `status`, `open`, `auth`, `annotate`, `remove`. HTTP and MCP `serve` belong to M2. |
+| Commands | `index`, `search`, `status`, `open`, `auth`, `annotate`, `remove`. HTTP and MCP serving are not implemented. |
 | Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
 | Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
 | Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, and query instruction template. The same model name at different endpoints is a different space. Queries must match exactly. |
@@ -22,36 +23,28 @@ Public design reference for the local video processing core.
 | Cameras | Process the primary camera by default; `--streams all` expands selection. |
 | Language | Annotation text fields are English. |
 | LeRobot | Read v3.0 and v3.1 and produce sidecars. Writeback accepts only an existing compatible v3.1 dataset and writes subtask language entries. v3.0 writeback is unsupported; Cerul does not upgrade formats. Events and flags remain in sidecars. |
-| Platforms | M1: macOS arm64 and Linux x86_64. Windows is M2. |
-| Versions | Increment `v0.0.x` without alpha/beta suffixes. Cargo.toml, packaging/dist.toml, and release tags must agree. Milestones M1/M2/M3 are not fixed version numbers. |
-| Distribution | GitHub Releases with a cargo-dist shell installer. Homebrew formula and npm wrapper artifacts are generated; registry/tap publication is separate. See [release artifacts](docs/releases.md). |
+| Platforms | macOS arm64 and Linux x86_64. Windows is not supported. |
+| Versions | Increment `v0.0.x` without alpha/beta suffixes. Cargo.toml, packaging/dist.toml, and release tags must agree. Version numbers identify releases, not roadmap milestones. |
+| Distribution | GitHub Releases with a cargo-dist shell installer. Homebrew formula and npm wrapper artifacts are generated; registry/tap publication is separate. See [release artifacts](docs/development/releases.md). |
 | Telemetry | None. |
-| Scope | M1 is a complete video retrieval and semantic annotation CLI requiring only third-party model credentials. `status --providers` probes only the endpoints M1 uses; the later-milestone perception endpoint is contacted solely when configured explicitly. Pose, depth, and segmentation depend on later perception services and must not be advertised as available. |
+| Scope | Video retrieval and semantic annotation require only third-party model credentials. `status --providers` probes only the implemented endpoints; the reserved perception endpoint is contacted solely when configured explicitly. Pose, depth, and segmentation depend on later perception services and must not be advertised as available. |
 
-## 2. Usage
+## 2. Reader guides
 
-The intended release installation entry point is shown below. It must be connected and verified before being advertised as live.
+Use the [installation guide](docs/installation.md) and
+[video tutorial](docs/video-search.md) for runnable workflows, and
+[configuration](docs/configuration.md) for endpoint setup, credentials, and
+runtime settings. [ARCHITECTURE.md](ARCHITECTURE.md) maps the source modules.
+The command sections below define behavioral contracts; use `cerul --help`
+and command-specific help for the executable argument reference.
 
-~~~sh
-curl -fsSL https://cerul.ai/install.sh | sh
-export GEMINI_API_KEY=...
-
-cerul index ./videos
-cerul search "Pick up the cup, then put it on the table"
-cerul search --image ref.png --save ./clips
-cerul search --text "ECONNREFUSED"
-cerul annotate ./videos --semantic
-cerul search --filter semantic.event.verb=regrasp
-cerul status
-~~~
-
-Complete distributions install `cerul-ffmpeg` and `cerul-ffprobe` beside the CLI. Source-only builds can use ffmpeg/ffprobe 6.0+ on PATH; explicit `CERUL_FFMPEG` and `CERUL_FFPROBE` overrides take precedence. The default workspace is `~/.cerul/`, overridden by `--workspace` or `CERUL_WORKSPACE`. Source-build instructions are in README until publication is verified.
-
-## 3. Commands
+## 3. Command contracts
 
 Global options: `--json`, `--workspace`, `--recompute`, `--dry-run`, `--yes`, `-q`, `-v`. Configuration overrides use repeated `--set KEY=TOML_VALUE`.
 
-Without `--json` the CLI renders text for people: a start page for a bare `cerul` that walks through setup until the first video is searchable, live progress on a terminal (one line per finished station when redirected), one card per matched video listing its moments, and errors with a recovery hint on stderr. Cards carry the file name, match percentage, time range, excerpt, and an OSC 8 link; terminals with the iTerm2 or Kitty graphics protocol also show a still frame. When a player that accepts a start time is installed the link opens the moment rather than the file. Model requests whose duration cannot be predicted show a spinner. `index` prints the stations it will run before the first request, and collapses each finished video into one line so the live area stays the size of the video being worked on. Colour, links, and images follow the terminal and `NO_COLOR`, so redirected output stays plain. `cerul auth [set|remove]` manages the saved Gemini key. Rendering lives in the binary only; the library never touches a terminal.
+The start page exposes both search and annotation workflows, even after setup. An annotation invocation without arguments displays usage with concrete video and LeRobot examples, supported types, and output locations; JSON argument errors remain machine-readable. See the [annotation guide](docs/annotation.md).
+
+Without `--json` the CLI renders text for people: a start page for a bare `cerul` that walks through setup until the first video is searchable, live progress on a terminal (one line per finished station when redirected), one card per matched video listing its moments, and errors with a recovery hint on stderr. Cards carry the file name, match percentage, time range, excerpt, and an OSC 8 link; terminals with the iTerm2 or Kitty graphics protocol also show a still frame. When a player that accepts a start time is installed the link opens the moment rather than the file. Model requests whose duration cannot be predicted show a spinner. `index` prints the stations it will run before the first request, and collapses each finished video into one line so the live area stays the size of the video being worked on. Colour, links, and images follow the terminal and `NO_COLOR`, so redirected output stays plain. `cerul auth` reports the saved Gemini key status; `cerul auth set` and `cerul auth remove` manage it. Rendering lives in the binary only; the library never touches a terminal.
 
 In JSON mode, stdout contains exactly one final JSON object. Each stderr line is a JSON event, for example:
 
@@ -86,7 +79,7 @@ interactive runs confirm first, `--yes` skips the question, and non-terminal
 callers must pass it. A path that was never indexed is reported, not an error.
 The flags free only regenerable artifacts and never ask, because nothing is
 lost: caches are recreated on demand and search indexes rebuild from sidecars
-with no model calls, which is what acceptance criterion 7 exercises. Status
+with no model calls, which is covered by the [release acceptance checks](docs/development/validation.md#release-acceptance). Status
 lists space IDs. Everything supports `--dry-run`. Sidecar deletion records
 durable intent before removing index rows and files; if interrupted, repeating
 the command resumes even when the sidecar is partially removed or absent. Dry
@@ -108,8 +101,8 @@ start at a timestamp and says so.
 | Options | Behavior/default |
 | --- | --- |
 | `--semantic` | LeRobot: task, subtask, event, interaction, state, flag, progress. Ordinary video: task, subtask, flag; the other four are explicit selections. |
-| `--grounding` | M2: box and affordance. Mask, track, and keypoint require perception and are later capabilities. |
-| `--world` | Camera, hand, object, depth, points; all require perception, M2 onward. |
+| `--grounding` | Reserved; rejected as unsupported. |
+| `--world` | Reserved; rejected as unsupported. |
 | `--streams`, `--only`, `--ontology FILE`, `--window 30s`, `--fps 2` | LeRobot defaults to `cerul.verbs.v1` with verb validation. Ordinary videos have unrestricted verbs unless an ontology is supplied. |
 | `--write-lerobot`, `--out DIR` | No dataset mutation by default. Writeback accepts only an existing compatible v3.1 dataset. |
 
@@ -120,16 +113,16 @@ Each subtype is a module: frames → timestamped contact sheet → schema-constr
 | Options | Behavior/default |
 | --- | --- |
 | `--image PATH` | Supply a text query, image, or filter. Filters alone skip embeddings and return records in time order. |
-| `--limit 10`, `--threshold X` | No default score threshold in M1. |
+| `--limit 10`, `--threshold X` | No default score threshold. |
 | Repeated `--filter k=v` | Keys: `<annotation>.<field>`, episode, stream, kind. Operators: `= != > < ~`. Convert filters to temporal ranges before vector ranking; do not filter only the top-k results. |
 | `--in PATH` | Restrict the searched input scope. |
 | `--count` | Filters only: return exact-label record and episode counts. No natural-language probe counting. |
 | `--save DIR`, `--pad 2s` | Save matched MP4 clips. |
 | `--preview`, `--no-preview` | Cache one still frame per hit under workspace `cache/previews/` and expose it as `preview`. Stills use input seeking, so their cost does not grow with recording length. Default: on when the terminal can draw images. |
-| `--rerank` | M2: vision reranking of the first 20 candidates. |
+| `--rerank` | Reserved; rejected as unsupported. |
 | `--text` | Substring match over transcript and screen text without vectors. |
 
-Query embeddings are cached under workspace `cache/queries/` keyed by embedding space and query, so repeating a query in the same space needs no further model call. Both caches are disposable and freed by `remove --cache`.
+Query embeddings are cached under workspace `cache/queries/` keyed by embedding space and query, so repeating the exact query in the same space reuses its vector; changing filters or the result limit does not embed the query again. Changing the query text requires a new embedding. An expired capability cache can still trigger a provider probe. Both caches are disposable and freed by `remove --cache`.
 
 Results: `hits[]` containing episode, stream, start_us, end_us, optional frame_range, score, matched (video/speech/screen), excerpt, and annotations.
 
@@ -137,42 +130,14 @@ Results: `hits[]` containing episode, stream, start_us, end_us, optional frame_r
 
 Return a workspace overview or an episode's annotation inventory. Running `cerul` without a command is equivalent to status.
 
-Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes embedding, vision, and transcription, plus perception only when explicitly configured, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not imply that M1 implements grounding/world.
+Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes embedding, vision, and transcription, plus perception only when explicitly configured, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not imply that this version implements grounding/world.
 
 ## 4. Configuration and models
 
-Precedence: CLI overrides → environment → current-directory `cerul.toml` → `~/.cerul/config.toml` → defaults. Configuration stores key environment variable names, not secret values.
-
-~~~toml
-[embedding]
-kind = "gemini"
-model = "gemini-embedding-2"
-dims = 1536
-
-[vision]
-kind = "gemini"
-model = "gemini-3.8-flash"
-
-[transcription]
-kind = "gemini"
-model = "gemini-3.8-flash"
-
-# Example local or third-party endpoints:
-# [vision]
-# kind = "openai"
-# base_url = "http://localhost:11434/v1"
-# model = "qwen3-vl"
-#
-# [transcription]
-# kind = "openai"
-# base_url = "https://api.groq.com/openai/v1"
-# model = "whisper-large-v3-turbo"
-# api_key_env = "GROQ_API_KEY"
-#
-# [perception]  # Defaults; unnecessary for M1 processing.
-# base_url = "https://api.cerul.ai"
-# api_key_env = "CERUL_API_KEY"
-~~~
+Configuration resolution and examples are maintained in the
+[configuration guide](docs/configuration.md). Credentials must be scoped to the
+selected endpoint; configuration stores key environment variable names, not
+secret values. Provider adapters must preserve these request contracts:
 
 | Capability | Gemini | OpenAI-compatible |
 | --- | --- | --- |
@@ -180,7 +145,7 @@ model = "gemini-3.8-flash"
 | Vision | `generateContent` with responseSchema. | `/v1/chat/completions` with image_url and json_schema. |
 | Transcription | Audio `generateContent` with a segment schema. | `/v1/audio/transcriptions`, verbose_json, segment timestamps. |
 
-Probe the remote calls actually needed, not command names. Index probes embedding only for pending vectors and transcription only for pending audio. Annotate probes selected vision/perception capabilities. Search probes only when computing a query vector. Filters alone, exact text, sidecar rebuilds, ordinary status, and cleanup make no probe calls.
+Probe the remote calls actually needed, not command names. Index probes embedding only for pending vectors and transcription only for pending audio. Annotate probes selected vision/perception capabilities. Semantic search can refresh an expired embedding capability probe even when its query vector is cached. Filters alone, exact text, sidecar rebuilds, ordinary status, and cleanup make no probe calls.
 
 Embedding probes send a sentence, image, and two-second video and check dimensions/modalities. Vision requests `{"ok":true}` from a 64×64 image. Transcription uses one second of silence. Perception reads `/capabilities`. Explicitly unsupported required capabilities fail with code 3 before processing media. Temporary network failures allow local probe/frame/OCR stations to finish, mark remote work incomplete, and return code 6; a later run fills the gaps.
 
@@ -196,8 +161,6 @@ videos/
     transcript.jsonl
     screen_text.jsonl
     semantic.subtask.jsonl
-    grounding.box.jsonl              # Later milestone.
-    world.hand.parquet              # Later, dense per-frame data.
     embeddings/<space_id>.parquet    # Authoritative vectors and ranges.
     embeddings/<space_id>.json       # Public space metadata, no keys.
     streams/<stream_id>/             # Non-primary stream annotations.
@@ -231,7 +194,7 @@ Proxy metadata stores the recipe and output hash; missing/corrupt files are rebu
 
 One workspace writer holds `runtime/lock`; contention returns code 4. LeRobot directory locks coordinate different workspaces: shared for reads and output copies, exclusive for in-place replacement and recovery. Read-only dataset directories need no new lock file.
 
-M1 publication and recovery rules:
+Publication and recovery rules:
 
 1. Write outputs to temporary staging files, validate, then atomically rename to their final location. No incomplete artifact occupies a final path.
 2. Index and annotate are idempotent: skip completed stations and resume missing work. If sidecars exist but Lance rows are absent, restore the index with zero model calls. `--recompute` rewrites complete artifacts. Persist validated, cache-keyed per-unit checkpoints so successful units survive interruptions. Replace indexed rows by episode, stream, and artifact version, including removal of stale rows. An index update failure preserves valid sidecars; subsequent commands resynchronize the corresponding projection.
@@ -239,7 +202,7 @@ M1 publication and recovery rules:
 
 ## 6. Data model
 
-**Episode:** one recording, one or more streams, and a common timeline. M1 recognizes LeRobot episodes from metadata; each other video is a single-stream episode. User-authored multi-camera episode directories are M2.
+**Episode:** one recording, one or more streams, and a common timeline. The CLI recognizes LeRobot episodes from metadata; each other video is a single-stream episode. User-authored multi-camera episode directories are not implemented.
 
 **Identity:** `episode_id = <dataset_id>/<local_id>`. For ordinary video, dataset_id is the first 16 characters of video SHA-256 and local_id is 0. LeRobot uses the persistent UUID in .cerul/dataset.json and the original episode_index. Identically numbered episodes in different datasets cannot collide.
 
@@ -258,8 +221,8 @@ An annotation JSONL file starts with a header containing $cerul=annotation/1, na
 | Family | Record subtypes and fields |
 | --- | --- |
 | semantic | task{text}; subtask{text,index}, with continuous coverage; event{verb,objects[],actor,outcome}; interaction{hand,object,contact}; state{object,attribute,before,after}; flag{kind,note}; progress{value,done}. |
-| grounding | Coordinates normalized to [0,1] with frame_w/h. box{t_us,label,xyxy,track_id?}; affordance{t_us,label,points,action_hint}; trace{points[[t_us,x,y]],subject,label}; keypoint; mask{rle}. |
-| world | Frames use T_<a>_from_<b>, units m or relative, xyzw quaternions, valid flags, null for missing values. camera{t_us,T_world_from_camera[7],intrinsics?,scale,valid}; hand{t_us,side,joints[21][3],valid}; object; depth{t_us,path,scale}; points. |
+| grounding (reserved; not generated) | Coordinates normalized to [0,1] with frame_w/h. box{t_us,label,xyxy,track_id?}; affordance{t_us,label,points,action_hint}; trace{points[[t_us,x,y]],subject,label}; keypoint; mask{rle}. |
+| world (reserved; not generated) | Frames use T_<a>_from_<b>, units m or relative, xyzw quaternions, valid flags, null for missing values. camera{t_us,T_world_from_camera[7],intrinsics?,scale,valid}; hand{t_us,side,joints[21][3],valid}; object; depth{t_us,path,scale}; points. |
 
 **Index unit:** a 30-second video-stream interval in episode time, with up to three rows of kind video, speech, or screen. Write vectors to sidecars before indexing.
 
@@ -271,7 +234,7 @@ Default `cerul.verbs.v1` vocabulary: reach, grasp, regrasp, lift, carry, place, 
 
 ### Index stations
 
-- **Transcript:** audio segments no longer than ten minutes; records contain start_us, end_us, text, lang.
+- **Transcript:** sixty-second audio windows, with a shorter final window; records contain start_us, end_us, text, lang.
 - **Screen text:** PP-OCRv6 detection at 0.5 fps on source-resolution frames, with a 1080-pixel maximum long edge. Recognition runs only on detected boxes. Rust implements DBNet postprocessing and CTC decoding; repeated consecutive text is merged. Do not use a 480p proxy for OCR.
 - **Frames and proxies:** 0.5 fps source keyframes (maximum 1080-pixel long edge) are temporary and removed after use. Cache 480p H.264 proxies for embeddings and contact sheets. Embedding uses 2 fps. Contact sheets default to 2 fps but honor --fps, sampling source frames before encoding and preserving their original PTS separately.
 - **Embedding:** up to three independent calls per unit. Measure the actual encoded body against the endpoint limit; reduce bitrate then split, failing explicitly if still oversized. Persist vectors before Lance. Log failures and retry only missing units.
@@ -285,7 +248,7 @@ Subtask annotation describes first, then segments. Define boundaries using holdi
 
 ### LeRobot writeback
 
-M1 writes only subtask language entries to an already compatible v3.1 dataset. v3.0 returns code 3 and directs users to official format tooling; Cerul performs no upgrade. The pinned upstream recorder/compatibility-fixture distinction is documented in docs/lerobot.md and must not be misrepresented as an available official upgrade command.
+The CLI writes only subtask language entries to an already compatible v3.1 dataset. v3.0 returns code 3 and directs users to official format tooling; Cerul performs no upgrade. The pinned upstream recorder/compatibility-fixture distinction is documented in docs/lerobot.md and must not be misrepresented as an available official upgrade command.
 
 Use language_persistent with style=subtask, exactly one active subtask per frame, and timestamps from the source Parquet frame values without recalculation. Preserve action, state, tasks, language_events, and all non-subtask language_persistent entries. Add or replace only subtask entries. Retain info.json content, updating only necessary language feature metadata when adding a column. Events/flags stay in sidecars because they have no defined official style.
 
@@ -293,7 +256,7 @@ Prefer --out. Stage a complete dataset, perform native field/timeline validation
 
 ### Search
 
-Parse filters into episode/stream half-open time intervals, then apply them as Lance prefilters to intersecting chunks before vector ranking. Group the same interval by highest score and retain matched provenance. Exact-text hits merge when adjacent; ranked vector hits merge only when their windows mostly coincide, so the small overlap between neighbouring index windows never chains a whole video into one hit. Reranking is M2.
+Parse filters into episode/stream half-open time intervals, then apply them as Lance prefilters to intersecting chunks before vector ranking. Group the same interval by highest score and retain matched provenance. Exact-text hits merge when adjacent; ranked vector hits merge only when their windows mostly coincide, so the small overlap between neighbouring index windows never chains a whole video into one hit. Reranking is not implemented.
 
 Repeated filters are AND. Conditions on one annotation must match the same record. Different annotations join by temporal intersection. Episode/stream/kind constrain scope. A chunk is eligible when its interval intersects the event interval; the hit time is that intersection.
 
@@ -301,53 +264,25 @@ Without a filter, search the whole selected space. Filters alone skip vectors an
 
 ## 8. Repository structure
 
-One root Cargo.toml defines lib and bin. Modules cover configuration, providers, media, OCR, annotation schemas/I/O, episodes, LeRobot, indexing, semantic annotation, search, status, and cleanup. Serve modules are M2.
+The [architecture map](ARCHITECTURE.md) assigns module responsibilities and
+explains where guides, runtime prompts, generated schemas, assets, and build
+configuration belong. Keep one root Cargo.toml with a library and a binary.
 
-- models/: embedded detection/recognition ONNX and dictionary, with provenance, versions, and Apache-2.0 license.
-- prompts/: one embedded English Markdown prompt per module.
-- schemas/: generated with schemars and committed. Shared by CLI and library consumers.
-- tests/: short, clearly licensed fixtures (at most ten seconds) and recorded endpoint-response replay.
-- examples/: ordinary-video and LeRobot tutorials in M1; authored multi-camera directory tutorial in M2.
-- dist-workspace.toml and the generated npm wrapper.
-- README.md, DESIGN.md, LICENSE, and third-party notices.
-
-Dependencies include clap, tokio, reqwest, serde, serde_json, schemars, lancedb 0.38, arrow, parquet, image, sha2, indicatif, tracing, tract-onnx. axum/utoipa and optional rerun belong to the later serving/visualization milestones. Invoke ffmpeg as a subprocess.
+Cargo.toml declares the supported dependency configuration; Cargo.lock pins the
+resolved versions. FFmpeg runs as a separately licensed subprocess.
 
 Measure binary and archive sizes and CPU throughput on both targets during release acceptance.
 
-Every PR runs offline tests and two-platform builds. Maintainers run small real Gemini checks locally with their own credentials as part of the [release checklist](docs/releases.md). CI does not require a model key.
+Every PR runs offline tests and two-platform builds. Maintainers run small real Gemini checks locally with their own credentials as part of the [release checklist](docs/development/releases.md). CI does not require a model key.
 
-## 9. Acceptance
+## 9. Validation and scope
 
-| Milestone | Scope |
-| --- | --- |
-| **M1** | Index (transcript, OCR, embedding, still detection); search (vectors, images, prefilters, filter counts, saving clips, exact text); status; removal and disk reclamation; semantic annotation; LeRobot reading and subtask writeback; macOS/Linux distribution. |
+[Developer validation](docs/development/validation.md) defines behavioral gates,
+real OCR and provider checks, official-loader round-trips, and release acceptance.
+The [release guide](docs/development/releases.md) describes packaging and publication.
 
-Acceptance requirements:
+[Scope and current limits](docs/development/scope.md) separates unavailable
+capabilities from work excluded from this repository.
 
-1. On fresh macOS/Linux, an installation command plus GEMINI_API_KEY enables indexing a ten-minute video with speech in under ten minutes and finding the correct moment.
-2. Ask ten manually chosen questions, including at least three each about visuals, speech, and screen text. Recall@5 is at least 8/10. Speech questions match speech rows; screen-text questions match screen rows. No separate large gold-set project is required.
-3. Annotate five LeRobot episodes: subtasks cover the full timeline without gaps and use real frame boundaries. Official-loader readback of --write-lerobot --out verifies subtask content/timestamps and preserves all original action/state/annotation fields.
-3a. Adjacent episodes sharing one MP4 do not mix timestamps. Two datasets with episode 000012 do not overwrite each other.
-4. Repeating unchanged commands makes zero model calls. Changing only the embedding model recomputes only embeddings.
-5. search/status JSON conforms to schemas. JSON-mode stderr parses line by line.
-6. Gemini performs semantic annotation. Ollama and alternative vision endpoints are optional configurations, not M1 acceptance gates. An embedding endpoint without image support fails probing with code 3 and creates no index.
-7. Deleting the workspace index permits zero-model-call rebuild from sidecar vectors. Ctrl-C during indexing preserves completed units; resumption fills gaps and leaves no incomplete final artifacts.
-7a. A filtered event can be returned even when its unfiltered vector rank is below the first ten candidates.
-8. Offline index --no-audio completes local probing, frames, and OCR, returns code 6 with embedding incomplete, and status reports the episode unindexed. Reconnection resumes embedding only.
-9. Embedded OCR on twenty sample clips is no worse than a documented reference implementation.
-10. The binary requires no Python, CUDA, or dynamic ML libraries; FFmpeg and ffprobe run as separately licensed, bundled subprocesses.
-
-## 10. Validation considerations
-
-- Verify the current gemini-3.8-flash model ID, pricing, and segment-level transcription timestamp quality. If timestamp quality fails acceptance, use a Whisper-compatible transcription default without changing the configuration shape.
-- Verify tract-onnx operator coverage for PP-OCRv6 detection/recognition. If unsupported, investigate statically linked ort. Measure both platforms' CPU throughput and final binary size. Earlier throughput/size estimates remain unproven until measured.
-- Verify lancedb 0.38 Rust APIs, particularly vector prefilter behavior.
-- Use consented or licensed recordings for screen-text acceptance and a small, appropriately licensed public LeRobot dataset. Keep private recordings and derived acceptance outputs out of the public repository.
-- Review the fifteen-verb default vocabulary.
-
-## 11. Out of scope
-
-DAG/profile/Run state machines, SSE, idempotency keys, plugins, bundle formats, ask/export/init/rm commands, SQLite, Python SDK/PyO3, embedded inference beyond OCR, Temporal, multi-tenant serve, knowledge graphs, chat UI, an action annotation family, retargeting, and training.
-
-Do not add speculative interface layers before a fifth station, second embedding provider, or fourth annotation family creates a concrete need.
+Do not add speculative interface layers before a fifth station, second embedding
+provider, or fourth annotation family creates a concrete need.

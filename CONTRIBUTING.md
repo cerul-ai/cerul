@@ -1,44 +1,45 @@
 # Contributing
 
-Read [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md) before implementing changes.
+Start with the [architecture and module map](ARCHITECTURE.md), then read
+[DESIGN.md](DESIGN.md) for the behavior and data invariants your change affects.
 Keep the reusable core independent of process arguments and terminal rendering.
-Use small, reviewable pull requests with behavioral validation.
 
-Keep the English, Simplified Chinese, and Traditional Chinese READMEs aligned
-when changing installation steps, command examples, or supported features.
-The end-user agent setup runbook is `docs/agent-setup.md`; it should use only
-verified installation paths and must never contain credentials or local user paths.
+## Make and validate a change
 
-Run `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, and
-`cargo test --locked`. Include real-media checks when changing media processing,
-OCR, model adapters, or dataset writers. Never commit credentials or user data.
-Fixtures and embedded models require clear provenance and compatible licenses.
+1. Follow the [source build guide](docs/development/building.md).
+2. Make a small, reviewable change with focused behavioral validation.
+3. Run the [local checks](docs/development/validation.md#local-checks), including
+   formatting, Clippy, tests, schemas, documentation, and package checks.
+4. Describe the behavior change, evidence, and remaining checks in the PR.
 
-Core CI runs offline checks on Linux and macOS, including generated-schema and
-source-package checks. Linux also runs official LeRobot loader round-trips.
-Live provider checks are a maintainer release check, run locally with your own
-`GEMINI_API_KEY` using `cargo run --locked --example verify_gemini`.
-The release workflow does not require a model credential. See the
-[release checklist](docs/releases.md) for the full publication process.
-The local provider check sends only synthetic probe
-inputs: text, a small image, a two-second video, and silence. It checks endpoint
-capabilities and response shapes, not retrieval quality or speech timestamp
-accuracy; the remaining DESIGN.md acceptance checks are still required.
+Media, OCR, provider, and dataset changes need the corresponding real-input
+checks in the [validation guide](docs/development/validation.md). It also defines
+maintainer endpoint checks and release acceptance. CI does not require a model
+key. Publishing follows the separate [release process](docs/development/releases.md).
 
 Use `main` as the only long-lived branch. Public changes require a ready-for-review
-pull request. Package publishing and deployment are separate release operations.
+pull request. Follow the [code of conduct](CODE_OF_CONDUCT.md) and report
+vulnerabilities through the [security policy](SECURITY.md).
 
-## Developer integration
+## Maintain public documentation
 
-The Rust library is independent of process arguments and terminal output.
-`cerul --json` writes one final JSON value to stdout and NDJSON progress events
-to stderr. Times use episode-relative integer microseconds. See
-[ARCHITECTURE.md](ARCHITECTURE.md) and [configuration](docs/configuration.md).
-HTTP/MCP serving, grounding, world annotations, and Windows are not implemented
-in this version. They must not be advertised as available capabilities.
+Use the [documentation map](ARCHITECTURE.md#documentation-and-supporting-files)
+to choose where content belongs. Keep procedural steps in their relevant guide;
+link to them from entry pages instead of maintaining duplicate instructions.
+Keep the English, Simplified Chinese, and Traditional Chinese READMEs aligned
+when changing installation, command examples, or supported features.
+The [agent setup guide](docs/agent-setup.md) is for end-user installation;
+`AGENTS.md` contains repository contribution instructions.
 
-CLI onboarding owns credential files and prompts. Library hosts may scope
-credentials with `providers::with_credentials` and provide a lazy resolver
-with `providers::with_credential_resolver`; the library itself never reads
-CLI credential files. Environment values take precedence. Bundled media tools
-are resolved by `media::command`; an explicit tool override takes precedence.
+Credentials, personal machine paths, customer media, production exports, private
+operating procedures, and one-off review notes do not belong in public source.
+Use synthetic examples and placeholders. Local working notes belong in the
+ignored `.workspace/` directory. CI's documentation and package guards supplement
+human review; passing those checks does not prove content is safe to publish.
+
+Embedded models and small licensed fixtures require provenance and license
+information beside the assets. Committed media fixtures must be at most ten
+seconds. Keep model dictionaries byte-exact, regenerate schemas from Rust types,
+and validate prompt changes as processing changes.
+
+For library consumers, see [integration boundaries](ARCHITECTURE.md#integration-boundaries).

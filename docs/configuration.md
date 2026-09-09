@@ -1,7 +1,7 @@
 # Configuration
 
 Cerul uses model endpoints selected by the user. It does not require a Cerul
-account for M1 indexing, searching, or semantic annotation. OCR runs locally on
+account for indexing, searching, or semantic annotation. OCR runs locally on
 CPU with embedded weights; embedding, vision, and transcription use HTTP.
 
 Configuration priority, from lowest to highest:
@@ -17,7 +17,8 @@ and transcription default to `gemini-3.8-flash`. These defaults use
 `GEMINI_API_KEY` and the Gemini v1beta endpoint. The [Gemini model reference](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)
 and [embedding guide](https://ai.google.dev/gemini-api/docs/embeddings) describe
 these model IDs. Text queries use the embedding guide's `task: search result | query: {query}`
-instruction. Account access and timestamp quality require real-request acceptance.
+instruction. Use `cerul status --providers` to check access with your credentials.
+Transcription timestamps are model estimates; see [transcription](#provider-rate-limits-and-transcription).
 Store only the key's environment variable name in configuration, never the key.
 
 The CLI can save a validated default Gemini key in `~/.cerul/credentials.json`
@@ -67,17 +68,15 @@ Ordinary `status`, exact text search, annotation-only filters, index rebuilds,
 and cleanup do not probe providers. Commands probe only endpoints needed for
 pending work. Successful probes are cached for seven days.
 
-`cerul status --providers` explicitly probes the endpoints M1 uses: embedding,
-vision, and transcription. The perception endpoint belongs to a later milestone
-and its default address is not a running service, so it is probed only after you
-point it somewhere yourself or set its key variable; until then its capability
-stays null and no request leaves your machine for it. The command may return a
-partial result when one endpoint is unavailable even if the endpoints needed for
-M1 are usable.
+`cerul status --providers` explicitly probes embedding, vision, and transcription.
+Perception processing is not supported in this version. Its reserved endpoint
+is probed only when explicitly configured; otherwise its capability stays null
+and no request is sent to it. The command may return a partial result when one
+endpoint is unavailable even if the endpoints needed for your operation work.
 Use `--recompute` to refresh successful probes and `--dry-run` to avoid probes.
 Capability values are true for supported, false for explicitly unsupported,
 and null for unknown (including missing credentials and network errors).
-Perception's advertised tasks do not enable M2 features in this CLI.
+A perception endpoint advertising tasks does not add processing support to this CLI.
 
 Before the first media request to each endpoint in a command, Cerul prints a
 notice. `--yes` suppresses that notice. This is a notice, not an interactive
@@ -132,7 +131,7 @@ microseconds; source PTS and clip offsets are mapped internally.
 
 Only one writer may operate in a workspace at a time. A lock conflict fails;
 commands do not silently forward to a background service. HTTP/MCP serving and
-perception processing are outside M1.
+perception processing are not supported in this version.
 
 ## Local OCR concurrency
 

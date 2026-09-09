@@ -1,4 +1,6 @@
 mod credentials;
+#[cfg(test)]
+mod documentation_tests;
 mod render;
 use anyhow::{Context, Result};
 use cerul::{
@@ -30,18 +32,42 @@ Examples:
   cerul search --text \"ERROR 500\"        exact words on screen or in speech
   cerul search \"...\" --save ./clips      export matching clips as MP4
   cerul open 2                           play the second result at its moment
+  cerul annotate ./demo.mp4 --semantic    label tasks, steps, and quality flags
+  cerul annotate --help                   video and LeRobot annotation examples
   cerul status                           what is indexed and which models are used
 
 Speech and semantic search use Gemini; run `cerul auth set` once to save a key.
 Add --json to any command for machine-readable output.
 Shell completion: cerul completions <shell>.";
 
+const ANNOTATE_EXAMPLES: &str = "\
+Examples:
+  cerul annotate ./video.mp4 --semantic
+      Label tasks, steps, and quality flags in a video (no index step needed).
+  cerul annotate ./video.mp4 --semantic subtask,event,interaction,state
+      Label action steps, events, contacts, and state changes in a demonstration.
+  cerul annotate ./dataset --semantic --only 0
+      Label the first LeRobot episode using all seven semantic types.
+  cerul annotate ./video.mp4 --semantic --dry-run
+      Preview the work without writing files or calling models.
+
+Types: task, subtask, event, interaction, state, flag, progress.
+Defaults: videos use task,subtask,flag; LeRobot uses all seven types.
+Outputs: semantic.<type>.jsonl sidecars beside the media; cerul status shows paths.
+LeRobot: annotations live in .cerul/episodes/<episode_index>/ inside the dataset.
+--out is a new LeRobot dataset copy and requires --write-lerobot; it is not a
+JSONL export directory. See the LeRobot guide for supported writeback versions.
+
+Uses your configured vision endpoint (Gemini by default): cerul auth set.
+Pose, depth, and 3D trajectories are not supported in this version.
+Guide: https://github.com/cerul-ai/cerul/blob/main/docs/annotation.md";
+
 #[derive(Parser)]
 #[command(
     name = "cerul",
     version,
-    about = "Search your videos with words",
-    long_about = "Search your videos with words.\n\nCerul indexes screen text, speech, and visual content locally, then finds moments from a description and exports them as clips.",
+    about = "Search and annotate your videos",
+    long_about = "Search and annotate your videos.\n\nFind moments from a description, export clips, or label actions and states in videos and LeRobot demonstrations.",
     after_help = EXAMPLES,
     disable_help_subcommand = true
 )]
@@ -101,6 +127,11 @@ enum Command {
     /// Manage the saved Gemini API key.
     Auth(AuthArgs),
     /// Generate semantic annotations (tasks, events, states) for videos.
+    #[command(
+        arg_required_else_help = true,
+        long_about = "Label tasks, action steps, events, interactions, and states in videos or LeRobot demonstrations. Run directly on your media; indexing is not required.",
+        before_help = ANNOTATE_EXAMPLES
+    )]
     Annotate(AnnotateArgs),
     /// Remove indexed videos, or free the disk they and their caches use.
     Remove(RemoveArgs),
@@ -137,7 +168,7 @@ struct AnnotateArgs {
     /// Write subtask annotations back into the LeRobot dataset.
     #[arg(long)]
     write_lerobot: bool,
-    /// Directory for exported annotation files.
+    /// New output LeRobot dataset (requires --write-lerobot).
     #[arg(long, value_name = "DIR")]
     out: Option<PathBuf>,
     /// Custom ontology file.
@@ -758,7 +789,7 @@ async fn execute(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(O
                 args.semantic.is_some(),
                 CliError(
                     2,
-                    "select --semantic and optional comma-separated items".into()
+                    "choose labels with --semantic, for example: cerul annotate ./video.mp4 --semantic subtask,event,interaction,state; see cerul annotate --help".into()
                 )
             );
             let config = config(cli).map_err(|e| category(2, e))?;

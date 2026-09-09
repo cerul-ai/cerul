@@ -59,7 +59,8 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainer through a private contact channel on GitHub.
+reported privately to [support@cerul.ai](mailto:support@cerul.ai).
+Include the relevant context and links; avoid posting sensitive reports in public issues.
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
