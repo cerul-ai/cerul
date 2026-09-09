@@ -147,6 +147,10 @@ impl Provider {
         ensure!(jobs > 0 && rpm != Some(0), "jobs and RPM must be positive");
         let url = url::Url::parse(&endpoint.base_url)?;
         ensure!(
+            !url.path().ends_with("//"),
+            "endpoint URL must not end with repeated slashes"
+        );
+        ensure!(
             matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
             "invalid provider URL"
         );

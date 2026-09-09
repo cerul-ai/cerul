@@ -50,30 +50,8 @@ fn save(path: &Path, keys: &Keys) -> Result<()> {
     Ok(())
 }
 
-pub async fn prepare(cli: &super::Cli) -> Result<Keys> {
-    if cli.dry_run
-        || matches!(
-            &cli.command,
-            None | Some(super::Command::Clean(_))
-                | Some(super::Command::Status {
-                    providers: false,
-                    ..
-                })
-        )
-        || matches!(&cli.command, Some(super::Command::Search(args)) if args.text)
-    {
-        return Ok(Keys::new());
-    }
-    path()
-        .as_deref()
-        .map(read)
-        .transpose()
-        .map(Option::unwrap_or_default)
-}
-
 pub fn resolver(
     cli: &super::Cli,
-    keys: Keys,
     cancel: CancellationToken,
 ) -> cerul::providers::CredentialResolver {
     let interactive = !cli.json
@@ -82,20 +60,24 @@ pub fn resolver(
         && !cli.dry_run
         && std::io::stdin().is_terminal()
         && std::io::stderr().is_terminal();
-    let keys = std::sync::Arc::new(tokio::sync::Mutex::new(keys));
+    let keys = std::sync::Arc::new(tokio::sync::Mutex::new(None::<Keys>));
     std::sync::Arc::new(move |endpoint| {
         let keys = keys.clone();
         let cancel = cancel.clone();
         Box::pin(async move {
-            if !interactive {
-                return Ok(None);
+            let mut stored = keys.lock().await;
+            if stored.is_none() {
+                *stored = Some(path().as_deref().map(read).transpose()?.unwrap_or_default());
             }
-            let mut keys = keys.lock().await;
+            let keys = stored.as_mut().unwrap();
             let scope = credential_scope(&endpoint);
             if let Some(key) = keys.get(&scope) {
                 return Ok(Some(key.clone()));
             }
-            prompt(&endpoint, &mut keys, cancel).await
+            if !interactive {
+                return Ok(None);
+            }
+            prompt(&endpoint, keys, cancel).await
         })
     })
 }
@@ -125,11 +107,10 @@ async fn prompt(
                 cancel.cancel();
             }
         })?;
-    ensure!(
-        !key.trim().is_empty(),
-        "setup cancelled; set {} or run again in a terminal",
-        endpoint.api_key_env
-    );
+    if key.trim().is_empty() {
+        cancel.cancel();
+        anyhow::bail!("setup cancelled");
+    }
     let validation = cerul::config::Config::default().embedding;
     let provider = Provider::new(validation, Some(key.trim().to_owned()), 1, None, cancel)?;
     provider

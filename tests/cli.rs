@@ -390,3 +390,35 @@ fn offline_commands_ignore_unusable_saved_credentials() {
     assert!(dry.status.success());
     assert_eq!(final_json(&dry)["dry_run"], true);
 }
+
+#[test]
+fn missing_key_keeps_local_processing_and_environment_bypasses_corrupt_saved_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    video(dir.path());
+    let output = cli(
+        dir.path(),
+        &["--json", "index", "sample.mp4", "--no-audio", "--no-ocr"],
+    );
+    assert_eq!(output.status.code(), Some(6), "{:?}", output);
+    std::fs::create_dir_all(dir.path().join(".cerul")).unwrap();
+    std::fs::write(dir.path().join(".cerul/credentials.json"), "invalid").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_cerul"))
+        .current_dir(dir.path())
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env("HOME", dir.path())
+        .env("GEMINI_API_KEY", "test-key")
+        .args([
+            "--json",
+            "--set",
+            "embedding.base_url=\"http://127.0.0.1:9/v1\"",
+            "index",
+            "sample.mp4",
+            "--no-audio",
+            "--no-ocr",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(6), "{:?}", output);
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("credential file"));
+}

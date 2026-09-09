@@ -23,6 +23,14 @@ pub struct RegistryEntry {
 }
 
 pub fn read_registry(workspace: &Path) -> Result<Vec<RegistryEntry>> {
+    Ok(read_registry_all(workspace)?
+        .into_iter()
+        .filter(|entry| !entry.pending_deletion)
+        .collect())
+}
+
+/// Includes cleanup tombstones; only registry writers and cleanup may use them.
+pub fn read_registry_all(workspace: &Path) -> Result<Vec<RegistryEntry>> {
     let text = match fs::read_to_string(workspace.join("registry.jsonl")) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -41,7 +49,7 @@ pub fn register(workspace: &Path, entry: RegistryEntry) -> Result<()> {
     register_inner(workspace, entry, false)
 }
 fn register_inner(workspace: &Path, entry: RegistryEntry, replace_media: bool) -> Result<()> {
-    let mut entries = read_registry(workspace)?;
+    let mut entries = read_registry_all(workspace)?;
     // LeRobot episodes may share one media shard, but never one sidecar.
     entries.retain(|existing| {
         existing.episode_id != entry.episode_id
@@ -52,6 +60,32 @@ fn register_inner(workspace: &Path, entry: RegistryEntry, replace_media: bool) -
     entries.sort_by(|a, b| a.episode_id.cmp(&b.episode_id));
     let mut bytes = Vec::new();
     for entry in entries {
+        serde_json::to_writer(&mut bytes, &entry)?;
+        bytes.push(b'\n');
+    }
+    storage::atomic_write(&workspace.join("registry.jsonl"), &bytes)
+}
+
+/// Revoke removed members using the full discovery set, before applying --only.
+/// Sidecar files are preserved; all derived indexes filter through the registry.
+pub fn reconcile_dataset(
+    workspace: &Path,
+    root: &Path,
+    members: &std::collections::BTreeSet<String>,
+) -> Result<()> {
+    let root = fs::canonicalize(root)?;
+    let mut bytes = Vec::new();
+    for entry in read_registry_all(workspace)? {
+        if !entry.pending_deletion {
+            let episode: Episode =
+                serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json"))?)?;
+            if episode.source.format.starts_with("lerobot/")
+                && episode.source.root == root
+                && !members.contains(&entry.episode_id)
+            {
+                continue;
+            }
+        }
         serde_json::to_writer(&mut bytes, &entry)?;
         bytes.push(b'\n');
     }
@@ -349,6 +383,44 @@ pub fn publish_episode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tombstones_are_hidden_and_dataset_reconciliation_preserves_current_members() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dataset");
+        crate::lerobot::tests::fixture(&root, "v3.1");
+        let workspace = dir.path().join("workspace");
+        let mut episode = crate::lerobot::read_with_workspace(&root, &workspace)
+            .unwrap()
+            .remove(0);
+        publish_episode(&workspace, &episode, None).unwrap();
+        let kept = episode.episode_id.clone();
+        episode.local_id = "999".into();
+        episode.episode_id = format!("{}/999", episode.dataset_id);
+        let removed = publish_episode(&workspace, &episode, None).unwrap();
+        reconcile_dataset(
+            &workspace,
+            &root,
+            &std::collections::BTreeSet::from([kept.clone()]),
+        )
+        .unwrap();
+        assert_eq!(read_registry(&workspace).unwrap().len(), 1);
+        assert!(removed.join("episode.json").exists());
+        let mut entry = read_registry(&workspace).unwrap().remove(0);
+        entry.pending_deletion = true;
+        let sidecar = entry.sidecar.clone();
+        register(&workspace, entry).unwrap();
+        fs::remove_dir_all(sidecar).unwrap();
+        assert!(read_registry(&workspace).unwrap().is_empty());
+        assert_eq!(read_registry_all(&workspace).unwrap().len(), 1);
+        assert!(
+            crate::index::records::sidecars(&workspace)
+                .unwrap()
+                .is_empty()
+        );
+        reconcile_dataset(&workspace, &root, &std::collections::BTreeSet::new()).unwrap();
+        assert_eq!(read_registry_all(&workspace).unwrap().len(), 1);
+    }
+
     #[tokio::test]
     async fn changed_dataset_publication_withdraws_only_affected_vectors_before_rebuild() {
         use super::super::{

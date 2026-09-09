@@ -170,6 +170,7 @@ async fn run_inner(
     crate::media::check_dependencies()?;
     let inputs = discover::discover(paths)?;
     let mut episodes = Vec::new();
+    let mut datasets = Vec::new();
     for input in inputs {
         match input {
             Input::Video(path) => {
@@ -179,15 +180,20 @@ async fn run_inner(
                 }
             }
             Input::LeRobot(root) => {
+                let members = crate::lerobot::read_with_workspace(&root, workspace)?;
+                datasets.push((root, members.iter().map(|e| e.episode_id.clone()).collect()));
                 episodes.extend(
-                    crate::lerobot::read_with_workspace(&root, workspace)?
+                    members
                         .into_iter()
                         .filter(|episode| selected(episode, options.only.as_deref())),
                 );
             }
         }
     }
-    ensure!(!episodes.is_empty(), "no matching videos");
+    ensure!(
+        !episodes.is_empty() || !datasets.is_empty(),
+        "no matching videos"
+    );
     let registry = discover::read_registry(workspace)?;
     if options.dry_run {
         let mut result = Vec::new();
@@ -216,6 +222,18 @@ async fn run_inner(
         });
     }
     let _lock = storage::WorkspaceLock::acquire(workspace)?;
+    for (root, members) in datasets {
+        discover::reconcile_dataset(workspace, &root, &members)?;
+    }
+    let pending = discover::read_registry_all(workspace)?;
+    for episode in &episodes {
+        ensure!(
+            !pending
+                .iter()
+                .any(|entry| entry.pending_deletion && entry.episode_id == episode.episode_id),
+            "episode has pending cleanup; finish clean --sidecars before indexing it again"
+        );
+    }
     let mut embedding = Provider::from_env(
         config.embedding.clone(),
         options.jobs,
@@ -271,9 +289,9 @@ async fn run_inner(
                 {
                     Ok(_) => {}
                     Err(error)
-                        if error
-                            .downcast_ref::<ProviderError>()
-                            .is_some_and(|e| e.kind == Failure::Unavailable) => {}
+                        if error.downcast_ref::<ProviderError>().is_some_and(|e| {
+                            matches!(e.kind, Failure::Unavailable | Failure::MissingKey)
+                        }) => {}
                     Err(error) => return Err(error),
                 }
             }
@@ -311,9 +329,9 @@ async fn run_inner(
                 {
                     Ok(_) => {}
                     Err(error)
-                        if error
-                            .downcast_ref::<ProviderError>()
-                            .is_some_and(|e| e.kind == Failure::Unavailable) =>
+                        if error.downcast_ref::<ProviderError>().is_some_and(|e| {
+                            matches!(e.kind, Failure::Unavailable | Failure::MissingKey)
+                        }) =>
                     {
                         blocked.insert(stream.clone(), error.to_string());
                     }

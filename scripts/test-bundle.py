@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix="cerul-bundle-test-") as temp:
     env = {k: v for k, v in os.environ.items() if not k.startswith("CERUL_") and k not in ("GEMINI_API_KEY", "HOME", "PATH")}
     env.update(HOME=str(home), PATH=str(empty))
     subprocess.run([str(bundle / "cerul-ffmpeg"), "-v", "error", "-loop", "1", "-i", str(root / "tests/fixtures/ocr-text.png"), "-t", "1", "-r", "2", "-pix_fmt", "yuv420p", "-c:v", "libx264", str(temp / "demo.mp4")], env=env, check=True)
-    result = subprocess.run([str(bundle / "cerul"), "--json", "--workspace", str(temp / "workspace"), "--set", 'embedding.base_url="http://127.0.0.1:9/v1"', "index", str(temp / "demo.mp4"), "--no-audio", "--jobs", "1"], env=env, capture_output=True, text=True, timeout=120)
+    result = subprocess.run([str(bundle / "cerul"), "--json", "--workspace", str(temp / "workspace"), "index", str(temp / "demo.mp4"), "--no-audio", "--jobs", "1"], env=env, capture_output=True, text=True, timeout=120)
     assert result.returncode == 6, (result.returncode, result.stdout, result.stderr)
     json.loads(result.stdout)
     result = subprocess.run([str(bundle / "cerul"), "--json", "--workspace", str(temp / "workspace"), "search", "--text", "CERUL"], env=env, capture_output=True, text=True, timeout=30)

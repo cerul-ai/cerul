@@ -318,7 +318,6 @@ fn read_inner(root: &Path, workspace: Option<&Path>) -> Result<Vec<Episode>> {
         episode.validate()?;
         episodes.push(episode);
     }
-    ensure!(!episodes.is_empty(), "dataset contains no episode metadata");
     Ok(episodes)
 }
 pub(crate) fn permission_error(error: &anyhow::Error) -> bool {

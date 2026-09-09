@@ -2,7 +2,7 @@
 use crate::{
     episode::Episode,
     index::{
-        discover::{RegistryEntry, read_registry, register},
+        discover::{RegistryEntry, read_registry_all as read_registry, register},
         lance::literal,
     },
     storage,

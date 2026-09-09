@@ -108,6 +108,10 @@ fn merge(base: &mut toml::Value, overlay: toml::Value) {
 fn validate_url(value: &str) -> Result<()> {
     let url = url::Url::parse(value).context("invalid endpoint URL")?;
     ensure!(
+        !url.path().ends_with("//"),
+        "endpoint URL must not end with repeated slashes"
+    );
+    ensure!(
         matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
         "endpoint must use HTTP(S) with a host"
     );
