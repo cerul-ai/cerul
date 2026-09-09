@@ -165,6 +165,37 @@ fn search_filter_and_text_modes_return_json_without_credentials() {
 }
 
 #[test]
+fn annotation_help_teaches_the_workflow_without_loading_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cerul.toml"), "invalid = [").unwrap();
+    for args in [vec!["annotate"], vec!["annotate", "--help"]] {
+        let output = cli(dir.path(), &args);
+        let text = if args.len() == 1 {
+            assert_eq!(output.status.code(), Some(2));
+            assert!(output.stdout.is_empty());
+            String::from_utf8_lossy(&output.stderr)
+        } else {
+            assert!(output.status.success());
+            String::from_utf8_lossy(&output.stdout)
+        };
+        assert!(text.contains("subtask,event,interaction,state"), "{text}");
+        assert!(text.find("Examples:").unwrap() < text.find("Options:").unwrap());
+        assert!(text.contains("--semantic --only 0"), "{text}");
+        assert!(text.contains("no index step needed"), "{text}");
+        assert!(text.contains("semantic.<type>.jsonl"), "{text}");
+        assert!(!text.contains("following required arguments"), "{text}");
+    }
+    let output = cli(dir.path(), &["--json", "annotate"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(final_json(&output)["error"]["code"], "invalid_arguments");
+    assert!(output.stderr.is_empty());
+    let output = cli(dir.path(), &["annotate", "--semantci"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected argument"));
+    assert!(!dir.path().join(".cerul").exists());
+}
+
+#[test]
 fn annotate_default_plan_and_m2_rejection_are_explicit() {
     let dir = tempfile::tempdir().unwrap();
     video(dir.path());
@@ -194,6 +225,37 @@ fn annotate_default_plan_and_m2_rejection_are_explicit() {
     assert_eq!(
         names,
         vec!["semantic.flag", "semantic.subtask", "semantic.task"]
+    );
+    assert!(!dir.path().join(".cerul").exists());
+    assert!(!dir.path().join("sample.mp4.cerul").exists());
+    let selected = cli(
+        dir.path(),
+        &[
+            "--json",
+            "annotate",
+            "sample.mp4",
+            "--semantic",
+            "subtask,event,interaction,state",
+            "--dry-run",
+        ],
+    );
+    assert!(selected.status.success());
+    let result = final_json(&selected);
+    let mut names: Vec<_> = result["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["annotation"].as_str().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        vec![
+            "semantic.event",
+            "semantic.interaction",
+            "semantic.state",
+            "semantic.subtask"
+        ]
     );
     assert!(!dir.path().join(".cerul").exists());
     assert!(!dir.path().join("sample.mp4.cerul").exists());
@@ -437,6 +499,10 @@ fn human_mode_renders_text_and_json_mode_stays_machine_readable() {
     let text = String::from_utf8_lossy(&home.stdout);
     assert!(text.starts_with("cerul 0."), "{text}");
     assert!(text.contains("Get started"), "{text}");
+    assert!(
+        text.contains("cerul annotate ./video.mp4 --semantic"),
+        "{text}"
+    );
     assert!(text.contains("cerul auth set"), "{text}");
     assert!(text.contains("cerul index ./video.mp4"), "{text}");
     assert!(text.contains("cerul auth set"), "{text}");

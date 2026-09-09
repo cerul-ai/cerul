@@ -1,7 +1,7 @@
 # Release artifacts
 
 Building or reviewing a branch never publishes a release.
-Package publishing is a separate release operation after M1 acceptance.
+Package publishing is a separate release operation after the [release acceptance checks](validation.md#release-acceptance).
 Existing tags and `ffmpeg-vendor-*` assets must be preserved for downstream compatibility.
 
 ## Release checklist
@@ -66,7 +66,7 @@ tarballs (including licenses) and build script in `media-source/`.
 FFmpeg with libx264 is GPL-2.0-or-later; the separately executed Rust CLI retains
 its Apache-2.0 license. Do not advertise the entire bundle as Apache-only.
 
-Linux binaries target glibc; musl/Alpine and other CPU architectures are not M1
+Linux binaries target glibc; musl/Alpine and other CPU architectures are not supported
 targets. Minimum runtime versions must be checked against the final binary's
 linkage manifest, rather than inferred from its filename.
 
@@ -136,8 +136,9 @@ separately only as part of an authorized release.
 
 ## Publishing boundary
 
-The generated GitHub workflow plans artifacts on pull requests and builds and
-hosts releases for matching version tags. The permanent website redirect tracks
+With `pr-run-mode = "upload"`, pull requests plan and build both platform
+archives and upload CI artifacts for inspection. Matching version tags also
+publish those artifacts as a GitHub Release. The permanent website redirect tracks
 the latest published release; it needs no per-release website change.
 
 npm and Homebrew artifacts are generated, but registry/tap publishing is not

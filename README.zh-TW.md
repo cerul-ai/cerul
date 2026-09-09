@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://cerul.ai">官網</a> ·
   <a href="docs/installation.md">安裝指南</a> ·
-  <a href="examples/video-search.md">影片教學</a> ·
+  <a href="docs/video-search.md">影片教學</a> ·
   <a href="https://x.com/cerul_hq">X / Twitter</a> ·
   <a href="https://discord.gg/qHDEMQB9vN">Discord</a>
 </p>
@@ -68,14 +68,26 @@ cerul search "有人把杯子放到桌上" --save ./clips
 ### 日常維護
 
 ```sh
-cerul remove ./demo.mp4      # 忘掉某個影片的索引，影片檔案本身保留
+cerul remove ./demo.mp4      # 刪除索引與旁車資料，保留原影片
 cerul remove --cache         # 釋放可再生的磁碟佔用
 cerul completions zsh        # 產生 shell 補全指令碼
 ```
 
 zsh 使用者把它放到 `fpath` 裡，例如 `cerul completions zsh > ~/.zfunc/_cerul`，並確保 `~/.zfunc` 在 `compinit` 之前加入 `fpath`。
 
-[更多使用範例 →](examples/video-search.md)
+[更多使用範例 →](docs/video-search.md)
+
+## 標註動作與示範影片
+
+為一般影片、第一人稱錄影或機器人示範產生動作步驟、事件、互動及狀態變化標註，無需先建立索引。
+
+```sh
+cerul annotate ./video.mp4 --semantic subtask,event,interaction,state
+```
+
+加上 `--dry-run` 可預覽處理計畫。結果儲存在 JSONL sidecar 中，執行 `cerul status ./video.mp4` 查看位置。對於 LeRobot 資料集，可先用 `cerul annotate ./dataset --semantic --only 0` 標註第一個 episode。這些是語義標註，目前不提供姿態、深度或 3D 軌跡。
+
+[標註類型、輸出位置與 LeRobot 範例 →](docs/annotation.md)
 
 ## 讓 agent 幫你安裝
 
@@ -101,9 +113,11 @@ zsh 使用者把它放到 `fpath` 裡，例如 `cerul completions zsh > ~/.zfunc
 
 ## 了解更多
 
+- [文件目錄](docs/README.md)
+
 - [安裝與排錯](docs/installation.md)
-- [影片搜尋教學](examples/video-search.md)
-- [LeRobot 教學](examples/lerobot-subtasks.md)
+- [影片搜尋教學](docs/video-search.md)
+- [LeRobot 教學](docs/lerobot-subtasks.md)
 - [模型服務與設定](docs/configuration.md)
 - [貢獻與開發整合](CONTRIBUTING.md)
 

@@ -533,7 +533,7 @@ pub fn home(
         out,
         "{}  {}",
         palette.bold(&format!("cerul {}", status.version)),
-        palette.dim("·  Search your videos with words")
+        palette.dim("·  Search and annotate your videos")
     )?;
     writeln!(out)?;
     let key_ready = models.key.available();
@@ -613,6 +613,7 @@ pub fn home(
                     "Skipping step 1 is fine: cerul index asks for the key when it first needs it."
                 )
             )?;
+            writeln!(out)?;
         }
     } else {
         let videos = match indexed {
@@ -637,6 +638,35 @@ pub fn home(
         next_steps(out, palette, &steps)?;
         writeln!(out)?;
     }
+    writeln!(
+        out,
+        "{}",
+        palette.bold("Annotate actions and demonstrations")
+    )?;
+    next_steps(
+        out,
+        palette,
+        &[
+            (
+                "cerul annotate ./video.mp4 --semantic",
+                "tasks, steps, and quality flags",
+            ),
+            (
+                "cerul annotate ./dataset --semantic --only 0",
+                "first LeRobot episode",
+            ),
+            (
+                "cerul annotate --help",
+                "types, examples, and output locations",
+            ),
+        ],
+    )?;
+    writeln!(
+        out,
+        "{}",
+        palette.dim("Annotate directly; no index step needed.")
+    )?;
+    writeln!(out)?;
     writeln!(
         out,
         "{}",
@@ -726,6 +756,11 @@ pub fn status(
         let name = truncate_str(&file_name(&episode.media), 40, "…").to_string();
         let pad = " ".repeat(width.saturating_sub(measure_text_width(&name)));
         writeln!(out, "  {name}{pad}   {}", checks(episode, palette))?;
+        writeln!(
+            out,
+            "    {}",
+            palette.dim(&format!("annotations: {}", tilde(&episode.sidecar)))
+        )?;
     }
     writeln!(out)?;
     writeln!(out, "{}", palette.bold("Models"))?;
@@ -1407,6 +1442,50 @@ pub fn error(palette: &Palette, code: u8, message: &str, hint: Option<&str>) -> 
 mod tests {
     use super::*;
     use cerul::search::{Hit, Report};
+
+    #[test]
+    fn configured_home_keeps_annotation_visible_and_status_locates_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut status = cerul::status::inspect(dir.path(), None).unwrap();
+        status.episodes.push(cerul::status::EpisodeStatus {
+            episode_id: "demo/0".into(),
+            media: PathBuf::from("/videos/demo.mp4"),
+            sidecar: PathBuf::from("/videos/demo.mp4.cerul"),
+            media_present: true,
+            annotations: vec!["semantic.subtask".into()],
+            embedding_spaces: Vec::new(),
+            embeddings: Vec::new(),
+        });
+        let models = ModelSummary {
+            embedding: "test".into(),
+            embedding_dims: None,
+            vision: "test".into(),
+            transcription: "test".into(),
+            key: KeyState {
+                provider: "test".into(),
+                endpoint: "http://localhost".into(),
+                env: "TEST_KEY".into(),
+                env_set: false,
+                saved: true,
+                credentials_path: None,
+            },
+        };
+        let palette = Palette::new(false);
+        let mut out = Vec::new();
+        home(&mut out, &palette, &status, &models).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("1 video indexed"));
+        assert!(text.contains("key saved"));
+        assert!(text.contains("cerul annotate ./video.mp4 --semantic"));
+        assert!(text.contains("cerul annotate --help"));
+        let mut out = Vec::new();
+        super::status(&mut out, &palette, &status, &models, false).unwrap();
+        assert!(
+            String::from_utf8(out)
+                .unwrap()
+                .contains("/videos/demo.mp4.cerul")
+        );
+    }
 
     fn hit() -> Hit {
         Hit {
