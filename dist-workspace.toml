@@ -29,6 +29,7 @@ protobuf = "*"
 pkgconf = "*"
 
 [dist.dependencies.apt]
+nasm = "*"
 protobuf-compiler = "*"
 libprotobuf-dev = "*"
 pkg-config = "*"
