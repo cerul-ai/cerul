@@ -37,82 +37,42 @@ folders and LeRobot datasets, using your own model API key.
 
 ## Getting started
 
+Cerul is a command-line tool for searching videos and saving clips. The download
+includes the media tools and OCR models it needs.
+
 Supports **macOS Apple Silicon** and **Linux x86_64 (Ubuntu 24.04 or newer)**.
-Release bundles contain Cerul, FFmpeg, ffprobe, and OCR weights. No Python,
-Ollama, or separately installed FFmpeg is needed for these bundles.
 
-> The rewritten CLI's first bundle is awaiting release. Older releases contain a
-> different client. For this checkout, use the source instructions below or ask
-> your agent to follow the installation guide. The command below becomes available
-> when `v0.0.3` is published.
+### 1. Install
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/cerul-ai/cerul/releases/download/v0.0.3/cerul-installer.sh | sh
+curl -fsSL https://cerul.ai/install.sh | sh
 ```
 
-<details>
-<summary>Build this checkout before the release</summary>
-
-Install [Rust](https://rustup.rs), a C compiler, Protobuf, and pkg-config.
-On macOS: `brew install protobuf pkgconf`. On Ubuntu, see the
-[installation guide](docs/installation.md).
-
-```sh
-git clone https://github.com/cerul-ai/cerul.git
-cd cerul
-bash scripts/build-distribution.sh
-export PATH="$PWD/target/bundle:$PATH"
-cerul --version
-```
-
-Use the author-provided branch for an unmerged PR. This builds the media tools
-from pinned sources too; the first build takes longer than a release install.
-
-</details>
-
-### 1. Index a video
+### 2. Add a video
 
 ```sh
 cerul index ./demo.mp4
 ```
 
-On your first interactive run, Cerul asks for a [Gemini API key](https://aistudio.google.com/apikey),
-validates it, and saves it privately on your computer. Input is hidden. You can
-also set `GEMINI_API_KEY` yourself; environment values take precedence.
+On first use, follow the prompt to enter your [Gemini API key](https://aistudio.google.com/apikey).
+Cerul saves it on your computer for future runs. Model processing sends data to
+Gemini and may incur API charges.
 
-OCR runs locally. Video embeddings, transcription, and semantic annotation send
-inputs to your configured model endpoints and may incur provider charges.
-Cerul requires no account and collects no telemetry.
-
-### 2. Find a moment
+### 3. Search and save clips
 
 ```sh
 cerul search "A person puts a cup on the table"
-cerul search --text "connection refused"
-cerul search --image ./reference.png
-```
-
-### 3. Save matching clips
-
-```sh
 cerul search "A person puts a cup on the table" --save ./clips
 ```
 
-Start with a short video. Follow the [complete walkthrough](examples/video-search.md)
-for more examples, progress checks, and recovery.
+[More examples →](examples/video-search.md)
 
 ## Let your agent do the setup
 
 Copy this prompt into an agent that can use a terminal:
 
 ```text
-Install Cerul from https://github.com/cerul-ai/cerul. Read docs/agent-setup.md
-and docs/installation.md from the selected version. Prefer a verified release
-bundle; if none exists for the new CLI, build the current source with its bundled
-media tools. Verify installation, help me configure my API key without displaying
-or logging it, and ask which local video I want to try. Explain model data transfer,
-index one short video, search it, and teach me how to repeat the commands in my
-language. Report actual results, including any incomplete stations.
+Install Cerul by following https://github.com/cerul-ai/cerul/blob/main/docs/agent-setup.md. Help me set up my Gemini API key securely, search a local video, and save a matching clip. Teach me the commands in my language.
 ```
 
 [Agent setup guide →](docs/agent-setup.md)

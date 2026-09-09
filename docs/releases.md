@@ -4,6 +4,35 @@ The v0.0.3 rewrite is not published by building or reviewing this branch.
 Package publishing is a separate release operation after M1 acceptance.
 Existing tags and `ffmpeg-vendor-*` assets must be preserved for downstream compatibility.
 
+## First public release
+
+The first release uses GitHub Releases and the website installer redirect.
+npm and Homebrew publishing can follow separately.
+
+1. Verify PR checks and acceptance results, then merge the release PR into `main`.
+2. From the merged `main`, confirm Cargo.toml and packaging/dist.toml both use
+   `0.0.3`, then create and push the version tag:
+
+   ```sh
+   git switch main
+   git pull --ff-only origin main
+   git tag -a v0.0.3 -m "Release Cerul 0.0.3"
+   git push origin v0.0.3
+   ```
+
+3. Wait for the Release workflow to publish both platform archives, the shell
+   installer, checksums, and corresponding media sources to GitHub Releases.
+4. Configure `https://cerul.ai/install.sh` to redirect temporarily (HTTP 302 or 307)
+   to `https://github.com/cerul-ai/cerul/releases/download/v0.0.3/cerul-installer.sh`.
+   Use short caching so the target can be updated for future releases. Verify
+   that following the redirect returns the shell script, not an HTML page.
+5. On each supported platform, install from the public README command and verify
+   `cerul --version`, video indexing, search, and clip export.
+6. Confirm the README installation command works from a clean terminal.
+
+These are maintainer instructions; creating the tag publishes the release.
+No server deployment is needed for the CLI.
+
 ## Build configuration
 
 `dist-workspace.toml` pins cargo-dist 0.32.0 and defines exactly two targets:

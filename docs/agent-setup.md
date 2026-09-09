@@ -7,60 +7,37 @@ instructions are separate from this installation workflow.
 ## Copy this prompt
 
 ```text
-Help me install Cerul from https://github.com/cerul-ai/cerul and use it to
-search a short local video. Read docs/agent-setup.md and docs/installation.md
-from the checkout I am using, and follow their supported installation path.
-Prefer a verified new CLI release bundle; otherwise build the complete source
-distribution. Check my OS and existing dependencies; install only what is missing, within
-my permissions. Build and verify the CLI, then ask me for a video if I have
-not selected one. Help me configure model credentials without displaying
-or asking me to paste their values into chat. Explain which inputs are sent
-to model endpoints before the first processing run. Run one indexing and
-search example, then teach me how to repeat it. Report actual results and
-anything incomplete. Respond in my language.
+Install Cerul by following https://github.com/cerul-ai/cerul/blob/main/docs/agent-setup.md.
+Help me configure my Gemini API key securely, search a local video, and save a
+matching clip. Teach me the commands in my language.
 ```
 
 ## Agent workflow
 
-### 1. Identify the correct source
+### 1. Check the platform
 
-Use an existing user-selected checkout when supplied; record its commit and
-preserve local changes. Otherwise clone `https://github.com/cerul-ai/cerul`
-into an unused directory. Read its README and installation guide. Before
-building, confirm the root Cargo package exposes the new video core commands.
-If the default branch still contains the old client, ask for the intended
-branch/ref. Do not silently pick an arbitrary PR, reset a checkout, or install
-an older same-named package.
+Use `uname -s` and `uname -m`. Supported bundles are macOS arm64 and Linux
+x86_64 (Ubuntu 24.04 or newer). Check whether `cerul` is already installed.
+Preserve existing configuration and user files.
 
-The verified path in this version is a source build. Generated installer
-configuration is not proof of a published package. Do not invent a Homebrew
-tap, use `npm install -g cerul`, or execute `cerul.ai/install.sh` unless the
-checked-out release documentation and actual matching release establish that
-route. A historical ffmpeg release is not a Cerul CLI release.
+### 2. Install the release bundle
 
-### 2. Check and install dependencies
+Follow [installation](installation.md) and run:
 
-Use `uname -s` and `uname -m`. Support macOS arm64 and Linux x86_64; Ubuntu 24.04
-is the tested Linux environment. Follow the installation guide for Rust,
-the compiler toolchain, Protobuf, and pkg-config for a source build. Release
-bundles already include FFmpeg and ffprobe. Check existing dependencies first;
-install only missing build tools. Do not install system FFmpeg for a bundle.
+```sh
+curl -fsSL https://cerul.ai/install.sh | sh
+```
 
-Use the user's package manager and the host's normal permission flow. If a
-system installer needs interaction, explain the specific remaining step and
-resume afterward. Do not install Python, CUDA, Ollama, optional perception
-services, or unrelated model servers for the default Gemini workflow.
+The bundle includes media tools and OCR models. Do not install Rust, Python,
+Ollama, or system FFmpeg for this workflow. If the download fails, report the
+error; do not silently switch to a source build or a different package.
+Source builds are for users who explicitly choose them.
 
-### 3. Build and establish an offline baseline
+### 3. Verify installation
 
-Run `bash scripts/build-distribution.sh` in the checkout. Wait for its actual exit
-status; compilation output alone is not a successful build. Use the absolute
-path to `target/bundle/cerul` until PATH is verified in the relevant shell.
-Report where it is installed and whether the PATH setup is temporary.
-
-Run `cerul --version`, `cerul --help`, and `cerul --json status`. Do not claim
-model or media validation from these commands. Do not use `status --providers`
-for initial verification because it probes optional endpoints too.
+Follow the installer's PATH instructions. Run `cerul --version`, `cerul --help`,
+and `cerul --json status`. Report the executable path and version. Do not use
+`status --providers`: optional providers are unnecessary for the first video.
 
 ### 4. Configure credentials and choose a video
 

@@ -2,25 +2,34 @@
 
 [English](../README.md) · [简体中文](../README.zh-CN.md) · [繁體中文](../README.zh-TW.md) · [Agent instructions](agent-setup.md)
 
-The current CLI is available from source. Published releases of the older
-platform client are not installers for this CLI. Do not use an old release or
-an unverified npm package as a shortcut. Shell, npm, and Homebrew installation
-artifacts are configured, but their public distribution is not yet verified.
+## Install
 
-## Release bundle (when v0.0.3 is published)
+Supports macOS Apple Silicon and Linux x86_64 (Ubuntu 24.04 or newer).
+The bundle includes FFmpeg, ffprobe, and OCR models.
 
-Use the versioned shell installer linked in the README. It installs `cerul`,
-`cerul-ffmpeg`, and `cerul-ffprobe` together. Keep them together when relocating
-an installation. OCR models are embedded; no separate model download is needed.
-Rust, Protobuf, Python, and a system FFmpeg are not required to run a bundle.
+```sh
+curl -fsSL https://cerul.ai/install.sh | sh
+```
 
-Supported platforms: macOS Apple Silicon and Linux x86_64 on Ubuntu 24.04 or
-newer. Windows, Intel macOS, and Alpine/musl are not supported release targets.
+Follow the installer's PATH instructions or open a new terminal, then run:
 
-Until this release exists, use the complete source build below. Do not use the
-old `v0.0.03` client: its name is similar but it is a different implementation.
+```sh
+cerul --version
+cerul index ./demo.mp4
+cerul search "A person puts a cup on the table" --save ./clips
+```
 
-## Check before installing
+On first use, enter your [Gemini API key](https://aistudio.google.com/apikey)
+when prompted. Model processing sends inputs to Gemini and may incur API charges.
+
+You can also download an archive from [GitHub Releases](https://github.com/cerul-ai/cerul/releases/tag/v0.0.3).
+Keep `cerul`, `cerul-ffmpeg`, and `cerul-ffprobe` together when moving them.
+
+## Build from source (developers)
+
+The following build tools are only needed when compiling Cerul yourself.
+
+### Check build dependencies
 
 Check existing tools first. A missing command means that tool needs installation;
 you do not need to reinstall tools that already meet these requirements.
@@ -47,7 +56,7 @@ The current media pipeline uses the `libx264` encoder. A custom ffmpeg build
 must provide it as well as the input decoders needed for your media. Check with
 `ffmpeg -hide_banner -encoders` if using a nonstandard build.
 
-## Install missing build dependencies
+### Install missing build dependencies
 
 On macOS, use [Homebrew](https://brew.sh) if it is already installed:
 
@@ -69,7 +78,7 @@ Install a stable Rust toolchain using the instructions at [rustup.rs](https://ru
 if Rust is missing. Open a new terminal after installation so Cargo is on PATH.
 Do not run Cargo or Cerul with sudo.
 
-## Build and verify
+### Build and verify
 
 ```sh
 git clone https://github.com/cerul-ai/cerul.git

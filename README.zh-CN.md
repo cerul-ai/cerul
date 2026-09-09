@@ -34,68 +34,39 @@ Cerul 将本地视频变成可搜索的资料库。描述一个画面，查找�
 
 ## 快速开始
 
-支持 **macOS Apple Silicon** 和 **Linux x86_64（Ubuntu 24.04 或更新）**。完整发行包包含 Cerul、FFmpeg、ffprobe 和 OCR 模型，无需另外安装 Python、Ollama 或 FFmpeg。
+Cerul 是一个搜索视频、导出片段的命令行工具。安装包已包含所需的媒体工具和 OCR 模型。
 
-> 新 CLI 的首个完整发行包尚待发布，旧 release 是不同的客户端。现在试用请使用下方源码步骤，或让 agent 按安装指南操作。下面的一行安装命令将在 `v0.0.3` 发布后可用。
+支持 **macOS Apple Silicon** 和 **Linux x86_64（Ubuntu 24.04 或更新）**。
 
-```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/cerul-ai/cerul/releases/download/v0.0.3/cerul-installer.sh | sh
-```
-
-<details>
-<summary>发布前，从当前源码构建</summary>
-
-安装 [Rust](https://rustup.rs)、C 编译器、Protobuf 和 pkg-config。macOS 使用 `brew install protobuf pkgconf`；Ubuntu 依赖见[安装指南](docs/installation.md)。
+### 1. 安装
 
 ```sh
-git clone https://github.com/cerul-ai/cerul.git
-cd cerul
-bash scripts/build-distribution.sh
-export PATH="$PWD/target/bundle:$PATH"
-cerul --version
+curl -fsSL https://cerul.ai/install.sh | sh
 ```
 
-试用尚未合并的 PR 时，切换到作者提供的分支。此步骤也会从固定源码编译媒体工具，第一次构建比下载安装包更慢。
-
-</details>
-
-### 1. 处理一个视频
+### 2. 添加视频
 
 ```sh
 cerul index ./demo.mp4
 ```
 
-首次在交互终端运行时，Cerul 会引导输入 [Gemini API key](https://aistudio.google.com/apikey)，验证后私密保存在本机。输入不会显示。也可以自行设置 `GEMINI_API_KEY`，环境变量优先。
+第一次使用时，按提示输入 [Gemini API key](https://aistudio.google.com/apikey)，之后无需重复输入。模型处理会将数据发送给 Gemini，并可能产生 API 费用。
 
-OCR 在本地运行；视频嵌入、转录和语义标注会向配置的模型服务发送输入，并可能产生服务商费用。无需 Cerul 账号，也没有遥测数据收集。
-
-### 2. 搜索一个画面
+### 3. 搜索并保存片段
 
 ```sh
 cerul search "有人把杯子放到桌上"
-cerul search --text "connection refused"
-cerul search --image ./reference.png
-```
-
-### 3. 导出匹配片段
-
-```sh
 cerul search "有人把杯子放到桌上" --save ./clips
 ```
 
-建议先用短视频尝试。[完整教程](examples/video-search.md)包含更多例子、进度检查和恢复方法。
+[更多使用示例 →](examples/video-search.md)
 
 ## 让 agent 帮你安装
 
 把下面这段话发给能操作终端的 agent：
 
 ```text
-帮我安装 https://github.com/cerul-ai/cerul 的 Cerul。先阅读所选版本的
-docs/agent-setup.md 和 docs/installation.md。优先使用经过验证的完整发行包；
-如果新 CLI 尚无发行包，就从当前源码构建，包括随包媒体工具。验证安装，
-引导我配置 API key，不显示或记录密钥。询问我要尝试哪个本地视频，说明模型
-数据传输后，处理一个短视频并搜索，然后用我的语言教我如何重复操作。
-报告真实结果，包括未完成的处理步骤。
+按 https://github.com/cerul-ai/cerul/blob/main/docs/agent-setup.md 帮我安装 Cerul，安全配置 Gemini API key，搜索一个本地视频并保存匹配片段，然后教我怎么使用。
 ```
 
 [Agent 安装指南 →](docs/agent-setup.md)
