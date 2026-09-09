@@ -14,11 +14,13 @@ Run `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, a
 OCR, model adapters, or dataset writers. Never commit credentials or user data.
 Fixtures and embedded models require clear provenance and compatible licenses.
 
-Live default-provider checks run on this repository's `main` branch, never on
-pull requests or fork code. Maintainers configure the `GEMINI_API_KEY` Actions secret for this workflow;
-a missing credential fails the live check rather than silently passing.
-To run the same checks locally, configure the key in your environment and run
-`cargo run --locked --example verify_gemini`. This sends only synthetic probe
+Core CI runs offline checks on Linux and macOS, including generated-schema and
+source-package checks. Linux also runs official LeRobot loader round-trips.
+Live provider checks are a maintainer release check, run locally with your own
+`GEMINI_API_KEY` using `cargo run --locked --example verify_gemini`.
+The release workflow does not require a model credential. See the
+[release checklist](docs/releases.md) for the full publication process.
+The local provider check sends only synthetic probe
 inputs: text, a small image, a two-second video, and silence. It checks endpoint
 capabilities and response shapes, not retrieval quality or speech timestamp
 accuracy; the remaining DESIGN.md acceptance checks are still required.

@@ -23,8 +23,8 @@ Public design reference for the local video processing core.
 | Language | Annotation text fields are English. |
 | LeRobot | Read v3.0 and v3.1 and produce sidecars. Writeback accepts only an existing compatible v3.1 dataset and writes subtask language entries. v3.0 writeback is unsupported; Cerul does not upgrade formats. Events and flags remain in sidecars. |
 | Platforms | M1: macOS arm64 and Linux x86_64. Windows is M2. |
-| Versions | Increment `v0.0.x` without alpha/beta suffixes. The old npm package reached 0.0.2; the first rewritten release is **v0.0.3**, with the same version on crates.io. Milestones M1/M2/M3 are not fixed version numbers. |
-| Distribution | cargo-dist shell installer, Homebrew formula, and npm `cerul` wrapper. |
+| Versions | Increment `v0.0.x` without alpha/beta suffixes. Cargo.toml, packaging/dist.toml, and release tags must agree. Milestones M1/M2/M3 are not fixed version numbers. |
+| Distribution | GitHub Releases with a cargo-dist shell installer. Homebrew formula and npm wrapper artifacts are generated; registry/tap publication is separate. See [release artifacts](docs/releases.md). |
 | Telemetry | None. |
 | Scope | M1 is a complete video retrieval and semantic annotation CLI requiring only third-party model credentials. `status --providers` probes only the endpoints M1 uses; the later-milestone perception endpoint is contacted solely when configured explicitly. Pose, depth, and segmentation depend on later perception services and must not be advertised as available. |
 
@@ -126,10 +126,10 @@ Each subtype is a module: frames → timestamped contact sheet → schema-constr
 | `--count` | Filters only: return exact-label record and episode counts. No natural-language probe counting. |
 | `--save DIR`, `--pad 2s` | Save matched MP4 clips. |
 | `--preview`, `--no-preview` | Cache one still frame per hit under workspace `cache/previews/` and expose it as `preview`. Stills use input seeking, so their cost does not grow with recording length. Default: on when the terminal can draw images. |
-
-Query embeddings are cached under workspace `cache/queries/` keyed by embedding space and query, so repeating or refining a search needs no further model call. Both caches are disposable and freed by `remove --cache`.
 | `--rerank` | M2: vision reranking of the first 20 candidates. |
 | `--text` | Substring match over transcript and screen text without vectors. |
+
+Query embeddings are cached under workspace `cache/queries/` keyed by embedding space and query, so repeating a query in the same space needs no further model call. Both caches are disposable and freed by `remove --cache`.
 
 Results: `hits[]` containing episode, stream, start_us, end_us, optional frame_range, score, matched (video/speech/screen), excerpt, and annotations.
 
@@ -137,7 +137,7 @@ Results: `hits[]` containing episode, stream, start_us, end_us, optional frame_r
 
 Return a workspace overview or an episode's annotation inventory. Running `cerul` without a command is equivalent to status.
 
-Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes all four endpoints, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not imply that M1 implements grounding/world.
+Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes embedding, vision, and transcription, plus perception only when explicitly configured, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not imply that M1 implements grounding/world.
 
 ## 4. Configuration and models
 
@@ -313,15 +313,15 @@ One root Cargo.toml defines lib and bin. Modules cover configuration, providers,
 
 Dependencies include clap, tokio, reqwest, serde, serde_json, schemars, lancedb 0.38, arrow, parquet, image, sha2, indicatif, tracing, tract-onnx. axum/utoipa and optional rerun belong to the later serving/visualization milestones. Invoke ffmpeg as a subprocess.
 
-The initial macOS arm64 release binary measured approximately 228 MiB uncompressed on 2026-09-08. Final archive size and CPU throughput require release acceptance; the original 60 MB estimate is not a promise.
+Measure binary and archive sizes and CPU throughput on both targets during release acceptance.
 
-Every PR runs offline tests and two-platform builds. Protected-branch validation includes small real Gemini calls; never inject model keys into fork PRs.
+Every PR runs offline tests and two-platform builds. Maintainers run small real Gemini checks locally with their own credentials as part of the [release checklist](docs/releases.md). CI does not require a model key.
 
 ## 9. Acceptance
 
 | Milestone | Scope |
 | --- | --- |
-| **M1**, first release v0.0.3 | Index (transcript, OCR, embedding, still detection); search (vectors, images, prefilters, filter counts, saving clips, exact text); status; removal and disk reclamation; semantic annotation; LeRobot reading and subtask writeback; macOS/Linux distribution; replace the old npm cerul wrapper. |
+| **M1** | Index (transcript, OCR, embedding, still detection); search (vectors, images, prefilters, filter counts, saving clips, exact text); status; removal and disk reclamation; semantic annotation; LeRobot reading and subtask writeback; macOS/Linux distribution. |
 
 Acceptance requirements:
 

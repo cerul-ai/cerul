@@ -4,21 +4,22 @@ Building or reviewing a branch never publishes a release.
 Package publishing is a separate release operation after M1 acceptance.
 Existing tags and `ffmpeg-vendor-*` assets must be preserved for downstream compatibility.
 
-## First public release
+## Release checklist
 
-The first release uses GitHub Releases and the website installer redirect.
-npm and Homebrew publishing can follow separately.
+Public installation uses GitHub Releases and the permanent website installer
+redirect. npm and Homebrew publication are separate from generating their artifacts.
 
 1. Verify PR checks and acceptance results, then merge the release PR into `main`.
 2. From the merged `main`, confirm Cargo.toml and packaging/dist.toml agree on
    the version being released, then create and push the matching tag. The
-   commands below use `0.0.5`; substitute the version in the manifests.
+   commands below use `X.Y.Z` as a placeholder; replace it with the version in
+   both manifests. Existing release tags must not be moved or reused.
 
    ```sh
    git switch main
    git pull --ff-only origin main
-   git tag -a v0.0.5 -m "Release Cerul 0.0.5"
-   git push origin v0.0.5
+   git tag -a vX.Y.Z -m "Release Cerul X.Y.Z"
+   git push origin vX.Y.Z
    ```
 
 3. Wait for the Release workflow to publish both platform archives, the shell
@@ -32,11 +33,13 @@ npm and Homebrew publishing can follow separately.
    credential is stored in the repository:
 
    ```sh
-   GEMINI_API_KEY=... cargo run --locked --example verify_gemini
+   cargo run --locked --example verify_gemini
    ```
 
-   The CLI's defaults name specific Gemini models, so this is what catches an
-   upstream model being retired or changed before users do.
+   Set `GEMINI_API_KEY` securely in your local environment before running this
+   command. The CLI's defaults name specific Gemini models, so this catches an
+   upstream model being retired or changed before users do. CI does not run
+   this check or require a model credential.
 6. On each supported platform, install from the public README command and verify
    `cerul --version`, video indexing, search, and clip export.
 7. Confirm the README installation command works from a clean terminal.
@@ -90,7 +93,7 @@ written under `target/distrib/`, including:
 - A source archive and aggregate checksums.
 
 The source archive uses committed Git content. Regenerate it after committing;
-an archive produced while this rewrite is uncommitted is not the release source.
+uncommitted changes are not included in the release source.
 Do not hand-edit generated release workflows or installers. Change the dist
 configuration and regenerate them.
 
@@ -105,13 +108,13 @@ cargo package --list --locked
 cargo package --locked
 ```
 
-The initial cleaned package measured 25.1 MiB compressed (93 files). Embedded
-OCR weights account for most of its size. This exceeds the default 10 MB limit
-documented in the [Cargo publishing guide](https://doc.rust-lang.org/cargo/reference/publishing.html).
-Before publishing to crates.io, confirm package ownership and an upload limit
-that accepts the final archive. No size exception has been verified. Keep the
-embedded OCR runtime contract; do not silently omit the weights or replace
-them with a first-run download to make the upload fit.
+Embedded OCR weights account for much of the package size. Measure the final
+`.crate` archive and confirm package ownership and the registry's upload limit
+before publishing to crates.io; see the
+[Cargo publishing guide](https://doc.rust-lang.org/cargo/reference/publishing.html).
+Registry publication is not configured by the release workflow. Keep the
+embedded OCR runtime contract; do not omit the weights or replace them with
+a first-run download to make the upload fit.
 
 ## Installation acceptance
 
@@ -134,13 +137,11 @@ separately only as part of an authorized release.
 ## Publishing boundary
 
 The generated GitHub workflow plans artifacts on pull requests and builds and
-hosts releases for matching version tags. This branch does not push a version
-tag. npm and Homebrew artifacts are generated, but registry/tap publishing is
-not configured: no Homebrew tap or registry credential is assumed.
+hosts releases for matching version tags. The permanent website redirect tracks
+the latest published release; it needs no per-release website change.
 
-Before an authorized publication, finish all DESIGN.md M1 acceptance gates,
-verify the committed source archive, confirm npm package ownership and the
-chosen Homebrew distribution destination, and configure the corresponding
-publisher. The desired `https://cerul.ai/install.sh` entry point also needs to
-be connected to the verified generated installer in the product website. Do
-not advertise these installation endpoints as live before they are verified.
+npm and Homebrew artifacts are generated, but registry/tap publishing is not
+configured. Before enabling those channels, confirm npm package ownership and
+the Homebrew distribution destination, configure their publishers, and verify
+installation through each public channel. A downloadable wrapper or formula
+alone does not establish registry/tap availability.

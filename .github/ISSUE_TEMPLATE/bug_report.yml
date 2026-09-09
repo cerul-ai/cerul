@@ -17,9 +17,9 @@ body:
       label: Steps to Reproduce
       description: List the minimal steps needed to reproduce the issue.
       placeholder: |
-        1. Go to ...
-        2. Call ...
-        3. Observe ...
+        1. Run `cerul ...` with these options: ...
+        2. Use this input format or a small reproducible fixture: ...
+        3. Observe this output or exit code: ...
     validations:
       required: true
   - type: textarea
@@ -35,12 +35,19 @@ body:
     validations:
       required: true
   - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include `cerul --version`, operating system and CPU architecture, and installation method. For provider issues, include the provider kind and model name without credentials.
+    validations:
+      required: true
+  - type: textarea
     id: scope
     attributes:
       label: Affected Area
-      description: Which directory, module, route, or worker is affected?
+      description: Which command or core module is affected (for example indexing, search, OCR, model endpoints, or LeRobot writeback)?
   - type: textarea
     id: notes
     attributes:
       label: Extra Context
-      description: Logs, screenshots, payloads, or anything else helpful.
+      description: Relevant logs or output, with API keys, private paths, and user media removed.

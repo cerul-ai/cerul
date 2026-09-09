@@ -27,4 +27,4 @@ body:
     id: scope
     attributes:
       label: Scope Notes
-      description: Mention affected areas such as `apps/cli`, `integrations/mcp`, or `docs`.
+      description: Mention affected commands or areas such as `src/index`, `src/search`, `src/annotate`, `src/lerobot`, or `docs`. This repository owns the video processing core and CLI; product UI and hosted services are outside its scope.

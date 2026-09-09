@@ -22,7 +22,7 @@ cerul search "A person puts a cup on the table" --save ./clips
 On first use, enter your [Gemini API key](https://aistudio.google.com/apikey)
 when prompted. Model processing sends inputs to Gemini and may incur API charges.
 
-You can also download an archive from [GitHub Releases](https://github.com/cerul-ai/cerul/releases/tag/v0.0.5).
+You can also download an archive from [GitHub Releases](https://github.com/cerul-ai/cerul/releases/latest).
 Keep `cerul`, `cerul-ffmpeg`, and `cerul-ffprobe` together when moving them.
 
 ## Build from source (developers)
@@ -89,11 +89,9 @@ cerul --version
 cerul --json status
 ```
 
-These commands assume the checkout contains the root `Cargo.toml` and the
-`index`, `search`, and `annotate` CLI. If you are testing an unmerged change,
-use the branch or commit supplied by its author. Do not substitute the retired
-`apps/cli` client. The PATH change above applies to this shell; save it in your
-shell configuration only if you want a persistent installation at this location.
+To test an unmerged change, check out its branch or commit before building.
+The PATH change above applies to this shell; save it in your shell configuration
+only if you want a persistent installation at this location.
 
 `status` does not call a provider. It verifies that the CLI starts; it does not
 prove media processing or model connectivity. `--dry-run index` previews the
@@ -145,7 +143,8 @@ semantic-search setup. Configure a key and rerun the same command to finish.
 
 | Symptom | Next step |
 | --- | --- |
-| `ffmpeg` or `ffprobe` missing/too old | Install or update the media package, then verify both commands in the same terminal |
+| An older Cerul version runs after installation | Run `type -a cerul` to find competing installations, then put the new installer's directory first on PATH and open a new terminal |
+| `ffmpeg` or `ffprobe` missing/too old | Reinstall the complete Cerul bundle and keep all three executables together; for custom tools, check the overrides below |
 | Unknown encoder `libx264` | Use a build that includes this encoder |
 | Missing model credential | Set the endpoint's configured key environment variable without exposing the value |
 | Provider quota or rate limit | Lower `--jobs`, set an account-appropriate `--rpm`, and resume after quota is available |
