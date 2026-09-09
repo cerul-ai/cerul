@@ -22,8 +22,10 @@ Store only the key's environment variable name in configuration, never the key.
 
 The CLI can save a validated default Gemini key in `~/.cerul/credentials.json`
 (mode 0600). Stored keys are scoped to endpoint kind, service URL, and key
-variable name. Environment values override saved keys. The first interactive
-processing command offers hidden setup when needed; JSON, quiet, yes, dry-run,
+variable name. Environment values override saved keys. `cerul auth` shows where
+the key would come from, `cerul auth set` enters and verifies one, and
+`cerul auth remove` deletes the saved copy. The first interactive processing
+command offers the same hidden setup when needed; JSON, quiet, yes, dry-run,
 and non-terminal calls never prompt. See [installation](installation.md) for
 storage, removal, and agent setup. Library callers do not read this file.
 
@@ -65,9 +67,13 @@ Ordinary `status`, exact text search, annotation-only filters, index rebuilds,
 and cleanup do not probe providers. Commands probe only endpoints needed for
 pending work. Successful probes are cached for seven days.
 
-`cerul status --providers` explicitly probes all four configured endpoints,
-including the future perception endpoint. It may return a partial result when
-one endpoint is unavailable even if the endpoints needed for M1 are usable.
+`cerul status --providers` explicitly probes the endpoints M1 uses: embedding,
+vision, and transcription. The perception endpoint belongs to a later milestone
+and its default address is not a running service, so it is probed only after you
+point it somewhere yourself or set its key variable; until then its capability
+stays null and no request leaves your machine for it. The command may return a
+partial result when one endpoint is unavailable even if the endpoints needed for
+M1 are usable.
 Use `--recompute` to refresh successful probes and `--dry-run` to avoid probes.
 Capability values are true for supported, false for explicitly unsupported,
 and null for unknown (including missing credentials and network errors).

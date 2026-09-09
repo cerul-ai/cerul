@@ -35,6 +35,8 @@ pub struct Options {
     pub threshold: Option<f32>,
     pub count: bool,
     pub save: Option<PathBuf>,
+    /// Extract one still frame per hit into the workspace cache.
+    pub preview: bool,
     pub pad_us: i64,
     pub dry_run: bool,
     pub request_notice: Option<RequestNotice>,
@@ -51,6 +53,7 @@ impl Default for Options {
             threshold: None,
             count: false,
             save: None,
+            preview: false,
             pad_us: 2_000_000,
             dry_run: false,
             request_notice: None,
@@ -129,6 +132,12 @@ pub struct Hit {
     pub excerpt: String,
     pub annotations: Vec<Row>,
     pub clip: Option<PathBuf>,
+    /// Source media file for the hit's stream, when it is a video stream.
+    #[serde(default)]
+    pub media: Option<PathBuf>,
+    /// Still frame from the start of the hit, for hosts that show thumbnails.
+    #[serde(default)]
+    pub preview: Option<PathBuf>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Counts {
@@ -187,7 +196,49 @@ fn hit(episode: &str, stream: &str, range: TimeRange, rows: &[Row]) -> Hit {
         excerpt: String::new(),
         annotations: annotations(rows, episode, stream, range),
         clip: None,
+        media: None,
+        preview: None,
     }
+}
+/// Ranked windows stay separate moments unless they cover mostly the same time;
+/// the small overlap between neighbouring index windows must not chain a whole
+/// video into one hit.
+fn mostly_same(previous: &Hit, next: &Hit) -> bool {
+    let overlap = previous.end_us.min(next.end_us) - next.start_us;
+    let shortest = (previous.end_us - previous.start_us).min(next.end_us - next.start_us);
+    shortest <= 0 || overlap * 2 >= shortest
+}
+/// One still frame at the start of a hit, cached under the workspace so repeated
+/// searches reuse it and `clean --cache` removes it.
+fn preview(
+    found: &Hit,
+    episodes: &BTreeMap<String, Episode>,
+    directory: &Path,
+) -> Result<Option<PathBuf>> {
+    let episode = episodes.get(&found.episode).context("unknown episode")?;
+    let Stream::Video { path, .. } = episode.video(&found.stream)? else {
+        return Ok(None);
+    };
+    let source = episode.source.root.join(path);
+    let key = storage::cache_key(&(&found.episode, &found.stream, found.start_us, "preview"))?;
+    let destination = directory.join(format!("{key}.png"));
+    if destination.is_file() {
+        return Ok(Some(destination));
+    }
+    let coverage = episode
+        .video_coverage(&found.stream)?
+        .context("hit stream has no episode coverage")?;
+    let start = found.start_us.clamp(coverage.start_us, coverage.end_us);
+    fs::create_dir_all(directory)?;
+    // PNG at thumbnail width keeps inline terminal rendering fast and is readable
+    // by every terminal graphics protocol.
+    media::extract::still(
+        &source,
+        episode.episode_to_source(&found.stream, start)?,
+        &destination,
+        480,
+    )?;
+    Ok(Some(destination))
 }
 fn merge_hits(mut hits: Vec<Hit>, vector: bool) -> Vec<Hit> {
     hits.sort_by(|a, b| {
@@ -200,6 +251,7 @@ fn merge_hits(mut hits: Vec<Hit>, vector: bool) -> Vec<Hit> {
             && previous.episode == next.episode
             && previous.stream == next.stream
             && next.start_us <= previous.end_us
+            && (!vector || mostly_same(previous, &next))
         {
             previous.end_us = previous.end_us.max(next.end_us);
             if next.score > previous.score {
@@ -266,7 +318,7 @@ async fn run_inner(
             dry_run: true,
         });
     }
-    if options.save.is_some() {
+    if options.save.is_some() || options.preview {
         media::check_dependencies().map_err(|error| unavailable(error.to_string()))?;
     }
     let vector = !options.text && (options.query.is_some() || options.image.is_some());
@@ -413,7 +465,7 @@ async fn run_inner(
                     Provider::from_env(config.embedding.clone(), 1, None, cancel.clone())?;
                 provider.request_notice = options.request_notice.clone();
                 probes::check(&provider, probes::Capability::Embedding, workspace, false).await?;
-                let input = if let Some(path) = &options.image {
+                let (identity, input) = if let Some(path) = &options.image {
                     let bytes = fs::read(path)?;
                     let mime = match image::guess_format(&bytes)? {
                         image::ImageFormat::Png => "image/png",
@@ -421,11 +473,36 @@ async fn run_inner(
                         image::ImageFormat::WebP => "image/webp",
                         _ => return Err(unavailable("query image must be PNG, JPEG, or WebP")),
                     };
-                    Input::Image(bytes, mime.into())
+                    use sha2::Digest;
+                    let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+                    (digest, Input::Image(bytes, mime.into()))
                 } else {
-                    Input::Text(options.query.clone().unwrap())
+                    let text = options.query.clone().unwrap();
+                    (text.clone(), Input::Text(text))
                 };
-                let query = provider.embed(input, true).await?;
+                // The same question in the same space always embeds the same way,
+                // so repeated and refined searches need no further model calls.
+                let cached = workspace.join("cache").join("queries").join(format!(
+                    "{}.json",
+                    storage::cache_key(&(&space, &identity))?
+                ));
+                let query = match fs::read(&cached)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<Vec<f32>>(&bytes).ok())
+                    .filter(|vector| vector.len() == dims)
+                {
+                    Some(vector) => vector,
+                    None => {
+                        let vector = provider.embed(input, true).await?;
+                        // A cache write must never fail the search that produced it.
+                        if fs::create_dir_all(cached.parent().expect("cache path has a parent"))
+                            .is_ok()
+                        {
+                            let _ = storage::write_json(&cached, &vector);
+                        }
+                        vector
+                    }
+                };
                 let total = index.count().await?;
                 let mut budget = options.limit.saturating_mul(3).max(32).min(total);
                 loop {
@@ -558,6 +635,24 @@ async fn run_inner(
     }
     let mut hits = merge_hits(hits, vector);
     hits.truncate(options.limit);
+    for found in &mut hits {
+        if let Some(Stream::Video { path, .. }) = episodes
+            .get(&found.episode)
+            .and_then(|episode| episode.video(&found.stream).ok())
+        {
+            found.media = Some(episodes[&found.episode].source.root.join(path));
+        }
+    }
+    if options.preview {
+        let directory = workspace.join("cache").join("previews");
+        for found in &mut hits {
+            cancelled(&cancel)?;
+            // A missing preview must never fail a search; it is decoration.
+            if let Ok(Some(frame)) = preview(found, &episodes, &directory) {
+                found.preview = Some(frame);
+            }
+        }
+    }
     if let Some(directory) = &options.save {
         for found in &mut hits {
             cancelled(&cancel)?;

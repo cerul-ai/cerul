@@ -97,7 +97,7 @@ fn offline_index_exits_partial_with_ndjson_events_and_endpoint_notice_once() {
             .iter()
             .filter(|e| e["msg"]
                 .as_str()
-                .is_some_and(|s| s.starts_with("Sending model requests")))
+                .is_some_and(|s| s.starts_with("Using Gemini")))
             .count(),
         1
     );
@@ -109,7 +109,7 @@ fn offline_index_exits_partial_with_ndjson_events_and_endpoint_notice_once() {
 }
 
 #[test]
-fn clean_dry_run_and_explicit_execution_keep_authoritative_sidecars() {
+fn removal_dry_run_and_explicit_execution_keep_authoritative_sidecars() {
     let dir = tempfile::tempdir().unwrap();
     let cache = dir.path().join(".cerul/cache");
     let sidecar = dir.path().join(".cerul/sidecars/keep");
@@ -117,18 +117,20 @@ fn clean_dry_run_and_explicit_execution_keep_authoritative_sidecars() {
     std::fs::create_dir_all(&sidecar).unwrap();
     std::fs::write(cache.join("proxy.mp4"), b"cache").unwrap();
     std::fs::write(sidecar.join("transcript.jsonl"), b"annotation").unwrap();
-    let output = cli(dir.path(), &["--json", "clean", "--cache", "--dry-run"]);
+    let output = cli(dir.path(), &["--json", "remove", "--cache", "--dry-run"]);
     assert!(output.status.success());
     assert_eq!(final_json(&output)["items"][0]["action"], "remove_cache");
     assert!(cache.exists());
-    let output = cli(dir.path(), &["--json", "clean", "--cache"]);
+    let output = cli(dir.path(), &["--json", "remove", "--cache"]);
     assert!(output.status.success());
     assert_eq!(final_json(&output)["dry_run"], false);
     assert!(!cache.exists());
     assert!(sidecar.join("transcript.jsonl").exists());
-    let rejected = cli(dir.path(), &["--json", "clean", "--sidecars", "."]);
-    assert_eq!(rejected.status.code(), Some(2));
-    assert!(sidecar.exists());
+    // Sidecars the registry does not know about are never touched, and asking to
+    // forget a path with no registered episodes is a no-op rather than a failure.
+    let untouched = cli(dir.path(), &["--json", "remove", ".", "--yes"]);
+    assert!(untouched.status.success());
+    assert!(sidecar.join("transcript.jsonl").exists());
 }
 
 #[test]
@@ -231,6 +233,9 @@ fn ctrl_c_stops_media_subprocess_and_exits_cancelled() {
         time::{Duration, Instant},
     };
     let dir = tempfile::tempdir().unwrap();
+    // The stub ffprobe below stands in for real inspection, so the input only
+    // has to exist for the CLI to reach it.
+    fs::write(dir.path().join("sample.mp4"), b"").unwrap();
     let bin = dir.path().join("bin");
     fs::create_dir(&bin).unwrap();
     let marker = dir.path().join("media-started");
@@ -421,4 +426,175 @@ fn missing_key_keeps_local_processing_and_environment_bypasses_corrupt_saved_key
         .unwrap();
     assert_eq!(output.status.code(), Some(6), "{:?}", output);
     assert!(!String::from_utf8_lossy(&output.stdout).contains("credential file"));
+}
+
+#[test]
+fn human_mode_renders_text_and_json_mode_stays_machine_readable() {
+    let dir = tempfile::tempdir().unwrap();
+    // A bare invocation is the start page, not a JSON dump.
+    let home = cli(dir.path(), &[]);
+    assert!(home.status.success());
+    let text = String::from_utf8_lossy(&home.stdout);
+    assert!(text.starts_with("cerul 0."), "{text}");
+    assert!(text.contains("Get started"), "{text}");
+    assert!(text.contains("cerul auth set"), "{text}");
+    assert!(text.contains("cerul index ./video.mp4"), "{text}");
+    assert!(text.contains("cerul auth set"), "{text}");
+    assert!(serde_json::from_str::<Value>(&text).is_err());
+    assert!(home.stderr.is_empty());
+
+    let status = cli(dir.path(), &["status"]);
+    assert!(status.status.success());
+    let text = String::from_utf8_lossy(&status.stdout);
+    assert!(text.contains("Videos (0)"), "{text}");
+    assert!(text.contains("key not set"), "{text}");
+    assert!(text.contains("not checked"), "{text}");
+
+    let auth = cli(dir.path(), &["auth"]);
+    assert!(auth.status.success());
+    assert!(String::from_utf8_lossy(&auth.stdout).contains("no key configured"));
+    let auth_json = cli(dir.path(), &["--json", "auth"]);
+    let value = final_json(&auth_json);
+    assert_eq!(value["saved"], false);
+    assert_eq!(value["env"], "GEMINI_API_KEY");
+    // Saving a key needs a person at a terminal; scripts get a clear failure.
+    let set = cli(dir.path(), &["auth", "set"]);
+    assert_eq!(set.status.code(), Some(2));
+    assert!(set.stdout.is_empty());
+    let text = String::from_utf8_lossy(&set.stderr);
+    assert!(text.starts_with("error:"), "{text}");
+    assert!(text.contains("GEMINI_API_KEY"), "{text}");
+    let removed = cli(dir.path(), &["auth", "remove"]);
+    assert!(removed.status.success());
+    assert!(String::from_utf8_lossy(&removed.stdout).contains("No saved Gemini key"));
+
+    // Failures go to stderr with a hint; stdout stays empty for people too.
+    let missing = cli(dir.path(), &["index", "missing.mp4"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(missing.stdout.is_empty());
+    let text = String::from_utf8_lossy(&missing.stderr);
+    assert!(text.starts_with("error:"), "{text}");
+    assert!(
+        text.contains("no such file or directory: missing.mp4"),
+        "{text}"
+    );
+    assert!(text.contains("hint:"), "{text}");
+
+    // A refusal for a missing selection names a command that works.
+    let empty = cli(dir.path(), &["remove"]);
+    assert_eq!(empty.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&empty.stderr);
+    assert!(text.contains("hint: cerul remove ./video.mp4"), "{text}");
+
+    // Argument errors keep clap's own formatting and exit code.
+    let bad = cli(dir.path(), &["search", "--limit", "many"]);
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(bad.stdout.is_empty());
+
+    let search = cli(dir.path(), &["search", "--text", "nothing"]);
+    assert!(search.status.success());
+    let text = String::from_utf8_lossy(&search.stdout);
+    assert!(text.contains("No matches for \"nothing\""), "{text}");
+    assert!(text.contains("cerul status"), "{text}");
+
+    let quiet = cli(dir.path(), &["--quiet", "status"]);
+    assert!(quiet.status.success());
+    assert!(quiet.stdout.is_empty());
+}
+
+#[test]
+fn unquoted_multi_word_query_gets_a_quoting_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = cli(dir.path(), &["search", "one", "people"]);
+    assert_eq!(output.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("cerul search \"one people\""), "{text}");
+    let json = cli(dir.path(), &["--json", "search", "one", "people"]);
+    assert_eq!(final_json(&json)["error"]["code"], "invalid_configuration");
+}
+
+#[test]
+fn open_needs_a_recent_search_and_reports_what_it_would_play() {
+    let dir = tempfile::tempdir().unwrap();
+    let cold = cli(dir.path(), &["open"]);
+    assert_eq!(cold.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&cold.stderr);
+    assert!(text.contains("no recent search"), "{text}");
+
+    let media = dir.path().join("demo.mp4");
+    std::fs::write(&media, b"").unwrap();
+    let cache = dir.path().join(".cerul").join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(
+        cache.join("last-search.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "query": "a cup",
+            "hits": [{"media": media, "start_us": 12_000_000i64, "end_us": 19_000_000i64}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let opened = cli(dir.path(), &["--json", "open", "1", "--dry-run"]);
+    let value = final_json(&opened);
+    assert_eq!(value["opened"], false);
+    assert_eq!(value["start_us"], 12_000_000i64);
+    let human = cli(dir.path(), &["open", "--dry-run"]);
+    assert!(human.status.success());
+    assert!(
+        String::from_utf8_lossy(&human.stdout).contains("would open demo.mp4 at 00:12"),
+        "{}",
+        String::from_utf8_lossy(&human.stdout)
+    );
+    // Numbers outside the last search are refused, not silently clamped.
+    let missing = cli(dir.path(), &["open", "3"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("returned 1 result"),
+        "{}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+}
+
+#[test]
+fn completions_are_printed_verbatim_and_removal_of_an_unindexed_video_is_a_no_op() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = cli(dir.path(), &["completions", "zsh"]);
+    assert!(script.status.success());
+    let text = String::from_utf8_lossy(&script.stdout);
+    assert!(
+        text.starts_with("#compdef cerul"),
+        "{}",
+        &text[..40.min(text.len())]
+    );
+    assert!(
+        text.contains("index"),
+        "the script must cover the subcommands"
+    );
+    assert!(script.stderr.is_empty());
+    for shell in ["bash", "fish", "powershell", "elvish"] {
+        assert!(cli(dir.path(), &["completions", shell]).status.success());
+    }
+    assert_eq!(
+        cli(dir.path(), &["completions", "tcsh"]).status.code(),
+        Some(2)
+    );
+
+    // Removing a video that was never indexed says so instead of failing.
+    let media = dir.path().join("demo.mp4");
+    std::fs::write(&media, b"").unwrap();
+    let quiet = cli(dir.path(), &["remove", media.to_str().unwrap(), "--yes"]);
+    assert!(quiet.status.success());
+    assert!(
+        String::from_utf8_lossy(&quiet.stdout).contains("is not indexed"),
+        "{}",
+        String::from_utf8_lossy(&quiet.stdout)
+    );
+    // A path that does not exist is still an error, before anything is planned.
+    let missing = cli(dir.path(), &["remove", "absent.mp4", "--yes"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("no such file or directory"),
+        "{}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
 }

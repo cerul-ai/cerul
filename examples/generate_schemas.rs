@@ -42,7 +42,7 @@ fn main() -> Result<()> {
             schema::<cerul::annotate::schema::Window<cerul::annotate::schema::Progress>>(),
         ),
         ("search-result", schema::<cerul::search::Report>()),
-        ("clean-result", schema::<cerul::clean::Report>()),
+        ("remove-result", schema::<cerul::clean::Report>()),
         ("indexed-record", schema::<cerul::index::records::Row>()),
         ("index-result", schema::<cerul::index::pipeline::Report>()),
         ("annotation", schema::<cerul::annotations::AnnotationFile>()),

@@ -94,6 +94,35 @@ pub fn video_quality(
     Ok(())
 }
 
+/// One still frame at a source timestamp, scaled for display. Input seeking keeps
+/// the cost independent of recording length, unlike exact frame selection.
+pub fn still(source: &Path, source_us: i64, destination: &Path, width: u32) -> Result<()> {
+    ensure!((16..=4096).contains(&width), "invalid still width");
+    let parent = destination.parent().context("still has no parent")?;
+    fs::create_dir_all(parent)?;
+    let temp = tempfile::Builder::new()
+        .suffix(".png")
+        .tempfile_in(parent)?;
+    let mut command = crate::media::command("ffmpeg");
+    seek_input(
+        &mut command,
+        source,
+        SourceRange::new(source_us, source_us.saturating_add(1))?,
+    )?;
+    command
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            &format!("scale='min({width},iw)':-2"),
+        ])
+        .arg(temp.path());
+    run(&mut command)?;
+    temp.as_file().sync_all()?;
+    temp.persist(destination).map_err(|e| e.error)?;
+    Ok(())
+}
+
 pub fn audio(source: &Path, source_range: SourceRange, destination: &Path) -> Result<()> {
     let parent = destination.parent().context("audio has no parent")?;
     fs::create_dir_all(parent)?;

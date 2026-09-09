@@ -54,9 +54,11 @@ curl -fsSL https://cerul.ai/install.sh | sh
 cerul index ./demo.mp4
 ```
 
-On first use, follow the prompt to enter your [Gemini API key](https://aistudio.google.com/apikey).
-Cerul saves it on your computer for future runs. Model processing sends data to
-Gemini and may incur API charges.
+On first use, follow the prompt to enter your [Gemini API key](https://aistudio.google.com/apikey),
+or save one ahead of time with `cerul auth set`. Cerul keeps it on your computer
+for future runs. Model processing sends data to Gemini and may incur API charges.
+
+Run `cerul` on its own at any time to see what is indexed and what to do next.
 
 ### 3. Search and save clips
 
@@ -64,6 +66,27 @@ Gemini and may incur API charges.
 cerul search "A person puts a cup on the table"
 cerul search "A person puts a cup on the table" --save ./clips
 ```
+
+Each result is a card with the match percentage, the time range, and a link. In
+iTerm2, Ghostty, Kitty, or WezTerm it also shows a still frame of the moment; add
+`--no-preview` to turn that off. With [IINA](https://iina.io) installed the link
+opens the video at the matched moment instead of the beginning.
+
+Results are numbered, so `cerul open 2` plays the second moment in your video
+player without leaving the terminal.
+
+### Housekeeping
+
+```sh
+cerul remove ./demo.mp4      # forget one video; the file itself stays
+cerul remove --cache         # free regenerable disk space
+cerul completions zsh        # shell completion script
+```
+
+For zsh, save it somewhere on your `fpath`, for example
+`cerul completions zsh > ~/.zfunc/_cerul`, then make sure `~/.zfunc` is in
+`fpath` before `compinit` runs. For bash,
+`cerul completions bash > /usr/local/etc/bash_completion.d/cerul`.
 
 [More examples →](examples/video-search.md)
 

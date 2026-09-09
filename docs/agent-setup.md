@@ -42,10 +42,11 @@ and `cerul --json status`. Report the executable path and version. Do not use
 ### 4. Configure credentials and choose a video
 
 Reuse an explicitly configured model endpoint and credentials. Otherwise guide
-the user to run their first `cerul index` in their own interactive terminal for
-hidden key entry, or set `GEMINI_API_KEY` locally through their secret manager.
+the user to run `cerul auth set` in their own interactive terminal for hidden
+key entry, or set `GEMINI_API_KEY` locally through their secret manager.
 Saved keys are reused by noninteractive calls. JSON/agent calls never prompt.
-Check presence only; never echo a key, dump the environment, include credentials
+Check presence only with `cerul --json auth` (it reports whether a key is saved
+or exported, never the value); never echo a key, dump the environment, include credentials
 in logs, or copy them to the repository. Do not source an unrelated project's
 entire `.env` file. If the user supplies a credential file, parse only the named
 value as data and scope it to the child process that needs it.

@@ -82,6 +82,50 @@ pub fn resolver(
     })
 }
 
+/// Where the key for an endpoint would come from, for display.
+pub fn state(endpoint: &Endpoint) -> crate::render::KeyState {
+    let saved = path()
+        .as_deref()
+        .map(read)
+        .and_then(Result::ok)
+        .is_some_and(|keys| keys.contains_key(&credential_scope(endpoint)));
+    crate::render::KeyState {
+        provider: endpoint.kind.clone(),
+        endpoint: endpoint.base_url.clone(),
+        env: endpoint.api_key_env.clone(),
+        env_set: std::env::var(&endpoint.api_key_env).is_ok_and(|v| !v.trim().is_empty()),
+        saved,
+        credentials_path: path(),
+    }
+}
+
+/// Interactive replacement of the saved key, used by `cerul auth set`.
+pub async fn set(endpoint: &Endpoint, cancel: CancellationToken) -> Result<()> {
+    ensure!(
+        std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
+        "cerul auth set needs an interactive terminal; export {} instead",
+        endpoint.api_key_env
+    );
+    let mut keys = path().as_deref().map(read).transpose()?.unwrap_or_default();
+    prompt(endpoint, &mut keys, cancel)
+        .await?
+        .context("this endpoint does not support saved keys; export the configured environment variable instead")?;
+    Ok(())
+}
+
+/// Deletes the saved key for an endpoint. Returns whether one existed.
+pub fn remove(endpoint: &Endpoint) -> Result<bool> {
+    let Some(path) = path() else {
+        return Ok(false);
+    };
+    let mut keys = read(&path)?;
+    let existed = keys.remove(&credential_scope(endpoint)).is_some();
+    if existed {
+        save(&path, &keys)?;
+    }
+    Ok(existed)
+}
+
 async fn prompt(
     endpoint: &Endpoint,
     keys: &mut Keys,
@@ -95,13 +139,18 @@ async fn prompt(
     }
     let scope = credential_scope(endpoint);
     let path = path();
+    let palette = crate::render::Palette::new(console::colors_enabled_stderr());
+    eprintln!();
     eprintln!(
-        "First run: Cerul needs a Gemini API key. Get one at https://aistudio.google.com/apikey"
+        "{}",
+        palette.bold("Cerul needs a Gemini API key for speech and semantic search.")
     );
+    eprintln!("  Get one at https://aistudio.google.com/apikey");
     eprintln!(
-        "The key is stored privately in ~/.cerul/credentials.json. Configured models receive media during processing and may charge usage. A small text request validates this key now."
+        "  {}",
+        palette.dim("Stored privately in ~/.cerul/credentials.json. Gemini receives media during processing; API charges may apply.")
     );
-    let key = rpassword::prompt_password("Gemini API key (hidden; leave blank to cancel): ")
+    let key = rpassword::prompt_password("Gemini API key (hidden, blank to cancel): ")
         .inspect_err(|error| {
             if error.kind() == std::io::ErrorKind::Interrupted {
                 cancel.cancel();
@@ -111,19 +160,25 @@ async fn prompt(
         cancel.cancel();
         anyhow::bail!("setup cancelled");
     }
+    eprint!(
+        "{}",
+        palette.dim("  checking the key with a small text request…")
+    );
     let validation = cerul::config::Config::default().embedding;
     let provider = Provider::new(validation, Some(key.trim().to_owned()), 1, None, cancel)?;
-    provider
+    let checked = provider
         .embed(Input::Text("Cerul setup".into()), true)
-        .await
-        .context("API key validation failed; key was not saved")?;
+        .await;
+    eprintln!();
+    checked.context("API key validation failed; key was not saved")?;
     keys.insert(scope, key.trim().to_owned());
     save(
         path.as_deref()
             .context("HOME is required to save credentials")?,
         keys,
     )?;
-    eprintln!("API key verified and saved. Continuing…");
+    eprintln!("{} Key verified and saved", palette.ok("✓"));
+    eprintln!();
     Ok(Some(key.trim().to_owned()))
 }
 
