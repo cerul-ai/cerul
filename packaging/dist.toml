@@ -1,0 +1,10 @@
+[package]
+name = "cerul"
+version = "0.0.3"
+description = "Searchable video and annotation data, using your own model endpoints"
+license = "Apache-2.0 AND GPL-2.0-or-later AND Zlib"
+homepage = "https://cerul.ai"
+repository = "https://github.com/cerul-ai/cerul"
+binaries = ["cerul", "cerul-ffmpeg", "cerul-ffprobe"]
+build-command = ["bash", "../scripts/build-distribution.sh"]
+out-dir = "../target/bundle"

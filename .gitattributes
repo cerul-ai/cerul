@@ -1,0 +1,2 @@
+# The model dictionary's final class is a literal space; preserve its bytes.
+models/characters.txt whitespace=-blank-at-eol,-blank-at-eof

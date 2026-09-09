@@ -1,4 +1,4 @@
-name: Public surface CI
+name: Core CI
 
 on:
   push:
@@ -6,33 +6,57 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
-  group: public-ci-${{ github.ref }}
+  group: core-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  node:
-    name: Contract and MCP
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 9.15.9
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: corepack pnpm install --frozen-lockfile
-      - run: corepack pnpm check
-
-  cli:
-    name: CLI
-    runs-on: ubuntu-latest
+  core:
+    name: Core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/cli
-      - run: cargo test --manifest-path apps/cli/Cargo.toml --locked
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg protobuf-compiler libprotobuf-dev
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew list ffmpeg || brew install ffmpeg
+          brew list protobuf || brew install protobuf
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo run --locked --example generate_schemas -- --check
+      - run: cargo package --locked
+      - run: cargo build --release --locked
+      - uses: actions/setup-python@v6
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.12'
+      - name: Install pinned official LeRobot loader
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install 'torch==2.11.0' 'torchvision==0.26.0' --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install 'lerobot[dataset,av-dep] @ git+https://github.com/huggingface/lerobot.git@2774d9bddcbbda50e697e162e89e7eaada8d7105'
+      - name: Official LeRobot loader round-trip
+        if: runner.os == 'Linux'
+        env:
+          HF_HUB_OFFLINE: '1'
+          HF_DATASETS_OFFLINE: '1'
+        run: |
+          python tests/lerobot_roundtrip.py create "$RUNNER_TEMP/cerul-source"
+          cargo run --release --locked --example verify_lerobot_writeback -- "$RUNNER_TEMP/cerul-source" "$RUNNER_TEMP/cerul-output" "$(command -v python)"
+          python tests/lerobot_roundtrip.py create "$RUNNER_TEMP/cerul-source-no-language" --without-language
+          cargo run --release --locked --example verify_lerobot_writeback -- "$RUNNER_TEMP/cerul-source-no-language" "$RUNNER_TEMP/cerul-output-no-language" "$(command -v python)"

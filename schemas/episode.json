@@ -1,0 +1,236 @@
+{
+  "$id": "https://cerul.ai/schemas/episode/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Episode",
+  "type": "object",
+  "properties": {
+    "$cerul": {
+      "type": "string"
+    },
+    "dataset_id": {
+      "type": "string"
+    },
+    "episode_id": {
+      "type": "string"
+    },
+    "local_id": {
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/Source"
+    },
+    "streams": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Stream"
+      }
+    },
+    "task": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "time": {
+      "$ref": "#/$defs/Timeline"
+    }
+  },
+  "required": [
+    "$cerul",
+    "episode_id",
+    "dataset_id",
+    "local_id",
+    "streams",
+    "time",
+    "source"
+  ],
+  "$defs": {
+    "MappingStatus": {
+      "type": "string",
+      "enum": [
+        "calibrated",
+        "estimated",
+        "unknown"
+      ]
+    },
+    "Probe": {
+      "type": "object",
+      "properties": {
+        "codec": {
+          "type": "string"
+        },
+        "duration_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "fps": {
+          "type": "string"
+        },
+        "has_audio": {
+          "type": "boolean"
+        },
+        "height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "duration_us",
+        "start_us",
+        "width",
+        "height",
+        "fps",
+        "has_audio",
+        "codec"
+      ]
+    },
+    "Source": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "root"
+      ]
+    },
+    "Stream": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "video"
+            },
+            "path": {
+              "type": "string"
+            },
+            "primary": {
+              "type": "boolean"
+            },
+            "probe": {
+              "$ref": "#/$defs/Probe"
+            },
+            "range_us": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "sha256": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "primary",
+            "path",
+            "sha256",
+            "range_us",
+            "probe"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "parquet"
+            },
+            "path": {
+              "type": "string"
+            },
+            "row_range": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "path",
+            "columns",
+            "row_range"
+          ]
+        }
+      ]
+    },
+    "TimeMapping": {
+      "type": "object",
+      "properties": {
+        "a": {
+          "type": "number",
+          "format": "double"
+        },
+        "b_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "status": {
+          "$ref": "#/$defs/MappingStatus"
+        }
+      },
+      "required": [
+        "a",
+        "b_us",
+        "status"
+      ]
+    },
+    "Timeline": {
+      "type": "object",
+      "properties": {
+        "mappings": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/TimeMapping"
+          },
+          "default": {}
+        },
+        "reference": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference"
+      ]
+    }
+  }
+}

@@ -1,0 +1,6 @@
+# Steps consumed by cargo-dist when generating release.yml.
+- name: Use the installed build tools without Homebrew environment injection
+  shell: bash
+  run: echo "DO_NOT_USE_BREWFILE=1" >> "$GITHUB_ENV"
+- name: Install stable Rust
+  uses: dtolnay/rust-toolchain@stable

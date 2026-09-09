@@ -1,0 +1,77 @@
+{
+  "$id": "https://cerul.ai/schemas/index-result/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Report",
+  "type": "object",
+  "properties": {
+    "dry_run": {
+      "type": "boolean"
+    },
+    "episodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EpisodeResult"
+      }
+    },
+    "partial": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "episodes",
+    "partial",
+    "dry_run"
+  ],
+  "$defs": {
+    "EpisodeResult": {
+      "type": "object",
+      "properties": {
+        "episode_id": {
+          "type": "string"
+        },
+        "sidecar": {
+          "type": "string"
+        },
+        "streams": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StreamResult"
+          }
+        }
+      },
+      "required": [
+        "episode_id",
+        "sidecar",
+        "streams"
+      ]
+    },
+    "StreamResult": {
+      "type": "object",
+      "properties": {
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "indexed": {
+          "type": "boolean"
+        },
+        "stream": {
+          "type": "string"
+        },
+        "vector_rows": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "stream",
+        "indexed",
+        "vector_rows",
+        "errors"
+      ]
+    }
+  }
+}

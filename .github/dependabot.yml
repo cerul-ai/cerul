@@ -1,19 +1,9 @@
 version: 2
-
 updates:
-  - package-ecosystem: npm
+  - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
-    groups:
-      public-node:
-        patterns: ["*"]
-
-  - package-ecosystem: cargo
-    directory: /apps/cli
-    schedule:
-      interval: weekly
-
   - package-ecosystem: github-actions
     directory: /
     schedule:

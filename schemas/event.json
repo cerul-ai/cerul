@@ -1,0 +1,59 @@
+{
+  "$id": "https://cerul.ai/schemas/event/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Event",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "done": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "episode": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "progress"
+        },
+        "station": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "event",
+        "episode",
+        "station",
+        "done",
+        "total"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "log"
+        },
+        "level": {
+          "type": "string"
+        },
+        "msg": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "level",
+        "msg"
+      ]
+    }
+  ]
+}

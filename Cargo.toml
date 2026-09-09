@@ -1,0 +1,61 @@
+[package]
+name = "cerul"
+version = "0.0.3"
+edition = "2024"
+license = "Apache-2.0"
+description = "Searchable video and annotation data, using your own model endpoints"
+repository = "https://github.com/cerul-ai/cerul"
+homepage = "https://github.com/cerul-ai/cerul"
+include = [
+    "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/THIRD_PARTY_NOTICES.md",
+    "/README.md", "/README.zh-CN.md", "/README.zh-TW.md", "/DESIGN.md", "/ARCHITECTURE.md", "/CONTRIBUTING.md",
+    "/CODE_OF_CONDUCT.md", "/SECURITY.md",
+    "/src/**/*.rs", "/examples/*.rs", "/examples/*.md", "/docs/*.md",
+    "/packaging/licenses/*.txt", "/scripts/build-*.sh", "/scripts/package-media-source.sh", "/schemas/*.json", "/prompts/*.md", "/docs/assets/*.png", "/docs/assets/README.md",
+    "/models/det.onnx", "/models/rec.onnx", "/models/characters.txt",
+    "/models/LICENSE", "/models/README.md",
+    "/tests/*.rs", "/tests/*.py",
+    "/tests/fixtures/README.md", "/tests/fixtures/ocr-text.png",
+]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+sha2 = "0.10"
+toml = "0.9"
+url = "2"
+lancedb = { version = "=0.38.0", features = ["remote"] }
+arrow-array = "58"
+arrow-schema = "58"
+arrow-json = "58"
+arrow-select = "58"
+uuid = { version = "1", features = ["v4"] }
+parquet = { version = "58", default-features = false, features = ["arrow", "zstd", "snap"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+base64 = "0.22"
+tokio-util = { version = "0.7", features = ["rt"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+tract-onnx = "0.22.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+imageproc = { version = "0.25", default-features = false }
+
+tempfile = "3"
+rpassword = "7"
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.release]
+lto = "thin"
+strip = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

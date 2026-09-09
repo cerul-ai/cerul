@@ -1,0 +1,70 @@
+{
+  "$id": "https://cerul.ai/schemas/embedding-row/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VectorRow",
+  "type": "object",
+  "properties": {
+    "end_us": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "episode": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/Kind"
+    },
+    "params_hash": {
+      "type": "string"
+    },
+    "space_id": {
+      "type": "string"
+    },
+    "start_us": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "still": {
+      "type": "boolean"
+    },
+    "stream": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "vector": {
+      "type": "array",
+      "items": {
+        "type": "number",
+        "format": "float"
+      }
+    }
+  },
+  "required": [
+    "id",
+    "episode",
+    "stream",
+    "kind",
+    "start_us",
+    "end_us",
+    "vector",
+    "text",
+    "still",
+    "space_id",
+    "params_hash"
+  ],
+  "$defs": {
+    "Kind": {
+      "type": "string",
+      "enum": [
+        "video",
+        "speech",
+        "screen"
+      ]
+    }
+  }
+}

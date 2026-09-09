@@ -1,0 +1,65 @@
+{
+  "$id": "https://cerul.ai/schemas/semantic-state/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Window",
+  "type": "object",
+  "properties": {
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/State"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "records"
+  ],
+  "$defs": {
+    "State": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attribute": {
+          "type": "string"
+        },
+        "before": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "object": {
+          "type": "string"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start_us",
+        "end_us",
+        "object",
+        "attribute"
+      ]
+    }
+  }
+}

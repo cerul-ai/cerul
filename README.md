@@ -1,59 +1,107 @@
-# Cerul developer surface
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/cerul-logo-dark.png">
+    <img src="docs/assets/cerul-logo-light.png" alt="Cerul" width="280">
+  </picture>
+</p>
 
-**Help AI understand, remember, and access video.**
+<p align="center"><strong>Help AI understand, remember, and access video.</strong></p>
+<p align="center">Open-source video processing core and CLI. Use your own model endpoints, without a Cerul account.</p>
 
-Video memory infrastructure for AI products.
+<p align="center">
+  <a href="https://cerul.ai">Website</a> ·
+  <a href="examples/video-search.md">Quickstart</a> ·
+  <a href="docs/agent-setup.md">Install with an agent</a> ·
+  <a href="docs/configuration.md">Configuration</a> ·
+  <a href="https://x.com/cerul_hq">X / Twitter</a> ·
+  <a href="https://discord.gg/qHDEMQB9vN">Discord</a>
+</p>
 
-Cerul turns video and other long-form media into searchable evidence and
-structured artifacts. This repository is the public integration surface for
-the Cerul platform.
+<p align="center">
+  <a href="https://github.com/cerul-ai/cerul/actions/workflows/ci.yml"><img src="https://github.com/cerul-ai/cerul/actions/workflows/ci.yml/badge.svg" alt="Build and tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+</p>
 
-The product implementation is private. This repository contains only:
+<p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a></p>
 
-- the sanitized [OpenAPI 3.1 contract](./openapi.json);
-- the TypeScript and Python SDKs;
-- the `cerul` command-line client;
-- MCP and Claude Code integrations;
-- public examples, compatibility notes, and release links.
+## Search your videos with words
 
-Local and cloud runtimes use the same contract. Choose a base URL:
+Cerul turns local videos into a searchable library. Describe a moment, find text
+spoken or shown on screen, and save matching clips. It works with ordinary video
+folders and LeRobot datasets, using your own model API key.
 
-```text
-Cloud: https://api.cerul.ai/v1
-Local: http://127.0.0.1:<dynamic-port>/v1
-```
+- **Search by meaning or example.** Use a sentence or a reference image.
+- **Find speech and screen text.** Transcription plus local, embedded OCR.
+- **Keep useful results.** Export clips and structured semantic annotations.
+- **Resume where you left off.** Completed work is cached; rerun after interruption.
 
-The local runtime requires its installation token. The cloud runtime accepts a
-Workspace API key or OAuth access token. Call `GET /v1/capabilities` before
-requesting optional capabilities; clients must not assume local and cloud
-offer identical execution.
+## Getting started
 
-## Packages
+Cerul is a command-line tool for searching videos and saving clips. The download
+includes the media tools and OCR models it needs.
 
-| Path | Purpose |
-|---|---|
-| `apps/cli` | CLI commands for search, ask, AgentSession, jobs, and export |
-| `integrations/mcp` | Remote MCP projection of the Capability Registry |
-| `integrations/claude-code` | Installable Claude Code integration |
+Supports **macOS Apple Silicon** and **Linux x86_64 (Ubuntu 24.04 or newer)**.
 
-## Verify
+### 1. Install
 
 ```sh
-corepack pnpm install --frozen-lockfile
-corepack pnpm check
-cargo test --manifest-path apps/cli/Cargo.toml --locked
+curl -fsSL https://cerul.ai/install.sh | sh
 ```
 
-## SDKs
+### 2. Add a video
 
-The TypeScript and Python SDKs are retired while the `/v1` API is redesigned.
-The published `cerul` packages on npm and PyPI are deprecated and receive no
-updates. Use the REST API directly, or the MCP integration, until generated
-SDKs return with the new contract.
+```sh
+cerul index ./demo.mp4
+```
 
-The public OpenAPI and generated client surfaces are produced from the private
-`cerul-platform/contracts/openapi.yaml`; they are not independently authored
-here. See [ARCHITECTURE.md](./ARCHITECTURE.md) for the publication boundary.
+On first use, follow the prompt to enter your [Gemini API key](https://aistudio.google.com/apikey).
+Cerul saves it on your computer for future runs. Model processing sends data to
+Gemini and may incur API charges.
 
-No package publishing, binary release, or production deployment occurs from a
-source change alone.
+### 3. Search and save clips
+
+```sh
+cerul search "A person puts a cup on the table"
+cerul search "A person puts a cup on the table" --save ./clips
+```
+
+[More examples →](examples/video-search.md)
+
+## Let your agent do the setup
+
+Copy this prompt into an agent that can use a terminal:
+
+```text
+Install Cerul by following https://github.com/cerul-ai/cerul/blob/main/docs/agent-setup.md. Help me set up my Gemini API key securely, search a local video, and save a matching clip. Teach me the commands in my language.
+```
+
+[Agent setup guide →](docs/agent-setup.md)
+
+## More things to try
+
+| Goal | Command |
+| --- | --- |
+| Index a folder | `cerul index ./videos` |
+| Preview work | `cerul --dry-run index ./videos` |
+| Generate semantic annotations | `cerul annotate ./videos --semantic` |
+| Check progress and results | `cerul status` |
+| Search one video | `cerul search "opening a door" --in ./demo.mp4` |
+
+Sidecar files preserve transcripts, annotations, and vectors alongside your media.
+Search indexes can be rebuilt from them without model calls. LeRobot subtask
+writeback is available as an explicit opt-in.
+
+## Learn more
+
+- [Installation and troubleshooting](docs/installation.md)
+- [Video search tutorial](examples/video-search.md)
+- [LeRobot tutorial](examples/lerobot-subtasks.md)
+- [Model endpoints and configuration](docs/configuration.md)
+- [Contributing and developer integration](CONTRIBUTING.md)
+
+## License
+
+Cerul's Rust code is Apache-2.0. Bundles also contain separately licensed media
+tools and OCR weights; see [third-party notices](THIRD_PARTY_NOTICES.md).
+The [Cerul name and logo](docs/assets/README.md) identify the project and do not
+imply endorsement of third-party products.

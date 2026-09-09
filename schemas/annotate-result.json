@@ -1,0 +1,94 @@
+{
+  "$id": "https://cerul.ai/schemas/annotate-result/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Report",
+  "type": "object",
+  "properties": {
+    "dry_run": {
+      "type": "boolean"
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ModuleResult"
+      }
+    },
+    "partial": {
+      "type": "boolean"
+    },
+    "writebacks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WritebackResult"
+      }
+    }
+  },
+  "required": [
+    "modules",
+    "writebacks",
+    "partial",
+    "dry_run"
+  ],
+  "$defs": {
+    "ModuleResult": {
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "records": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "episode",
+        "stream",
+        "annotation",
+        "records",
+        "complete"
+      ]
+    },
+    "WritebackResult": {
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "destination",
+        "complete"
+      ]
+    }
+  }
+}

@@ -1,0 +1,185 @@
+{
+  "$id": "https://cerul.ai/schemas/search-result/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Report",
+  "type": "object",
+  "properties": {
+    "counts": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Counts"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "hits": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Hit"
+      }
+    }
+  },
+  "required": [
+    "hits",
+    "dry_run"
+  ],
+  "$defs": {
+    "Counts": {
+      "type": "object",
+      "properties": {
+        "episodes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "records": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "records",
+        "episodes"
+      ]
+    },
+    "Hit": {
+      "type": "object",
+      "properties": {
+        "annotations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Row"
+          }
+        },
+        "clip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "excerpt": {
+          "type": "string"
+        },
+        "frame_range": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "matched": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Kind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "episode",
+        "stream",
+        "start_us",
+        "end_us",
+        "excerpt",
+        "annotations"
+      ]
+    },
+    "Kind": {
+      "type": "string",
+      "enum": [
+        "video",
+        "speech",
+        "screen"
+      ]
+    },
+    "Record": {
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "id": {
+          "type": "string"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "start_us",
+        "end_us"
+      ]
+    },
+    "Row": {
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "type": "string"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "record": {
+          "$ref": "#/$defs/Record"
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "episode",
+        "stream",
+        "annotation",
+        "record"
+      ]
+    }
+  }
+}

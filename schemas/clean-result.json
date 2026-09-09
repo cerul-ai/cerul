@@ -1,0 +1,53 @@
+{
+  "$id": "https://cerul.ai/schemas/clean-result/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Report",
+  "type": "object",
+  "properties": {
+    "dry_run": {
+      "type": "boolean"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Item"
+      }
+    }
+  },
+  "required": [
+    "dry_run",
+    "items"
+  ],
+  "$defs": {
+    "Action": {
+      "type": "string",
+      "enum": [
+        "remove_index",
+        "remove_cache",
+        "remove_sidecar",
+        "compact"
+      ]
+    },
+    "Item": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/Action"
+        },
+        "episode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "path"
+      ]
+    }
+  }
+}

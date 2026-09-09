@@ -1,0 +1,77 @@
+{
+  "$id": "https://cerul.ai/schemas/config/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Config",
+  "type": "object",
+  "properties": {
+    "embedding": {
+      "$ref": "#/$defs/Endpoint"
+    },
+    "perception": {
+      "$ref": "#/$defs/Perception"
+    },
+    "transcription": {
+      "$ref": "#/$defs/Endpoint"
+    },
+    "vision": {
+      "$ref": "#/$defs/Endpoint"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "embedding",
+    "vision",
+    "transcription",
+    "perception"
+  ],
+  "$defs": {
+    "Endpoint": {
+      "type": "object",
+      "properties": {
+        "api_key_env": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "dims": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "model",
+        "base_url",
+        "api_key_env"
+      ]
+    },
+    "Perception": {
+      "type": "object",
+      "properties": {
+        "api_key_env": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "base_url",
+        "api_key_env"
+      ]
+    }
+  }
+}

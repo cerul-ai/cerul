@@ -1,0 +1,49 @@
+{
+  "$id": "https://cerul.ai/schemas/semantic-task/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Window",
+  "type": "object",
+  "properties": {
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Task"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "records"
+  ],
+  "$defs": {
+    "Task": {
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start_us",
+        "end_us",
+        "text"
+      ]
+    }
+  }
+}
