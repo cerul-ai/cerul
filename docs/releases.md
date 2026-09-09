@@ -23,13 +23,23 @@ npm and Homebrew publishing can follow separately.
 
 3. Wait for the Release workflow to publish both platform archives, the shell
    installer, checksums, and corresponding media sources to GitHub Releases.
-4. Configure `https://cerul.ai/install.sh` to redirect temporarily (HTTP 302 or 307)
-   to `https://github.com/cerul-ai/cerul/releases/download/v0.0.5/cerul-installer.sh`.
-   Use short caching so the target can be updated for future releases. Verify
-   that following the redirect returns the shell script, not an HTML page.
-5. On each supported platform, install from the public README command and verify
+4. Nothing to configure. `https://cerul.ai/install.sh` redirects to
+   `https://github.com/cerul-ai/cerul/releases/latest/download/cerul-installer.sh`,
+   which GitHub resolves to the newest published, non-prerelease release, so
+   step 3 is what makes a release live. Verify that following the redirect
+   returns the shell script for this version, not an HTML page or an older one.
+5. Confirm the default model endpoints still answer, using your own key so no
+   credential is stored in the repository:
+
+   ```sh
+   GEMINI_API_KEY=... cargo run --locked --example verify_gemini
+   ```
+
+   The CLI's defaults name specific Gemini models, so this is what catches an
+   upstream model being retired or changed before users do.
+6. On each supported platform, install from the public README command and verify
    `cerul --version`, video indexing, search, and clip export.
-6. Confirm the README installation command works from a clean terminal.
+7. Confirm the README installation command works from a clean terminal.
 
 These are maintainer instructions; creating the tag publishes the release.
 No server deployment is needed for the CLI.
