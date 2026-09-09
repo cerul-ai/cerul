@@ -41,7 +41,7 @@ jobs:
       - run: cargo run --locked --example generate_schemas -- --check
       - run: cargo package --locked
       - run: cargo build --release --locked
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         if: runner.os == 'Linux'
         with:
           python-version: '3.12'

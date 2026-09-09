@@ -31,7 +31,7 @@ fn hash(path: &Path) -> Result<String> {
         }
         digest.update(&buffer[..n]);
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(crate::storage::hex(digest.finalize()))
 }
 fn safe_file(root: &Path, relative: &Path) -> Result<PathBuf> {
     ensure!(

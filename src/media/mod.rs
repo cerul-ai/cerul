@@ -252,7 +252,7 @@ pub fn sha256(path: &Path) -> Result<String> {
         }
         hasher.update(&buffer[..count]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(crate::storage::hex(hasher.finalize()))
 }
 
 pub fn frame_pts(path: &Path) -> Result<Vec<i64>> {

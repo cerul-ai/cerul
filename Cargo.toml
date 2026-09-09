@@ -25,7 +25,7 @@ clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 toml = "0.9"
 url = "2"
 lancedb = { version = "=0.38.0", features = ["remote"] }
@@ -41,9 +41,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "mul
 base64 = "0.22"
 tokio-util = { version = "0.7", features = ["rt"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-tract-onnx = "0.22.4"
+tract-onnx = "0.23.6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-imageproc = { version = "0.25", default-features = false }
+imageproc = { version = "0.27", default-features = false }
 
 tempfile = "3"
 rpassword = "7"

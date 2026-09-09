@@ -473,8 +473,7 @@ async fn run_inner(
                         image::ImageFormat::WebP => "image/webp",
                         _ => return Err(unavailable("query image must be PNG, JPEG, or WebP")),
                     };
-                    use sha2::Digest;
-                    let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+                    let digest = crate::storage::sha256_hex(&bytes);
                     (digest, Input::Image(bytes, mime.into()))
                 } else {
                     let text = options.query.clone().unwrap();

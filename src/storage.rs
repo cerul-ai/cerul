@@ -56,10 +56,19 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
 /// A cache key includes all source, timeline, station, model and parameter inputs.
 /// The caller supplies a serializable tuple rather than an ambiguous joined string.
 pub fn cache_key(identity: &impl Serialize) -> Result<String> {
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(identity)?)
-    ))
+    Ok(sha256_hex(serde_json::to_vec(identity)?))
+}
+
+pub fn sha256_hex(bytes: impl AsRef<[u8]>) -> String {
+    hex(Sha256::digest(bytes))
+}
+
+pub fn hex(bytes: impl AsRef<[u8]>) -> String {
+    bytes
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 pub struct Checkpoints {

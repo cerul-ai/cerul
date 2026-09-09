@@ -44,10 +44,9 @@ fn now() -> u64 {
 fn key(provider: &Provider, capability: Capability) -> Result<String> {
     let endpoint = &provider.endpoint;
     // Only the digest is persisted. A rotated credential cannot inherit a probe.
-    let credential = provider.key_header().map(|key| {
-        use sha2::{Digest, Sha256};
-        format!("{:x}", Sha256::digest(key.as_bytes()))
-    });
+    let credential = provider
+        .key_header()
+        .map(|key| crate::storage::sha256_hex(key.as_bytes()));
     crate::storage::cache_key(&(
         &endpoint.kind,
         &endpoint.base_url,

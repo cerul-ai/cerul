@@ -45,17 +45,13 @@ pub async fn with_credential_resolver<T>(
 }
 /// Bind stored credentials to the exact endpoint origin/path and environment name.
 pub fn credential_scope(endpoint: &Endpoint) -> String {
-    use sha2::{Digest, Sha256};
-    format!(
-        "{:x}",
-        Sha256::digest(
-            serde_json::to_vec(&(
-                &endpoint.kind,
-                endpoint.base_url.trim_end_matches('/'),
-                &endpoint.api_key_env
-            ))
-            .expect("string tuple serializes")
-        )
+    crate::storage::sha256_hex(
+        serde_json::to_vec(&(
+            &endpoint.kind,
+            endpoint.base_url.trim_end_matches('/'),
+            &endpoint.api_key_env,
+        ))
+        .expect("string tuple serializes"),
     )
 }
 
