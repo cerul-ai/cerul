@@ -22,11 +22,12 @@ with tempfile.TemporaryDirectory(prefix="cerul-bundle-test-") as temp:
     subprocess.run([str(bundle / "cerul-ffmpeg"), "-v", "error", "-loop", "1", "-i", str(root / "tests/fixtures/ocr-text.png"), "-t", "1", "-r", "2", "-pix_fmt", "yuv420p", "-c:v", "libx264", str(temp / "demo.mp4")], env=env, check=True)
     result = subprocess.run([str(bundle / "cerul"), "--json", "--workspace", str(temp / "workspace"), "index", str(temp / "demo.mp4"), "--no-audio", "--jobs", "1"], env=env, capture_output=True, text=True, timeout=120)
     assert result.returncode == 6, (result.returncode, result.stdout, result.stderr)
-    json.loads(result.stdout)
+    indexed = json.loads(result.stdout)
+    assert all(len(stream["errors"]) == 1 and "GEMINI_API_KEY" in stream["errors"][0] for episode in indexed["episodes"] for stream in episode["streams"]), indexed
     result = subprocess.run([str(bundle / "cerul"), "--json", "--workspace", str(temp / "workspace"), "search", "--text", "CERUL"], env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, (result.stdout, result.stderr)
     data = json.loads(result.stdout)
-    assert data["hits"], data
+    assert data["hits"], {"search": data, "index": indexed, "ocr": [p.read_text() for p in temp.rglob("screen_text.jsonl")]}
     assert "CERUL" in json.dumps(data["hits"]).upper(), data
     assert not (home / ".cerul/credentials.json").exists()
 print("Bundle passed: no PATH tools, real H.264 encode/probe, OCR, text search, noninteractive missing-key handling.")

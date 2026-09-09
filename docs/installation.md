@@ -22,7 +22,7 @@ cerul search "A person puts a cup on the table" --save ./clips
 On first use, enter your [Gemini API key](https://aistudio.google.com/apikey)
 when prompted. Model processing sends inputs to Gemini and may incur API charges.
 
-You can also download an archive from [GitHub Releases](https://github.com/cerul-ai/cerul/releases/tag/v0.0.3).
+You can also download an archive from [GitHub Releases](https://github.com/cerul-ai/cerul/releases/tag/v0.0.4).
 Keep `cerul`, `cerul-ffmpeg`, and `cerul-ffprobe` together when moving them.
 
 ## Build from source (developers)
@@ -71,7 +71,7 @@ On Ubuntu 24.04:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y git build-essential pkg-config libssl-dev protobuf-compiler libprotobuf-dev curl xz-utils bzip2
+sudo apt-get install -y git build-essential nasm pkg-config libssl-dev protobuf-compiler libprotobuf-dev curl xz-utils bzip2
 ```
 
 Install a stable Rust toolchain using the instructions at [rustup.rs](https://rustup.rs)

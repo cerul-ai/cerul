@@ -51,7 +51,7 @@ make install
 cd ../ffmpeg-7.1.4
 PKG_CONFIG_PATH="$prefix/lib/pkgconfig" ./configure --prefix="$prefix" \
   --disable-autodetect --disable-shared --enable-static --enable-gpl --enable-libx264 --enable-zlib \
-  --disable-doc --disable-debug --disable-ffplay --disable-network --disable-x86asm \
+  --disable-doc --disable-debug --disable-ffplay --disable-network \
   --disable-videotoolbox --disable-audiotoolbox --disable-securetransport \
   --extra-cflags="-I$prefix/include" --extra-ldflags="-L$prefix/lib" --pkg-config-flags=--static
 make -j"$jobs" ffmpeg ffprobe
