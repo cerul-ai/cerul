@@ -1,7 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
@@ -30,16 +29,13 @@ impl SpaceMetadata {
                 && !self.query_template.is_empty(),
             "invalid vector space metadata"
         );
-        Ok(format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(&(
-                &self.kind,
-                self.base_url.trim_end_matches('/'),
-                &self.model,
-                Some(self.dims),
-                &self.query_template
-            ))?)
-        ))
+        Ok(crate::storage::sha256_hex(serde_json::to_vec(&(
+            &self.kind,
+            self.base_url.trim_end_matches('/'),
+            &self.model,
+            Some(self.dims),
+            &self.query_template,
+        ))?))
     }
 }
 

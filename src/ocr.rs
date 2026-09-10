@@ -6,15 +6,15 @@ use image::{
 };
 use imageproc::contours::{BorderType, find_contours};
 use imageproc::{
-    geometric_transformations::{Interpolation, Projection, warp_into},
+    geometric_transformations::{Border, Interpolation, Projection, warp_into},
     geometry::min_area_rect,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, io::Cursor};
+use std::{collections::VecDeque, io::Cursor, sync::Arc};
 use tract_onnx::prelude::*;
 
-type Plan = TypedRunnableModel<TypedModel>;
+type Plan = Arc<TypedRunnableModel>;
 const DET: &[u8] = include_bytes!("../models/det.onnx");
 const REC: &[u8] = include_bytes!("../models/rec.onnx");
 pub const MIN_TEXT_CONFIDENCE: f32 = 0.75;
@@ -56,7 +56,8 @@ fn compile(bytes: &[u8], height: u32, width: u32) -> Result<Plan> {
 fn tensor(image: &RgbImage, recognition: bool) -> Result<Tensor> {
     let (width, height) = image.dimensions();
     let mut tensor = Tensor::zero::<f32>(&[1, 3, height as usize, width as usize])?;
-    let values = tensor.as_slice_mut::<f32>()?;
+    let mut plain = tensor.try_as_plain_mut()?;
+    let values = plain.as_slice_mut::<f32>()?;
     for c in 0..3 {
         for y in 0..height {
             crate::media::check_cancellation()?;
@@ -106,7 +107,7 @@ impl Ocr {
             .1
             .run(tvec!(tensor(&padded, true)?.into()))?;
         crate::media::check_cancellation()?;
-        let output = outputs[0].to_array_view::<f32>()?;
+        let output = outputs[0].to_plain_array_view::<f32>()?;
         let mut dictionary = vec![""];
         dictionary.extend(include_str!("../models/characters.txt").split('\n'));
         ensure!(
@@ -158,7 +159,7 @@ impl Ocr {
             .unwrap()
             .1
             .run(tvec!(tensor(&resized, false)?.into()))?;
-        let probabilities = outputs[0].to_array_view::<f32>()?;
+        let probabilities = outputs[0].to_plain_array_view::<f32>()?;
         ensure!(
             probabilities.shape() == [1, 1, height as usize, width as usize],
             "invalid OCR detection output"
@@ -262,9 +263,9 @@ impl Ocr {
             let mut crop = RgbImage::new(w, h);
             warp_into(
                 source,
-                &projection,
+                projection,
                 Interpolation::Bilinear,
-                *source.get_pixel(0, 0),
+                Border::Constant(*source.get_pixel(0, 0)),
                 &mut crop,
             );
             let vertical = h as f32 / w as f32 >= 1.5;
@@ -332,7 +333,7 @@ mod tests {
             &canvas,
             12f32.to_radians(),
             Interpolation::Bilinear,
-            image::Rgb([255, 255, 255]),
+            Border::Constant(image::Rgb([255, 255, 255])),
         );
         let mut engine = Ocr::default();
         for image in [angled, imageops::rotate90(&source)] {

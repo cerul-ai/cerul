@@ -62,6 +62,10 @@ jobs:
           python3 scripts/check-docs.py --package-list "$RUNNER_TEMP/cerul-package-files.txt"
       - run: cargo package --locked
       - run: cargo build --release --locked
+      - uses: actions/setup-python@v7
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.12'
       - name: Install pinned official LeRobot loader
         if: runner.os == 'Linux'
         run: |
