@@ -3,6 +3,7 @@ mod credentials;
 mod documentation_tests;
 mod guide;
 mod render;
+mod upgrade;
 use anyhow::{Context, Result};
 use cerul::{
     config::Config,
@@ -145,6 +146,8 @@ enum Command {
     Annotate(AnnotateArgs),
     /// Remove indexed videos, or free the disk they and their caches use.
     Remove(RemoveArgs),
+    /// Install the newest published release of Cerul over this one.
+    Upgrade,
     /// Print or install the agent skill that teaches this CLI to a coding agent.
     Skill(SkillArgs),
     /// Print a shell completion script, for example: cerul completions zsh.
@@ -613,6 +616,42 @@ fn skill(cli: &Cli, args: &SkillArgs) -> Result<(Outcome, u8)> {
     ))
 }
 
+/// Replacing the program is the one operation that changes what runs next time,
+/// so it says what it found, then what it will do, and only then asks. A machine
+/// reading this gets the report and installs nothing without `--yes`.
+async fn upgrade(cli: &Cli, sink: &Sink) -> Result<(Outcome, u8)> {
+    let available = upgrade::check().await.map_err(|e| category(4, e))?;
+    if !available.newer || cli.dry_run {
+        return Ok((Outcome::Upgrade(available, false), 0));
+    }
+    let human = sink.mode == Mode::Human && !cli.quiet;
+    let go = if cli.yes {
+        true
+    } else if human {
+        let palette = Palette::new(console::colors_enabled_stderr());
+        let _ = render::upgrade_plan(&mut io::stderr(), &palette, &available);
+        confirm(
+            "upgrading",
+            &format!(
+                "Replace cerul {} with {}?",
+                available.current, available.latest
+            ),
+        )
+        .map_err(|e| category(2, e))?
+    } else {
+        // Reporting is safe for anyone; replacing the program is not something
+        // to do because nobody was there to say no.
+        false
+    };
+    if !go {
+        return Ok((Outcome::Upgrade(available, false), 0));
+    }
+    upgrade::install(&available)
+        .await
+        .map_err(|e| category(4, e))?;
+    Ok((Outcome::Upgrade(available, true), 0))
+}
+
 /// Provider wording differs by endpoint, so the categories are matched on the
 /// signals every one of them sends rather than on one vendor's message.
 fn rate_limited(error: &str) -> bool {
@@ -693,6 +732,8 @@ enum Outcome {
     },
     Timeline(cerul::status::Timeline, Option<String>),
     Skill(SkillReport),
+    /// What the newest release is, and whether this run installed it.
+    Upgrade(upgrade::Available, bool),
     Auth(render::KeyState, Option<&'static str>),
     Remove(
         cerul::clean::Report,
@@ -737,6 +778,11 @@ impl Outcome {
             Outcome::Remove(report, _, _) => serde_json::to_value(report)?,
             Outcome::Timeline(timeline, _) => serde_json::to_value(timeline)?,
             Outcome::Skill(report) => serde_json::to_value(report)?,
+            Outcome::Upgrade(available, upgraded) => {
+                let mut value = serde_json::to_value(available)?;
+                value["upgraded"] = json!(upgraded);
+                value
+            }
             Outcome::Annotate(report, _) => serde_json::to_value(report)?,
         })
     }
@@ -751,6 +797,9 @@ impl Outcome {
             } => render::status(out, palette, status, models, *probed, *detail),
             Outcome::Timeline(timeline, kind) => {
                 render::timeline(out, palette, timeline, kind.as_deref())
+            }
+            Outcome::Upgrade(available, upgraded) => {
+                render::upgrade(out, palette, available, *upgraded)
             }
             Outcome::Skill(report) => match &report.skill {
                 // The printed skill is the file itself: no colour, no heading,
@@ -1030,10 +1079,13 @@ async fn execute(
     sink: &Sink,
     cancel: CancellationToken,
 ) -> Result<(Outcome, u8)> {
-    // Writing the skill touches no workspace, so it is answered before one has
-    // to exist.
+    // Writing the skill and replacing the program touch no workspace, so they are
+    // answered before one has to exist.
     if let Some(Command::Skill(args)) = &cli.command {
         return skill(cli, args);
+    }
+    if let Some(Command::Upgrade) = &cli.command {
+        return upgrade(cli, sink).await;
     }
     let workspace = cli
         .workspace
@@ -1328,8 +1380,8 @@ async fn execute(
                 0,
             ))
         }
-        Some(Command::Skill(_)) => {
-            unreachable!("the skill is written before a workspace is resolved")
+        Some(Command::Skill(_)) | Some(Command::Upgrade) => {
+            unreachable!("these are answered before a workspace is resolved")
         }
         Some(Command::Completions { .. }) => {
             unreachable!("completions are printed before the runtime starts")

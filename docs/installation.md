@@ -25,6 +25,24 @@ when prompted. Model processing sends inputs to Gemini and may incur API charges
 You can also download an archive from [GitHub Releases](https://github.com/cerul-ai/cerul/releases/latest).
 Keep `cerul`, `cerul-ffmpeg`, and `cerul-ffprobe` together when moving them.
 
+## Upgrade
+
+```sh
+cerul upgrade
+```
+
+It asks GitHub what the newest release is, tells you what it found, and installs
+it after you agree. What it runs is the installer that release published, so the
+version it names is the version you get. `--yes` skips the question, `--dry-run`
+only reports, and `--json` reports without installing anything.
+
+The upgrade replaces `cerul`, `cerul-ffmpeg`, and `cerul-ffprobe` where they are
+already installed. Your workspace, saved key, sidecar files, and indexes are
+untouched: they are read by the new version exactly as the old one left them.
+
+Re-running the install command above does the same thing, and is the way to
+upgrade a build that predates `cerul upgrade`.
+
 ## Run your first video
 
 The first interactive `index` or semantic `search`/`annotate` using the default
