@@ -9,6 +9,7 @@ fn main() -> Result<()> {
     let schemas = [
         ("episode", schema::<cerul::episode::Episode>()),
         ("status", schema::<cerul::status::Status>()),
+        ("timeline", schema::<cerul::status::Timeline>()),
         (
             "annotate-result",
             schema::<cerul::annotate::pipeline::Report>(),

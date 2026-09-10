@@ -88,6 +88,15 @@
             "type": "string"
           }
         },
+        "duration_us": {
+          "description": "Episode-relative length of the primary stream, read from the sidecar.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "default": null
+        },
         "embedding_spaces": {
           "type": "array",
           "items": {

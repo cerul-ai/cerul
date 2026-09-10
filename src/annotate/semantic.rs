@@ -314,6 +314,14 @@ pub async fn run(
         normalize(item, &unit, &header, &pts, ontology)?;
         checkpoints.save(&unit_key, &unit)?;
         units.push(unit);
+        // Saved before the counter moves, so a reader can trust that this window
+        // survives an interruption and will be reused rather than re-requested.
+        events.emit(Event::Checkpoint {
+            episode: episode.episode_id.clone(),
+            station: name.clone(),
+            window: index as u64 + 1,
+            total: windows.len() as u64,
+        });
         events.emit(Event::Progress {
             episode: episode.episode_id.clone(),
             station: name.clone(),

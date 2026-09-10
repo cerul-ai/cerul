@@ -1,0 +1,137 @@
+{
+  "$id": "https://cerul.ai/schemas/timeline/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Timeline",
+  "type": "object",
+  "properties": {
+    "episodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TimelineEpisode"
+      }
+    }
+  },
+  "required": [
+    "episodes"
+  ],
+  "$defs": {
+    "Record": {
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "id": {
+          "type": "string"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "start_us",
+        "end_us"
+      ]
+    },
+    "TimelineEntry": {
+      "description": "One published annotation record, reduced to what a person reads in a list.",
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "description": "Full annotation name, for example `semantic.subtask`.",
+          "type": "string"
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "record": {
+          "$ref": "#/$defs/Record"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "stream": {
+          "type": "string"
+        },
+        "summary": {
+          "description": "The record's own fields written as one line. The record itself stays\nauthoritative; this is a reading aid, not a new data format.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "episode",
+        "stream",
+        "annotation",
+        "start_us",
+        "end_us",
+        "summary",
+        "record"
+      ]
+    },
+    "TimelineEpisode": {
+      "type": "object",
+      "properties": {
+        "annotations": {
+          "description": "Annotation names present for this episode, in file order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "duration_us": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimelineEntry"
+          }
+        },
+        "episode_id": {
+          "type": "string"
+        },
+        "media": {
+          "type": "string"
+        },
+        "sidecar": {
+          "type": "string"
+        },
+        "total": {
+          "description": "Records that matched the selection before `limit` was applied.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "episode_id",
+        "media",
+        "sidecar",
+        "annotations",
+        "total",
+        "entries"
+      ]
+    }
+  }
+}

@@ -12,6 +12,18 @@ Help me configure my Gemini API key securely, search a local video, and save a
 matching clip. Teach me the commands in my language.
 ```
 
+## Teach the agent the command line
+
+Once `cerul` is installed, it can write its own instructions into the agent's
+skills directory, generated from the build that is actually installed:
+
+```sh
+cerul skill --install claude
+```
+
+`codex`, `pi`, and `--dir ./skills` work the same way. The full machine contract
+is in [driving Cerul from an agent](agent.md).
+
 ## Agent workflow
 
 ### 1. Check the platform

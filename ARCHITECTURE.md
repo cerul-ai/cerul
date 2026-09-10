@@ -8,7 +8,7 @@ the behavior, storage contracts, and invariants implementations must preserve.
 
 | Area | Entry points | Responsibility |
 | --- | --- | --- |
-| CLI | [main.rs](src/main.rs), [render.rs](src/render.rs), [credentials.rs](src/credentials.rs) | Parse arguments, dispatch commands, render results, and manage interactive credential setup. |
+| CLI | [main.rs](src/main.rs), [render.rs](src/render.rs), [guide.rs](src/guide.rs), [credentials.rs](src/credentials.rs) | Parse arguments, dispatch commands, render results, complete an under-specified command at a terminal, and manage interactive credential setup. |
 | Library interface | [lib.rs](src/lib.rs), [config.rs](src/config.rs), [events.rs](src/events.rs) | Expose reusable operations, explicit configuration, and structured events. |
 | Media and time | [episode.rs](src/episode.rs), [media/](src/media), [ocr.rs](src/ocr.rs) | Discover media properties, map episode time, prepare model inputs, and run embedded OCR. |
 | Providers | [providers/](src/providers) | Call configured endpoints, validate capabilities, and resolve scoped credentials. |
@@ -63,7 +63,8 @@ implement product UI, hosted inference, or HTTP/MCP serving. See
 | [LICENSE](LICENSE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [packaging/licenses/](packaging/licenses) | Project license, bundled-component notices, and full third-party license texts. Preserve notices required by distributions. |
 | [models/README.md](models/README.md), [models/LICENSE](models/LICENSE), [models/characters.txt](models/characters.txt) | Model provenance, license, and a runtime OCR dictionary. The dictionary is data; whitespace changes can alter class decoding. |
 | [tests/fixtures/README.md](tests/fixtures/README.md), [docs/assets/README.md](docs/assets/README.md) | Fixture provenance and brand-asset usage notes next to their files. |
-| [prompts/](prompts) | Eight runtime Markdown prompts embedded by the semantic annotation code. Edit and validate them as processing behavior. |
+| [prompts/](prompts) | Runtime Markdown embedded in the binary: eight semantic annotation prompts, plus [skill.md](prompts/skill.md), the body of the agent skill. Edit and validate them as processing behavior. |
+| [skills/](skills) | The generated agent skill exactly as `cerul skill --install claude` writes it. Regenerate with `cerul skill --print > skills/cerul/SKILL.md` after changing commands or the prompt. |
 | [schemas/](schemas) | JSON contracts generated from Rust types by [generate_schemas.rs](examples/generate_schemas.rs); do not hand-edit them. |
 | `.github/` | Issue forms, PR template, ownership, dependency automation, and workflow YAML. GitHub consumes these files at their designated locations. |
 | [Cargo.toml](Cargo.toml), [Cargo.lock](Cargo.lock), `dist-workspace.toml`, `packaging/dist.toml` | Rust and distribution manifests and dependency resolution. These are executable build inputs, not user documentation. |

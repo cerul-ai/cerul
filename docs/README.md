@@ -11,6 +11,7 @@ reading command or compatibility details.
 
 - [Install and troubleshoot](installation.md)
 - [Install with an agent](agent-setup.md)
+- [Drive Cerul from an agent](agent.md)
 - [Search videos and save clips](video-search.md)
 - [Annotate actions and demonstrations](annotation.md)
 - [Annotate LeRobot subtasks](lerobot-subtasks.md)

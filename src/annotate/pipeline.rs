@@ -106,6 +106,20 @@ pub struct ModuleResult {
     pub records: usize,
     pub complete: bool,
     pub error: Option<String>,
+    /// What this result belongs to: the video file, or the dataset root when the
+    /// episode came from one. Episodes of a dataset share their MP4 shards, so a
+    /// media file name alone cannot tell two results apart; the dataset and the
+    /// episode index can.
+    #[serde(default)]
+    pub source: PathBuf,
+    /// True when the episode came from a LeRobot dataset.
+    #[serde(default)]
+    pub dataset: bool,
+    /// Where the published annotation file is, once validation and publication
+    /// succeeded. A checkpoint on disk is not a published file, so an incomplete
+    /// or dry-run module has no path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WritebackResult {
@@ -114,12 +128,36 @@ pub struct WritebackResult {
     pub complete: bool,
     pub error: Option<String>,
 }
+/// Why a run stopped early, in the terms that decide what to change about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetryReason {
+    /// A provider limited the request rate, so the retry lowers it.
+    RateLimit,
+    /// Work remains for another reason; the retry repeats the command unchanged.
+    Incomplete,
+}
+/// The command that continues unfinished work: the original invocation with
+/// only the failure's fix applied, so running it is always safe. Published work
+/// is reused and nothing is recomputed on purpose.
+///
+/// The result carries this so that a machine reader finds recovery in the same
+/// object as the failure. Only the binary can fill it in, because only the
+/// binary sees an argument list.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Retry {
+    pub argv: Vec<String>,
+    pub reason: RetryReason,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Report {
     pub modules: Vec<ModuleResult>,
     pub writebacks: Vec<WritebackResult>,
     pub partial: bool,
     pub dry_run: bool,
+    /// Present when work remains. Absent on a complete or dry run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<Retry>,
 }
 fn interrupted(cancel: &CancellationToken) -> Result<()> {
     if cancel.is_cancelled() {
@@ -345,6 +383,7 @@ async fn run_inner(
         writebacks: Vec::new(),
         partial: false,
         dry_run: options.dry_run,
+        retry: None,
     };
     for episode in episodes {
         let dataset = episode.source.format.starts_with("lerobot/");
@@ -367,6 +406,10 @@ async fn run_inner(
             discover::publish_episode(workspace, &episode, None)?
         };
         for stream in selected_streams {
+            // Conflicts are projected into the flag file once every module of
+            // this stream has run, so a flag module's real count is not known
+            // until then. Announcing it early would disagree with the file.
+            let mut deferred: Vec<usize> = Vec::new();
             for item in &items {
                 interrupted(&cancel)?;
                 let mut result = ModuleResult {
@@ -376,6 +419,24 @@ async fn run_inner(
                     records: 0,
                     complete: false,
                     error: None,
+                    // Stream paths are relative to the episode's root, and two
+                    // directories can hold the same file name, so the root has to
+                    // stay on the front of it.
+                    source: match dataset {
+                        true => episode.source.root.clone(),
+                        false => episode
+                            .video(&episode.time.reference)
+                            .ok()
+                            .and_then(|stream| match stream {
+                                crate::episode::Stream::Video { path, .. } => {
+                                    Some(episode.source.root.join(path))
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| episode.source.root.clone()),
+                    },
+                    dataset,
+                    path: None,
                 };
                 if !options.dry_run {
                     match semantic::run(
@@ -398,6 +459,20 @@ async fn run_inner(
                         Ok(product) => {
                             result.complete = true;
                             result.records = product.annotation.records.len();
+                            let published =
+                                stream_directory(&sidecar, &stream, &episode.time.reference)
+                                    .join(format!("semantic.{item}.jsonl"));
+                            result.path = Some(published.clone());
+                            match item.as_str() {
+                                "flag" => deferred.push(report.modules.len()),
+                                _ => events.emit(Event::Published {
+                                    episode: episode.episode_id.clone(),
+                                    stream: stream.clone(),
+                                    annotation: result.annotation.clone(),
+                                    records: result.records as u64,
+                                    path: published,
+                                }),
+                            }
                             if options.write_lerobot
                                 && item == "subtask"
                                 && stream == episode.time.reference
@@ -431,6 +506,22 @@ async fn run_inner(
             }
             if !options.dry_run {
                 publish_conflicts(&episode, &stream, &sidecar)?;
+                // The sidecar is authoritative, so the count that is reported and
+                // announced is the one the file ended up with.
+                for index in deferred.drain(..) {
+                    let module = &mut report.modules[index];
+                    let Some(path) = module.path.clone() else {
+                        continue;
+                    };
+                    module.records = AnnotationFile::read(&path)?.records.len();
+                    events.emit(Event::Published {
+                        episode: module.episode.clone(),
+                        stream: module.stream.clone(),
+                        annotation: module.annotation.clone(),
+                        records: module.records as u64,
+                        path,
+                    });
+                }
             }
         }
     }
