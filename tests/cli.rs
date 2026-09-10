@@ -737,6 +737,14 @@ fn the_skill_installs_where_agents_look_and_never_replaces_a_hand_written_file()
     std::fs::write(&path, &edited).unwrap();
     let kept = cli(dir.path(), &["skill", "--install", "claude"]);
     assert_eq!(kept.status.code(), Some(2));
+    // An edit to a file an older build wrote has to be protected too: an
+    // upgrade is exactly when that file is about to be replaced.
+    let older = edited.replace("generated-by: cerul 0.", "generated-by: cerul 0.0.1-0.");
+    std::fs::write(&path, &older).unwrap();
+    let upgrade = cli(dir.path(), &["skill", "--install", "claude"]);
+    assert_eq!(upgrade.status.code(), Some(2));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), older);
+    std::fs::write(&path, &edited).unwrap();
     assert!(
         String::from_utf8_lossy(&kept.stderr).contains("changed after cerul wrote it"),
         "{}",
@@ -786,6 +794,20 @@ fn printing_and_redirecting_the_skill_need_no_home_directory() {
             .as_str()
             .unwrap()
             .contains("--dir")
+    );
+    // Two destinations cannot both be honoured, so they cannot both be given.
+    let both = homeless(&[
+        "skill",
+        "--install",
+        "codex",
+        "--dir",
+        elsewhere.to_str().unwrap(),
+    ]);
+    assert_eq!(both.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&both.stderr).contains("cannot be used with"),
+        "{}",
+        String::from_utf8_lossy(&both.stderr)
     );
 }
 
@@ -859,7 +881,9 @@ fn a_partial_annotation_carries_the_command_that_continues_it() {
         .iter()
         .map(|argument| argument.as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(argv[0], "cerul");
+    // The program is repeated as it was invoked: a path was used because the
+    // binary is not on PATH, and shortening it would break the copied command.
+    assert_eq!(argv[0], env!("CARGO_BIN_EXE_cerul"));
     assert_eq!(value["retry"]["reason"], "incomplete");
     // Every choice survives, or running it again would not be the same run.
     for argument in [

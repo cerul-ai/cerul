@@ -51,9 +51,11 @@ it published:
 }
 ```
 
-`retry` is present on a partial result, and it is part of the generated schema
-rather than a field added beside it, so a client built from `schemas/` knows the
-recovery exists. It repeats every original argument, including any completed by
+`retry` is present on a partial **annotate** result, and it is part of the
+generated schema rather than a field added beside it, so a client built from
+`schemas/` knows the recovery exists. It is the only command that offers one:
+`index` and `status --providers` can also exit 6, and there the recovery is to
+run the same command again. It repeats every original argument, including any completed by
 guidance, and changes only what the failure suggests; `--recompute` is never
 added. An agent can run `retry.argv` verbatim. A cancelled run has no result
 object at all, only an error with code `cancelled`; the same command run again
@@ -139,10 +141,10 @@ cerul skill --install claude --force   replace a skill that was changed
 
 Receipt: `✓ Wrote ~/.claude/skills/cerul/SKILL.md (cerul 0.0.6)`. The file records
 the CLI version in its front matter. Installing replaces a file an older build
-wrote, because that is an upgrade. It refuses when the file carries this build's
-version but no longer matches what this build writes, because that means somebody
-edited it; `--force` is the way past that. A file with no marker at all is never
-replaced. Printing the skill, or writing it to a named directory, needs neither a
+wrote, because that is an upgrade. It records a digest of what it wrote, so it can tell its own untouched
+copy from one somebody changed whichever build wrote it, and refuses the latter;
+`--force` is the way past that. A file with no digest at all is never replaced.
+`--install` and `--dir` are two destinations and cannot both be given. Printing the skill, or writing it to a named directory, needs neither a
 workspace nor a home directory.
 
 ## 3. Documentation

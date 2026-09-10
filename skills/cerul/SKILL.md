@@ -2,6 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
 generated-by: cerul 0.0.6
+generated-sha256: e0f5e6313d19393cf8e283f595734d14c3ac64ff5fea743383ccd1367b9f1a81
 ---
 
 # Cerul
@@ -47,11 +48,13 @@ Events on stderr:
   count and path. Only a published file is safe to read or train on.
 - `log` carries human-readable notices.
 
-A partial run's final object carries `retry`. Run `retry.argv` verbatim to
-continue: it repeats the original invocation and changes only what the failure
-calls for. A cancelled run has no result object at all, only
-`{"error":{"code":"cancelled",...}}` and exit 5; run the same command again to
-resume it. Never add `--recompute` to either; it discards finished work.
+A **partial `annotate`** carries `retry` in its final object. Run `retry.argv`
+verbatim to continue: it repeats the original invocation and changes only what
+the failure calls for. Other commands that can exit 6, such as `index` and
+`status --providers`, carry no `retry`; run the same command again, which reuses
+everything that finished. A cancelled run has no result object at all, only
+`{"error":{"code":"cancelled",...}}` and exit 5; the same command resumes it.
+Never add `--recompute` to any of these; it discards finished work.
 
 ## Workflows
 

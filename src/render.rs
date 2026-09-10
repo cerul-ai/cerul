@@ -1955,19 +1955,30 @@ pub fn timeline(
             .map(|t| measure_text_width(t))
             .max()
             .unwrap_or(0);
+        // Cameras of one episode produce the same kinds of record at the same
+        // times, so the stream has to appear once more than one was annotated.
+        let streams: BTreeSet<&str> = episode
+            .entries
+            .iter()
+            .map(|entry| entry.stream.as_str())
+            .collect();
+        let label = |entry: &cerul::status::TimelineEntry| match streams.len() > 1 {
+            true => format!("{} · {}", entry.stream, item_name(&entry.annotation)),
+            false => item_name(&entry.annotation).to_owned(),
+        };
         let name_width = episode
             .entries
             .iter()
-            .map(|entry| measure_text_width(item_name(&entry.annotation)))
+            .map(|entry| measure_text_width(&label(entry)))
             .max()
             .unwrap_or(0);
         for (entry, time) in episode.entries.iter().zip(&times) {
-            let name = item_name(&entry.annotation);
+            let name = label(entry);
             writeln!(
                 out,
                 "  {time:>time_width$}   {}{}{}",
-                palette.cmd(name),
-                " ".repeat(name_width - measure_text_width(name) + 3),
+                palette.cmd(&name),
+                " ".repeat(name_width - measure_text_width(&name) + 3),
                 entry.summary
             )?;
         }
@@ -2352,6 +2363,53 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("showing 3 of 53 records"), "{text}");
+    }
+
+    #[test]
+    fn a_timeline_of_several_cameras_says_which_camera_each_record_came_from() {
+        let entry = |stream: &str, start_us: i64| cerul::status::TimelineEntry {
+            episode: "d7f0/000000".into(),
+            stream: stream.into(),
+            annotation: "semantic.event".into(),
+            start_us,
+            end_us: start_us,
+            summary: "grasp cup".into(),
+            record: record(start_us, start_us, &[("verb", "grasp".into())]),
+        };
+        let mut episode = cerul::status::TimelineEpisode {
+            episode_id: "d7f0/000000".into(),
+            media: PathBuf::from("/data/egodemo/videos/front/file-000.mp4"),
+            sidecar: PathBuf::from("/data/egodemo/.cerul/episodes/0"),
+            duration_us: Some(8_000_000),
+            annotations: vec!["semantic.event".into()],
+            total: 2,
+            entries: vec![
+                entry("observation.images.front", 3_000_000),
+                entry("observation.images.wrist", 3_000_000),
+            ],
+        };
+        let render = |episodes| {
+            let mut out = Vec::new();
+            super::timeline(
+                &mut out,
+                &Palette::new(false),
+                &cerul::status::Timeline { episodes },
+                None,
+            )
+            .unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        // Two cameras record the same kind of thing at the same time, so the
+        // lines are indistinguishable without the camera.
+        let text = render(vec![episode.clone()]);
+        assert!(text.contains("observation.images.front · event"), "{text}");
+        assert!(text.contains("observation.images.wrist · event"), "{text}");
+        // One camera needs no column repeating its name on every line.
+        episode.entries.truncate(1);
+        episode.total = 1;
+        let text = render(vec![episode]);
+        assert!(!text.contains("observation.images.front ·"), "{text}");
+        assert!(text.contains("event"), "{text}");
     }
 
     #[test]

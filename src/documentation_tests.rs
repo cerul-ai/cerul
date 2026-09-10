@@ -51,10 +51,12 @@ fn the_retry_repeats_the_invocation_and_changes_only_the_rate() {
         limited.reason,
         cerul::annotate::pipeline::RetryReason::RateLimit
     );
+    // The program is repeated as it was invoked: a path was probably used
+    // because the binary is not on PATH, so shortening it breaks the copy.
     assert_eq!(
         limited.argv,
         [
-            "cerul",
+            "/usr/local/bin/cerul",
             "annotate",
             "/my videos/demo.mp4",
             "--semantic",
@@ -66,7 +68,7 @@ fn the_retry_repeats_the_invocation_and_changes_only_the_rate() {
     // Quoting is what makes the printed command survive a copy into a shell.
     assert_eq!(
         crate::render::shell_command(&limited.argv),
-        "cerul annotate '/my videos/demo.mp4' --semantic subtask,event --rpm 6"
+        "/usr/local/bin/cerul annotate '/my videos/demo.mp4' --semantic subtask,event --rpm 6"
     );
     // Nothing else earns a rate cap, and no failure earns --recompute.
     let other = stopped("connection reset");

@@ -21,9 +21,11 @@ build's own argument definitions, so it always matches `cerul --help`. A copy of
 the same file lives at [`skills/cerul/SKILL.md`](../skills/cerul/SKILL.md) for
 people who would rather read it on GitHub or vendor it into a repository.
 
-Installing replaces a file Cerul wrote before, recognised by the
-`generated-by: cerul` line in its front matter. A file without that line is left
-alone and the command fails, so a hand-edited skill is never overwritten.
+Cerul records a digest of the file it wrote in the front matter, so installing
+can tell its own untouched copy from one somebody changed, whichever build wrote
+it. An untouched copy is replaced, which is how an upgrade works. Anything else
+is left alone and the command fails, so a hand-edited skill is never overwritten;
+`--force` replaces it when that is what you want.
 
 ## The `--json` contract
 
@@ -76,16 +78,29 @@ The schema for these lives in [`schemas/event.json`](../schemas/event.json).
 
 ## Final objects
 
-Each command's final object is documented by a generated schema in
-[`schemas/`](../schemas/). Two fields matter most to an agent.
+`index`, `search`, `status`, `status --timeline`, `annotate`, and `remove`
+each have a generated schema in [`schemas/`](../schemas/), produced from the Rust
+result types. `auth`, `open`, and `skill` return small objects with no generated
+schema; their shapes are:
+
+```json
+{"provider":"gemini","endpoint":"…","env":"GEMINI_API_KEY","env_set":false,"saved":true,"credentials_path":"…","action":"set"}
+{"media":"/v/demo.mp4","start_us":12000000,"player":"mpv","seeks":true,"opened":true}
+{"version":"0.0.6","installed":"…/SKILL.md","targets":{"claude":"…"},"skill":"---\nname: cerul\n…"}
+```
+
+`auth` never reports a key's value, or any part of one. Two fields on the
+generated results matter most to an agent.
 
 **`modules[].path` on an annotate result** is where a published annotation file
 is. It is absent while a module is incomplete, because there is no file to point
 at yet.
 
-**`retry`** appears on a partial annotate result and carries the command that
-continues the work. A cancelled run has no result object at all, only an error
-with code `cancelled` and exit 5; the same command run again resumes it.
+**`retry`** appears on a partial **annotate** result and carries the command that
+continues the work. It is the only command that offers one: `index` and
+`status --providers` can also exit 6, and there the recovery is to run the same
+command again. A cancelled run has no result object at all, only an error with
+code `cancelled` and exit 5; the same command run again resumes it.
 
 ```json
 {

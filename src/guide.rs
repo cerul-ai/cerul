@@ -400,7 +400,13 @@ fn annotate(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
         "subtask, event, interaction, state",
         "subtask,event,interaction,state",
     );
-    let general = Choice::new("A general video", "task, subtask, flag", "default");
+    // Naming the labels rather than leaning on the default: a dataset's own
+    // default is all seven types, which is not what this choice promises.
+    let general = Choice::new(
+        "A general video",
+        "task, subtask, flag",
+        "task,subtask,flag",
+    );
     let everything = Choice::new(
         "Everything",
         "all seven semantic types",

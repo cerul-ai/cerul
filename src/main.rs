@@ -163,7 +163,7 @@ struct SkillArgs {
     #[arg(long, value_name = "AGENT", conflicts_with = "print")]
     install: Option<Agent>,
     /// Install into this skills directory instead of an agent's own.
-    #[arg(long, value_name = "DIR", conflicts_with = "print")]
+    #[arg(long, value_name = "DIR", conflicts_with_all = ["print", "install"])]
     dir: Option<PathBuf>,
     /// Write the skill to stdout instead of installing it.
     #[arg(long)]
@@ -388,6 +388,10 @@ fn exit_code(error: &anyhow::Error) -> u8 {
 /// Marks a file this build wrote, so installing again replaces Cerul's own copy
 /// and never a file somebody edited by hand.
 const SKILL_MARKER: &str = "generated-by: cerul";
+/// Records what the file said when Cerul wrote it. A version alone cannot answer
+/// "was this edited?" for a file an older build installed, and that is exactly
+/// the file an upgrade is about to replace.
+const SKILL_DIGEST: &str = "generated-sha256:";
 
 /// The skill's command section, generated from this build's own argument
 /// definitions so that it cannot drift from `--help`.
@@ -481,12 +485,27 @@ fn skill_text() -> String {
         .and_then(|(_, rest)| rest.split_once("\n---\n"))
         .map(|(front, body)| (front.to_owned(), body.to_owned()))
         .unwrap_or_else(|| (String::new(), template.to_owned()));
+    let body = format!("{}\n{}", body.trim_end(), command_reference());
     format!(
-        "---\n{front}\n{SKILL_MARKER} {}\n---\n{}\n{}",
+        "---\n{front}\n{SKILL_MARKER} {}\n{SKILL_DIGEST} {}\n---\n{body}",
         env!("CARGO_PKG_VERSION"),
-        body.trim_end(),
-        command_reference()
+        cerul::storage::sha256_hex(&body)
     )
+}
+
+/// Whether an installed skill still says what Cerul wrote in it, whichever build
+/// wrote it. A file without the recorded digest was not written by this command.
+fn skill_unchanged(existing: &str) -> bool {
+    let Some((front, body)) = existing
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---\n"))
+    else {
+        return false;
+    };
+    front
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(SKILL_DIGEST))
+        .is_some_and(|digest| digest.trim() == cerul::storage::sha256_hex(body))
 }
 
 #[derive(serde::Serialize)]
@@ -551,20 +570,17 @@ fn skill(cli: &Cli, args: &SkillArgs) -> Result<(Outcome, u8)> {
     if let Some(path) = destination {
         if path.is_file() {
             let existing = fs::read_to_string(&path).unwrap_or_default();
-            // Replacing an older copy is an upgrade and needs no
-            // ceremony. Replacing this version's copy when it no longer
-            // matches means somebody edited it, and their work is not
-            // this command's to discard.
-            let ours = existing.contains(&format!("{SKILL_MARKER} {version}"));
-            let edited = ours && existing != text;
+            // Replacing an untouched copy is an upgrade and needs no ceremony,
+            // whichever build wrote it. Anything else is somebody's work, and it
+            // is not this command's to discard.
             anyhow::ensure!(
-                args.force || (existing.contains(SKILL_MARKER) && !edited),
+                args.force || skill_unchanged(&existing),
                 CliError(
                     2,
                     format!(
                         "{} was {}; move it aside, or pass --force to replace it",
                         path.display(),
-                        match edited {
+                        match existing.contains(SKILL_MARKER) {
                             true => "changed after cerul wrote it",
                             false => "not written by cerul",
                         }
@@ -624,13 +640,10 @@ fn retry_after(
         .iter()
         .filter_map(|module| module.error.as_deref())
         .any(rate_limited);
+    // Keeping the program exactly as it was invoked: a path was probably used
+    // because the binary is not on PATH, and shortening it would break the copy.
     let (program, rest) = original.split_first()?;
-    let mut argv = vec![
-        Path::new(program)
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| program.clone()),
-    ];
+    let mut argv = vec![program.clone()];
     // The rate cap is the one argument this command is allowed to replace.
     let mut rpm: Option<u32> = None;
     let mut expecting = false;

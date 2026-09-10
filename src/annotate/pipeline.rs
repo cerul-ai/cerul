@@ -406,6 +406,10 @@ async fn run_inner(
             discover::publish_episode(workspace, &episode, None)?
         };
         for stream in selected_streams {
+            // Conflicts are projected into the flag file once every module of
+            // this stream has run, so a flag module's real count is not known
+            // until then. Announcing it early would disagree with the file.
+            let mut deferred: Vec<usize> = Vec::new();
             for item in &items {
                 interrupted(&cancel)?;
                 let mut result = ModuleResult {
@@ -458,14 +462,17 @@ async fn run_inner(
                             let published =
                                 stream_directory(&sidecar, &stream, &episode.time.reference)
                                     .join(format!("semantic.{item}.jsonl"));
-                            events.emit(Event::Published {
-                                episode: episode.episode_id.clone(),
-                                stream: stream.clone(),
-                                annotation: result.annotation.clone(),
-                                records: result.records as u64,
-                                path: published.clone(),
-                            });
-                            result.path = Some(published);
+                            result.path = Some(published.clone());
+                            match item.as_str() {
+                                "flag" => deferred.push(report.modules.len()),
+                                _ => events.emit(Event::Published {
+                                    episode: episode.episode_id.clone(),
+                                    stream: stream.clone(),
+                                    annotation: result.annotation.clone(),
+                                    records: result.records as u64,
+                                    path: published,
+                                }),
+                            }
                             if options.write_lerobot
                                 && item == "subtask"
                                 && stream == episode.time.reference
@@ -499,6 +506,22 @@ async fn run_inner(
             }
             if !options.dry_run {
                 publish_conflicts(&episode, &stream, &sidecar)?;
+                // The sidecar is authoritative, so the count that is reported and
+                // announced is the one the file ended up with.
+                for index in deferred.drain(..) {
+                    let module = &mut report.modules[index];
+                    let Some(path) = module.path.clone() else {
+                        continue;
+                    };
+                    module.records = AnnotationFile::read(&path)?.records.len();
+                    events.emit(Event::Published {
+                        episode: module.episode.clone(),
+                        stream: module.stream.clone(),
+                        annotation: module.annotation.clone(),
+                        records: module.records as u64,
+                        path,
+                    });
+                }
             }
         }
     }
