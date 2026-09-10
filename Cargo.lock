@@ -736,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "cerul"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "arrow-array",
