@@ -619,8 +619,8 @@ fn skill(cli: &Cli, args: &SkillArgs) -> Result<(Outcome, u8)> {
 /// Replacing the program is the one operation that changes what runs next time,
 /// so it says what it found, then what it will do, and only then asks. A machine
 /// reading this gets the report and installs nothing without `--yes`.
-async fn upgrade(cli: &Cli, sink: &Sink) -> Result<(Outcome, u8)> {
-    let available = upgrade::check().await.map_err(|e| category(4, e))?;
+async fn upgrade(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(Outcome, u8)> {
+    let available = upgrade::check(&cancel).await.map_err(|e| category(4, e))?;
     if !available.newer || cli.dry_run {
         return Ok((Outcome::Upgrade(available, false), 0));
     }
@@ -646,9 +646,12 @@ async fn upgrade(cli: &Cli, sink: &Sink) -> Result<(Outcome, u8)> {
     if !go {
         return Ok((Outcome::Upgrade(available, false), 0));
     }
-    upgrade::install(&available)
-        .await
-        .map_err(|e| category(4, e))?;
+    // The installer's own output is captured, so a person watching gets this
+    // instead of nothing while a hundred megabytes come down.
+    sink.spinner(&format!("Installing cerul {}…", available.latest));
+    let installed = upgrade::install(&available, &cancel).await;
+    sink.finish();
+    installed.map_err(|e| category(4, e))?;
     Ok((Outcome::Upgrade(available, true), 0))
 }
 
@@ -1085,7 +1088,7 @@ async fn execute(
         return skill(cli, args);
     }
     if let Some(Command::Upgrade) = &cli.command {
-        return upgrade(cli, sink).await;
+        return upgrade(cli, sink, cancel).await;
     }
     let workspace = cli
         .workspace
