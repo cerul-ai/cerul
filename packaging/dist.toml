@@ -1,6 +1,6 @@
 [package]
 name = "cerul"
-version = "0.0.6"
+version = "0.0.7"
 description = "Searchable video and annotation data, using your own model endpoints"
 license = "Apache-2.0 AND GPL-2.0-or-later AND Zlib"
 homepage = "https://cerul.ai"
