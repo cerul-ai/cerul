@@ -1068,6 +1068,21 @@ pub fn skill(
         palette.dim("teaches a coding agent to drive cerul through --json")
     )?;
     writeln!(out)?;
+    if targets.is_empty() {
+        writeln!(
+            out,
+            "  {}",
+            palette.dim("HOME is not set, so no agent's own directory is known here.")
+        )?;
+        return next_block(
+            out,
+            palette,
+            &[
+                ("cerul skill --dir ./skills", "write it to a directory"),
+                ("cerul skill --print", "read it, or pipe it somewhere"),
+            ],
+        );
+    }
     let width = targets
         .keys()
         .map(|name| measure_text_width(name))
@@ -1800,13 +1815,19 @@ pub fn annotate(
         }
     }
     if !report.dry_run {
+        // A dataset's episodes share their video shards, so pointing at one
+        // shard would read back a fraction of what this run produced. The input
+        // the person named is what covers all of it.
         let media = report
             .modules
             .iter()
             .find(|module| module.complete)
-            .and_then(|module| names.get(&module.episode));
+            .map(|module| match module.dataset {
+                true => Some(&module.source),
+                false => names.get(&module.episode).or(Some(&module.source)),
+            });
         let mut steps: Vec<(String, &str)> = Vec::new();
-        if let Some(path) = media {
+        if let Some(Some(path)) = media {
             steps.push((
                 format!("cerul status {} --timeline", shell_path(path)),
                 "read the labels in order",
@@ -2189,6 +2210,7 @@ mod tests {
             writebacks: Vec::new(),
             partial: false,
             dry_run: false,
+            retry: None,
         };
         let names = BTreeMap::from([("demo/0".to_owned(), PathBuf::from("/videos/demo.mp4"))]);
         let mut out = Vec::new();
@@ -2226,6 +2248,7 @@ mod tests {
             writebacks: Vec::new(),
             partial: true,
             dry_run: false,
+            retry: None,
         };
         let names = BTreeMap::from([("demo/0".to_owned(), PathBuf::from("/videos/demo.mp4"))]);
         let mut out = Vec::new();
@@ -2329,6 +2352,45 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("showing 3 of 53 records"), "{text}");
+    }
+
+    #[test]
+    fn a_dataset_receipt_points_at_the_dataset_rather_than_a_shared_shard() {
+        let module = annotate::pipeline::ModuleResult {
+            episode: "d7f0/000001".into(),
+            stream: "observation.images.front".into(),
+            annotation: "semantic.subtask".into(),
+            records: 6,
+            complete: true,
+            error: None,
+            source: PathBuf::from("/data/egodemo"),
+            dataset: true,
+            path: Some(PathBuf::from(
+                "/data/egodemo/.cerul/episodes/1/semantic.subtask.jsonl",
+            )),
+        };
+        let report = annotate::pipeline::Report {
+            modules: vec![module],
+            writebacks: Vec::new(),
+            partial: false,
+            dry_run: false,
+            retry: None,
+        };
+        // Every episode of a dataset shares this shard, so the registry's media
+        // path would read back one episode out of the run.
+        let names = BTreeMap::from([(
+            "d7f0/000001".to_owned(),
+            PathBuf::from("/data/egodemo/videos/observation.images.front/chunk-000/file-000.mp4"),
+        )]);
+        let mut out = Vec::new();
+        annotate(&mut out, &Palette::new(false), &report, &names, None).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("egodemo · episode 000001"), "{text}");
+        assert!(
+            text.contains("cerul status /data/egodemo --timeline"),
+            "{text}"
+        );
+        assert!(!text.contains("file-000.mp4"), "{text}");
     }
 
     #[test]

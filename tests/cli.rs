@@ -729,6 +729,64 @@ fn the_skill_installs_where_agents_look_and_never_replaces_a_hand_written_file()
         std::fs::read_to_string(&path).unwrap(),
         "---\nname: cerul\n---\nmine\n"
     );
+
+    // Editing an installed skill and reinstalling must not lose the edit, even
+    // though the file still carries the line that says cerul wrote it.
+    let mut edited = String::from_utf8(printed.stdout.clone()).unwrap();
+    edited.push_str("\nMy own note.\n");
+    std::fs::write(&path, &edited).unwrap();
+    let kept = cli(dir.path(), &["skill", "--install", "claude"]);
+    assert_eq!(kept.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&kept.stderr).contains("changed after cerul wrote it"),
+        "{}",
+        String::from_utf8_lossy(&kept.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    let forced = cli(dir.path(), &["skill", "--install", "claude", "--force"]);
+    assert!(forced.status.success());
+    assert_eq!(std::fs::read(&path).unwrap(), printed.stdout);
+}
+
+#[test]
+fn printing_and_redirecting_the_skill_need_no_home_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let homeless = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_cerul"))
+            .current_dir(dir.path())
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let printed = homeless(&["skill", "--print"]);
+    assert!(
+        printed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&printed.stderr)
+    );
+    assert!(String::from_utf8_lossy(&printed.stdout).starts_with("---\nname: cerul\n"));
+    let elsewhere = dir.path().join("skills");
+    let written = homeless(&["skill", "--dir", elsewhere.to_str().unwrap()]);
+    assert!(
+        written.status.success(),
+        "{}",
+        String::from_utf8_lossy(&written.stderr)
+    );
+    assert_eq!(
+        std::fs::read(elsewhere.join("cerul/SKILL.md")).unwrap(),
+        printed.stdout
+    );
+    // Only an agent's own directory needs to know where home is.
+    let agent = homeless(&["--json", "skill", "--install", "claude"]);
+    assert_eq!(agent.status.code(), Some(2));
+    assert!(
+        final_json(&agent)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("--dir")
+    );
 }
 
 #[test]
@@ -763,4 +821,59 @@ fn the_timeline_reads_local_files_only_and_rejects_a_type_that_does_not_exist() 
     let stray = cli(dir.path(), &["--json", "status", "--type", "event"]);
     assert_eq!(stray.status.code(), Some(2));
     assert_eq!(final_json(&stray)["error"]["code"], "invalid_arguments");
+}
+
+#[test]
+fn a_partial_annotation_carries_the_command_that_continues_it() {
+    let dir = tempfile::tempdir().unwrap();
+    video(dir.path());
+    let media = dir.path().join("sample.mp4");
+    // Port 9 discards connections, so the vision endpoint fails after the local
+    // work succeeds: the run is partial, which is what carries a retry.
+    let output = Command::new(env!("CARGO_BIN_EXE_cerul"))
+        .current_dir(dir.path())
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env("HOME", dir.path())
+        .env("GEMINI_API_KEY", "test-key")
+        .args([
+            "--json",
+            "annotate",
+            media.to_str().unwrap(),
+            "--semantic",
+            "subtask",
+            "--jobs",
+            "1",
+            "--set",
+            "vision.base_url=\"http://127.0.0.1:9\"",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(6));
+    let value = final_json(&output);
+    assert_eq!(value["partial"], true);
+    // The result describes its own recovery, in the schema, not beside it.
+    let argv: Vec<String> = value["retry"]["argv"]
+        .as_array()
+        .expect("a partial run offers a retry")
+        .iter()
+        .map(|argument| argument.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(argv[0], "cerul");
+    assert_eq!(value["retry"]["reason"], "incomplete");
+    // Every choice survives, or running it again would not be the same run.
+    for argument in [
+        media.to_str().unwrap(),
+        "--semantic",
+        "subtask",
+        "vision.base_url=\"http://127.0.0.1:9\"",
+    ] {
+        assert!(argv.iter().any(|value| value == argument), "{argv:?}");
+    }
+    assert!(!argv.iter().any(|value| value == "--recompute"), "{argv:?}");
+    // A source that is only a file name cannot say which input it came from,
+    // and two directories can hold the same name.
+    let source = value["modules"][0]["source"].as_str().unwrap();
+    assert!(source.ends_with("/sample.mp4"), "{source}");
+    assert!(std::path::Path::new(source).is_absolute(), "{source}");
 }

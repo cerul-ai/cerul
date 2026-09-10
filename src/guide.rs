@@ -237,11 +237,16 @@ fn pick_input(palette: &Palette, title: &str) -> io::Result<Option<String>> {
 }
 
 /// Turns answers into the command that runs them, shown before it runs so the
-/// next run can be typed instead of answered.
-fn confirm(palette: &Palette, argv: &[String]) -> io::Result<Option<bool>> {
+/// next run can be typed instead of answered. `typed` is everything the person
+/// already wrote, so a global flag they chose appears in the command too.
+fn confirm(palette: &Palette, typed: &[String], extra: &[String]) -> io::Result<Option<bool>> {
     let term = Term::stderr();
+    let argv: Vec<String> = std::iter::once("cerul".to_owned())
+        .chain(typed.iter().cloned())
+        .chain(extra.iter().cloned())
+        .collect();
     term.write_line("")?;
-    term.write_line(&format!("  {}", palette.cmd(&render::shell_command(argv))))?;
+    term.write_line(&format!("  {}", palette.cmd(&render::shell_command(&argv))))?;
     let choices = [
         Choice::new("Start", "", Some(false)),
         Choice::new(
@@ -252,6 +257,23 @@ fn confirm(palette: &Palette, argv: &[String]) -> io::Result<Option<bool>> {
         Choice::new("Cancel", "", None),
     ];
     Ok(select(palette, "Ready", &choices)?.flatten())
+}
+
+/// Where an invocation came from, which decides how much of it may be missing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Entry {
+    /// Typed at a prompt. Only a bare `cerul <command>` is completed, so a
+    /// half-written command still gets the parser's own error.
+    Typed,
+    /// Composed by the home menu, which appends a command to what was typed and
+    /// so may carry the global flags that came with it.
+    Menu,
+}
+
+/// Whether a person could be asked something here: one at the keyboard, one
+/// reading the screen, and no flag that means an answer was already given.
+pub fn asks(arguments: &[OsString]) -> bool {
+    !machine_facing(arguments) && interactive()
 }
 
 /// What guidance did with an invocation.
@@ -267,13 +289,30 @@ pub enum Guided {
 /// Fills in what a bare command left out, or leaves the arguments alone. The
 /// result is parsed by the ordinary parser, so nothing here can invent
 /// behaviour the command line cannot express.
-pub fn complete(arguments: Vec<OsString>, palette: &Palette) -> Guided {
-    if machine_facing(&arguments) || !interactive() || arguments.len() != 2 {
+pub fn complete(arguments: Vec<OsString>, palette: &Palette, entry: Entry) -> Guided {
+    // Only a command with nothing after it is under-specified in a way guidance
+    // can fix. A menu adds its command to flags that were already typed, so its
+    // invocation is longer without being any less bare.
+    let bare = match entry {
+        Entry::Typed => arguments.len() == 2,
+        Entry::Menu => true,
+    };
+    if !bare || !asks(&arguments) {
         return Guided::Untouched;
     }
-    let extra = match arguments[1].to_string_lossy().as_ref() {
-        "annotate" => annotate(palette),
-        "index" => index(palette),
+    let Some(command) = arguments.last() else {
+        return Guided::Untouched;
+    };
+    // Everything already typed, so the command a screen shows is the command
+    // that runs: a global flag chosen before the subcommand belongs in it.
+    let typed: Vec<String> = arguments
+        .iter()
+        .skip(1)
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect();
+    let extra = match command.to_string_lossy().as_ref() {
+        "annotate" => annotate(palette, &typed),
+        "index" => index(palette, &typed),
         "search" => search(palette),
         _ => return Guided::Untouched,
     };
@@ -353,7 +392,7 @@ fn lerobot_scope(palette: &Palette, episodes: &[cerul::episode::Episode]) -> Opt
 
 /// What a person has in front of them, named the way they would describe it
 /// rather than by the label names the flag happens to use.
-fn annotate(palette: &Palette) -> Option<Vec<String>> {
+fn annotate(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
     let path = pick_input(palette, "Annotate · which video or dataset?").ok()??;
     let episodes = dataset(&path);
     let robot = Choice::new(
@@ -381,27 +420,23 @@ fn annotate(palette: &Palette) -> Option<Vec<String>> {
         false => [robot, general, everything],
     };
     let items = select(palette, "What is in it?", &presets).ok()??;
-    let mut argv = vec!["cerul".into(), "annotate".into(), path, "--semantic".into()];
+    let mut extra = vec![path, "--semantic".to_owned()];
     if items != "default" {
-        argv.push(items.to_owned());
+        extra.push(items.to_owned());
     }
     if let Some(episodes) = &episodes {
-        argv.extend(lerobot_scope(palette, episodes)?);
+        extra.extend(lerobot_scope(palette, episodes)?);
     }
-    let dry = confirm(palette, &argv).ok()??;
-    let mut extra: Vec<String> = argv.split_off(2);
-    if dry {
+    if confirm(palette, typed, &extra).ok()?? {
         extra.push("--dry-run".into());
     }
     Some(extra)
 }
 
-fn index(palette: &Palette) -> Option<Vec<String>> {
+fn index(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
     let path = pick_input(palette, "Index · which video or folder?").ok()??;
-    let mut argv = vec!["cerul".into(), "index".into(), path];
-    let dry = confirm(palette, &argv).ok()??;
-    let mut extra: Vec<String> = argv.split_off(2);
-    if dry {
+    let mut extra = vec![path];
+    if confirm(palette, typed, &extra).ok()?? {
         extra.push("--dry-run".into());
     }
     Some(extra)
@@ -419,9 +454,10 @@ fn search(palette: &Palette) -> Option<Vec<String>> {
 }
 
 /// Offered under the home screen, so running `cerul` still shows what it always
-/// showed and the menu is an addition rather than a replacement.
-pub fn home_menu(palette: &Palette) -> Option<Vec<OsString>> {
-    if !interactive() {
+/// showed and the menu is an addition rather than a replacement. The choice is
+/// appended to what was typed, so `--workspace` and the rest survive it.
+pub fn home_menu(palette: &Palette, arguments: &[OsString]) -> Option<Vec<OsString>> {
+    if !asks(arguments) {
         return None;
     }
     let choices = [
@@ -435,5 +471,7 @@ pub fn home_menu(palette: &Palette) -> Option<Vec<OsString>> {
         Choice::new("Leave", "", None),
     ];
     let command = select(palette, "What do you want to do?", &choices).ok()??;
-    Some(vec!["cerul".into(), OsString::from(command?)])
+    let mut next = arguments.to_vec();
+    next.push(OsString::from(command?));
+    Some(next)
 }

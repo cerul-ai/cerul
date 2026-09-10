@@ -168,6 +168,9 @@ struct SkillArgs {
     /// Write the skill to stdout instead of installing it.
     #[arg(long)]
     print: bool,
+    /// Replace an installed skill even when it was changed after it was written.
+    #[arg(long)]
+    force: bool,
 }
 /// Agents that read the same skill format from a known directory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -500,13 +503,98 @@ struct SkillReport {
     skill: Option<String>,
 }
 
-/// A command that continues unfinished work. It repeats the original invocation
-/// and changes only what the failure calls for, so running it is always safe:
-/// finished windows are reused and nothing is recomputed on purpose.
-#[derive(Debug, Clone, serde::Serialize)]
-struct Retry {
-    argv: Vec<String>,
-    reason: &'static str,
+/// Writing the skill needs no workspace and, unless an agent's own directory is
+/// named, no home directory either: a container with neither can still redirect
+/// the file somewhere it can use.
+fn skill(cli: &Cli, args: &SkillArgs) -> Result<(Outcome, u8)> {
+    // Printing the skill, or writing it to a named directory, needs no
+    // home directory. Only naming an agent's own directory does, so a
+    // container without HOME can still redirect the file somewhere.
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let targets: BTreeMap<String, PathBuf> = home
+        .iter()
+        .flat_map(|home| {
+            [Agent::Claude, Agent::Codex, Agent::Pi].map(|agent| {
+                (
+                    agent.label().to_owned(),
+                    agent.directory(home).join("cerul/SKILL.md"),
+                )
+            })
+        })
+        .collect();
+    let version = env!("CARGO_PKG_VERSION").to_owned();
+    let text = skill_text();
+    if args.print {
+        return Ok((
+            Outcome::Skill(SkillReport {
+                version,
+                installed: None,
+                planned: None,
+                targets,
+                skill: Some(text),
+            }),
+            0,
+        ));
+    }
+    let destination = match (&args.dir, &args.install) {
+        (Some(directory), _) => Some(directory.join("cerul/SKILL.md")),
+        (None, Some(agent)) => {
+            let home = home
+                .as_ref()
+                .context("set HOME, or choose a directory with --dir")
+                .map_err(|e| category(2, e))?;
+            Some(agent.directory(home).join("cerul/SKILL.md"))
+        }
+        (None, None) => None,
+    };
+    let (mut installed, mut planned) = (None, None);
+    if let Some(path) = destination {
+        if path.is_file() {
+            let existing = fs::read_to_string(&path).unwrap_or_default();
+            // Replacing an older copy is an upgrade and needs no
+            // ceremony. Replacing this version's copy when it no longer
+            // matches means somebody edited it, and their work is not
+            // this command's to discard.
+            let ours = existing.contains(&format!("{SKILL_MARKER} {version}"));
+            let edited = ours && existing != text;
+            anyhow::ensure!(
+                args.force || (existing.contains(SKILL_MARKER) && !edited),
+                CliError(
+                    2,
+                    format!(
+                        "{} was {}; move it aside, or pass --force to replace it",
+                        path.display(),
+                        match edited {
+                            true => "changed after cerul wrote it",
+                            false => "not written by cerul",
+                        }
+                    )
+                )
+            );
+        }
+        if cli.dry_run {
+            planned = Some(path);
+        } else {
+            let parent = path.parent().context("skill path has no directory")?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("could not create {}", parent.display()))
+                .map_err(|e| category(4, e))?;
+            fs::write(&path, &text)
+                .with_context(|| format!("could not write {}", path.display()))
+                .map_err(|e| category(4, e))?;
+            installed = Some(path);
+        }
+    }
+    Ok((
+        Outcome::Skill(SkillReport {
+            version,
+            installed,
+            planned,
+            targets,
+            skill: None,
+        }),
+        0,
+    ))
 }
 
 /// Provider wording differs by endpoint, so the categories are matched on the
@@ -524,7 +612,10 @@ fn rate_limited(error: &str) -> bool {
     .any(|signal| text.contains(signal))
 }
 
-fn retry_after(report: &cerul::annotate::pipeline::Report, original: &[String]) -> Option<Retry> {
+fn retry_after(
+    report: &cerul::annotate::pipeline::Report,
+    original: &[String],
+) -> Option<cerul::annotate::pipeline::Retry> {
     if !report.partial || report.dry_run {
         return None;
     }
@@ -559,7 +650,10 @@ fn retry_after(report: &cerul::annotate::pipeline::Report, original: &[String]) 
         }
         argv.push(argument.clone());
     }
-    let reason = if limited { "rate_limit" } else { "incomplete" };
+    let reason = match limited {
+        true => cerul::annotate::pipeline::RetryReason::RateLimit,
+        false => cerul::annotate::pipeline::RetryReason::Incomplete,
+    };
     // Halving a cap the person already chose respects their intent; a first
     // limit starts low enough that a retry is worth attempting at all.
     let next = match (limited, rpm) {
@@ -571,7 +665,7 @@ fn retry_after(report: &cerul::annotate::pipeline::Report, original: &[String]) 
         argv.push("--rpm".into());
         argv.push(value.to_string());
     }
-    Some(Retry { argv, reason })
+    Some(cerul::annotate::pipeline::Retry { argv, reason })
 }
 
 /// Everything a command can produce. JSON mode serializes it; human mode renders it.
@@ -601,11 +695,7 @@ enum Outcome {
     },
     Index(pipeline::Report, BTreeMap<String, PathBuf>),
     Search(cerul::search::Report, render::SearchContext),
-    Annotate(
-        cerul::annotate::pipeline::Report,
-        BTreeMap<String, PathBuf>,
-        Option<Retry>,
-    ),
+    Annotate(cerul::annotate::pipeline::Report, BTreeMap<String, PathBuf>),
 }
 impl Outcome {
     fn json(&self) -> Result<Value> {
@@ -634,15 +724,7 @@ impl Outcome {
             Outcome::Remove(report, _, _) => serde_json::to_value(report)?,
             Outcome::Timeline(timeline, _) => serde_json::to_value(timeline)?,
             Outcome::Skill(report) => serde_json::to_value(report)?,
-            Outcome::Annotate(report, _, retry) => {
-                let mut value = serde_json::to_value(report)?;
-                // Unfinished work needs a command, not a description of one: this
-                // is the original invocation with only the failure's fix applied.
-                if let Some(retry) = retry {
-                    value["retry"] = serde_json::to_value(retry)?;
-                }
-                value
-            }
+            Outcome::Annotate(report, _) => serde_json::to_value(report)?,
         })
     }
     fn render(&self, out: &mut dyn Write, palette: &Palette) -> io::Result<()> {
@@ -705,8 +787,9 @@ impl Outcome {
             Outcome::Remove(report, names, unknown) => {
                 render::remove(out, palette, report, names, unknown)
             }
-            Outcome::Annotate(report, names, retry) => {
-                let command = retry
+            Outcome::Annotate(report, names) => {
+                let command = report
+                    .retry
                     .as_ref()
                     .map(|retry| render::shell_command(&retry.argv));
                 render::annotate(out, palette, report, names, command.as_deref())
@@ -928,7 +1011,17 @@ fn names(workspace: &Path) -> BTreeMap<String, PathBuf> {
 }
 const MEDIA_NOTICE: &str = "Using Gemini (media may be sent, usage billed to your key):";
 
-async fn execute(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(Outcome, u8)> {
+async fn execute(
+    cli: &Cli,
+    invocation: &[String],
+    sink: &Sink,
+    cancel: CancellationToken,
+) -> Result<(Outcome, u8)> {
+    // Writing the skill touches no workspace, so it is answered before one has
+    // to exist.
+    if let Some(Command::Skill(args)) = &cli.command {
+        return skill(cli, args);
+    }
     let workspace = cli
         .workspace
         .clone()
@@ -1134,7 +1227,7 @@ async fn execute(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(O
             readable(&args.paths)?;
             cerul::media::check_dependencies().map_err(|e| category(3, e))?;
             let events = sink.clone();
-            let report = cerul::annotate::pipeline::run(
+            let mut report = cerul::annotate::pipeline::run(
                 &args.paths,
                 &workspace,
                 &config,
@@ -1145,11 +1238,10 @@ async fn execute(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(O
             .await?;
             sink.finish();
             let code = if report.partial { 6 } else { 0 };
-            let invocation: Vec<String> = std::env::args_os()
-                .map(|argument| argument.to_string_lossy().into_owned())
-                .collect();
-            let retry = retry_after(&report, &invocation);
-            Ok((Outcome::Annotate(report, names(&workspace), retry), code))
+            // Guidance completes an argument list before it is parsed, so the
+            // command that continues this work is built from what actually ran.
+            report.retry = retry_after(&report, invocation);
+            Ok((Outcome::Annotate(report, names(&workspace)), code))
         }
         Some(Command::Search(args)) => {
             let config = config(cli).map_err(|e| category(2, e))?;
@@ -1223,78 +1315,8 @@ async fn execute(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(O
                 0,
             ))
         }
-        Some(Command::Skill(args)) => {
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .context("set HOME to locate an agent's skills directory")
-                .map_err(|e| category(2, e))?;
-            let targets: BTreeMap<String, PathBuf> = [Agent::Claude, Agent::Codex, Agent::Pi]
-                .iter()
-                .map(|agent| {
-                    (
-                        agent.label().to_owned(),
-                        agent.directory(&home).join("cerul/SKILL.md"),
-                    )
-                })
-                .collect();
-            let version = env!("CARGO_PKG_VERSION").to_owned();
-            if args.print {
-                return Ok((
-                    Outcome::Skill(SkillReport {
-                        version,
-                        installed: None,
-                        planned: None,
-                        targets,
-                        skill: Some(skill_text()),
-                    }),
-                    0,
-                ));
-            }
-            let destination = match (&args.dir, &args.install) {
-                (Some(directory), _) => Some(directory.join("cerul/SKILL.md")),
-                (None, Some(agent)) => Some(agent.directory(&home).join("cerul/SKILL.md")),
-                (None, None) => None,
-            };
-            let (mut installed, mut planned) = (None, None);
-            if let Some(path) = destination {
-                // Replacing Cerul's own copy is routine; replacing a file someone
-                // wrote by hand is not, so the marker has to be there first.
-                if path.exists() {
-                    let existing = fs::read_to_string(&path).unwrap_or_default();
-                    anyhow::ensure!(
-                        existing.contains(SKILL_MARKER),
-                        CliError(
-                            2,
-                            format!(
-                                "{} was not written by cerul; move it aside first",
-                                path.display()
-                            )
-                        )
-                    );
-                }
-                if cli.dry_run {
-                    planned = Some(path);
-                } else {
-                    let parent = path.parent().context("skill path has no directory")?;
-                    fs::create_dir_all(parent)
-                        .with_context(|| format!("could not create {}", parent.display()))
-                        .map_err(|e| category(4, e))?;
-                    fs::write(&path, skill_text())
-                        .with_context(|| format!("could not write {}", path.display()))
-                        .map_err(|e| category(4, e))?;
-                    installed = Some(path);
-                }
-            }
-            Ok((
-                Outcome::Skill(SkillReport {
-                    version,
-                    installed,
-                    planned,
-                    targets,
-                    skill: None,
-                }),
-                0,
-            ))
+        Some(Command::Skill(_)) => {
+            unreachable!("the skill is written before a workspace is resolved")
         }
         Some(Command::Completions { .. }) => {
             unreachable!("completions are printed before the runtime starts")
@@ -1538,24 +1560,27 @@ fn hint(code: u8, error: &anyhow::Error, env: &str) -> Option<String> {
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    run(std::env::args_os().collect(), true).await
+    run(std::env::args_os().collect(), guide::Entry::Typed).await
 }
 
 /// One invocation, from arguments to exit code. `guided` is false for the run a
 /// menu started, so a completed command can never open another menu.
-async fn run(arguments: Vec<std::ffi::OsString>, guided: bool) -> std::process::ExitCode {
+async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::process::ExitCode {
     let prompts = Palette::new(console::colors_enabled_stderr());
     // Guidance completes the arguments and then steps out of the way: what runs
     // is what the ordinary parser makes of them, exactly as if they were typed.
-    let arguments = match guided {
-        true => match guide::complete(arguments.clone(), &prompts) {
-            guide::Guided::Completed(completed) => completed,
-            guide::Guided::Untouched => arguments,
-            guide::Guided::Left => return std::process::ExitCode::SUCCESS,
-        },
-        false => arguments,
+    let typed = arguments.clone();
+    let arguments = match guide::complete(arguments.clone(), &prompts, entry) {
+        guide::Guided::Completed(completed) => completed,
+        guide::Guided::Untouched => arguments,
+        guide::Guided::Left => return std::process::ExitCode::SUCCESS,
     };
     let json = arguments.iter().any(|arg| arg == "--json");
+    // The command that ran, which is what a retry has to repeat.
+    let invocation: Vec<String> = arguments
+        .iter()
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect();
     let cli = match Cli::try_parse_from(arguments.iter().cloned()) {
         Ok(cli) => cli,
         Err(error) => {
@@ -1615,8 +1640,11 @@ async fn run(arguments: Vec<std::ffi::OsString>, guided: bool) -> std::process::
     });
     let result = cerul::media::with_cancellation(cancel.clone(), async {
         let resolver = credentials::resolver(&cli, cancel.clone());
-        cerul::providers::with_credential_resolver(resolver, execute(&cli, &sink, cancel.clone()))
-            .await
+        cerul::providers::with_credential_resolver(
+            resolver,
+            execute(&cli, &invocation, &sink, cancel.clone()),
+        )
+        .await
     })
     .await;
     listener.abort();
@@ -1676,15 +1704,16 @@ async fn run(arguments: Vec<std::ffi::OsString>, guided: bool) -> std::process::
     };
     // The home screen keeps its own output and the menu is offered underneath
     // it, so running `cerul` still shows everything it always showed.
-    if guided
+    if entry == guide::Entry::Typed
         && code == 0
         && written.is_ok()
         && cli.command.is_none()
         && mode == Mode::Human
-        && !cli.quiet
-        && let Some(next) = guide::home_menu(&prompts)
+        && let Some(next) = guide::home_menu(&prompts, &typed)
     {
-        return Box::pin(run(next, false)).await;
+        // The command a menu chose still has to be completed, and a command can
+        // only reach the menu once, so this cannot ask twice.
+        return Box::pin(run(next, guide::Entry::Menu)).await;
     }
     match written {
         Ok(()) => std::process::ExitCode::from(code),

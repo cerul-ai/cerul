@@ -84,7 +84,8 @@ is. It is absent while a module is incomplete, because there is no file to point
 at yet.
 
 **`retry`** appears on a partial annotate result and carries the command that
-continues the work:
+continues the work. A cancelled run has no result object at all, only an error
+with code `cancelled` and exit 5; the same command run again resumes it.
 
 ```json
 {

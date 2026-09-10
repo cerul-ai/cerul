@@ -11,7 +11,7 @@ struct Example {
     args: Vec<String>,
 }
 
-fn stopped(error: &str) -> super::Retry {
+fn stopped(error: &str) -> cerul::annotate::pipeline::Retry {
     let report = cerul::annotate::pipeline::Report {
         modules: vec![cerul::annotate::pipeline::ModuleResult {
             episode: "demo/0".into(),
@@ -27,6 +27,7 @@ fn stopped(error: &str) -> super::Retry {
         writebacks: Vec::new(),
         partial: true,
         dry_run: false,
+        retry: None,
     };
     let original: Vec<String> = [
         "/usr/local/bin/cerul",
@@ -46,7 +47,10 @@ fn stopped(error: &str) -> super::Retry {
 #[test]
 fn the_retry_repeats_the_invocation_and_changes_only_the_rate() {
     let limited = stopped("gemini rate limit (429)");
-    assert_eq!(limited.reason, "rate_limit");
+    assert_eq!(
+        limited.reason,
+        cerul::annotate::pipeline::RetryReason::RateLimit
+    );
     assert_eq!(
         limited.argv,
         [
@@ -66,7 +70,10 @@ fn the_retry_repeats_the_invocation_and_changes_only_the_rate() {
     );
     // Nothing else earns a rate cap, and no failure earns --recompute.
     let other = stopped("connection reset");
-    assert_eq!(other.reason, "incomplete");
+    assert_eq!(
+        other.reason,
+        cerul::annotate::pipeline::RetryReason::Incomplete
+    );
     assert!(!other.argv.iter().any(|argument| argument == "--rpm"));
     assert!(!other.argv.iter().any(|argument| argument == "--recompute"));
 }

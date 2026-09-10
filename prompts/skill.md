@@ -46,10 +46,11 @@ Events on stderr:
   count and path. Only a published file is safe to read or train on.
 - `log` carries human-readable notices.
 
-When a run ends partial or cancelled, the final object carries `retry`. Run
-`retry.argv` verbatim to continue: it repeats the original invocation and changes
-only what the failure calls for. Never add `--recompute` to a retry; it discards
-finished work.
+A partial run's final object carries `retry`. Run `retry.argv` verbatim to
+continue: it repeats the original invocation and changes only what the failure
+calls for. A cancelled run has no result object at all, only
+`{"error":{"code":"cancelled",...}}` and exit 5; run the same command again to
+resume it. Never add `--recompute` to either; it discards finished work.
 
 ## Workflows
 

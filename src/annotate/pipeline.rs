@@ -128,12 +128,36 @@ pub struct WritebackResult {
     pub complete: bool,
     pub error: Option<String>,
 }
+/// Why a run stopped early, in the terms that decide what to change about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetryReason {
+    /// A provider limited the request rate, so the retry lowers it.
+    RateLimit,
+    /// Work remains for another reason; the retry repeats the command unchanged.
+    Incomplete,
+}
+/// The command that continues unfinished work: the original invocation with
+/// only the failure's fix applied, so running it is always safe. Published work
+/// is reused and nothing is recomputed on purpose.
+///
+/// The result carries this so that a machine reader finds recovery in the same
+/// object as the failure. Only the binary can fill it in, because only the
+/// binary sees an argument list.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Retry {
+    pub argv: Vec<String>,
+    pub reason: RetryReason,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Report {
     pub modules: Vec<ModuleResult>,
     pub writebacks: Vec<WritebackResult>,
     pub partial: bool,
     pub dry_run: bool,
+    /// Present when work remains. Absent on a complete or dry run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<Retry>,
 }
 fn interrupted(cancel: &CancellationToken) -> Result<()> {
     if cancel.is_cancelled() {
@@ -359,6 +383,7 @@ async fn run_inner(
         writebacks: Vec::new(),
         partial: false,
         dry_run: options.dry_run,
+        retry: None,
     };
     for episode in episodes {
         let dataset = episode.source.format.starts_with("lerobot/");
@@ -390,13 +415,18 @@ async fn run_inner(
                     records: 0,
                     complete: false,
                     error: None,
+                    // Stream paths are relative to the episode's root, and two
+                    // directories can hold the same file name, so the root has to
+                    // stay on the front of it.
                     source: match dataset {
                         true => episode.source.root.clone(),
                         false => episode
                             .video(&episode.time.reference)
                             .ok()
                             .and_then(|stream| match stream {
-                                crate::episode::Stream::Video { path, .. } => Some(path.clone()),
+                                crate::episode::Stream::Video { path, .. } => {
+                                    Some(episode.source.root.join(path))
+                                }
                                 _ => None,
                             })
                             .unwrap_or_else(|| episode.source.root.clone()),

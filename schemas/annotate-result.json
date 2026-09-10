@@ -16,6 +16,17 @@
     "partial": {
       "type": "boolean"
     },
+    "retry": {
+      "description": "Present when work remains. Absent on a complete or dry run.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Retry"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "writebacks": {
       "type": "array",
       "items": {
@@ -80,6 +91,40 @@
         "annotation",
         "records",
         "complete"
+      ]
+    },
+    "Retry": {
+      "description": "The command that continues unfinished work: the original invocation with\nonly the failure's fix applied, so running it is always safe. Published work\nis reused and nothing is recomputed on purpose.\n\nThe result carries this so that a machine reader finds recovery in the same\nobject as the failure. Only the binary can fill it in, because only the\nbinary sees an argument list.",
+      "type": "object",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "$ref": "#/$defs/RetryReason"
+        }
+      },
+      "required": [
+        "argv",
+        "reason"
+      ]
+    },
+    "RetryReason": {
+      "description": "Why a run stopped early, in the terms that decide what to change about it.",
+      "oneOf": [
+        {
+          "description": "A provider limited the request rate, so the retry lowers it.",
+          "type": "string",
+          "const": "rate_limit"
+        },
+        {
+          "description": "Work remains for another reason; the retry repeats the command unchanged.",
+          "type": "string",
+          "const": "incomplete"
+        }
       ]
     },
     "WritebackResult": {

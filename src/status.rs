@@ -254,6 +254,17 @@ pub fn timeline(
                 {
                     continue;
                 }
+                // The same validation the summary applies. A sidecar is
+                // authoritative, so a corrupt one is an error to report, not a
+                // set of records to hand back as if they had been published.
+                let coverage = episode
+                    .video_coverage(stream.id())?
+                    .context("annotation stream has no episode coverage")?;
+                file.validate_in_range(coverage, None)?;
+                anyhow::ensure!(
+                    file.header.episode == episode.episode_id,
+                    "annotation provenance does not match its episode"
+                );
                 annotations.push(name.clone());
                 if wanted.as_ref().is_some_and(|kind| kind != &name) {
                     continue;

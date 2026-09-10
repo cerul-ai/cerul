@@ -51,9 +51,13 @@ it published:
 }
 ```
 
-`retry` is present on a partial result. It repeats every original argument and
-changes only what the failure suggests; `--recompute` is never added. An agent
-can run `retry.argv` verbatim.
+`retry` is present on a partial result, and it is part of the generated schema
+rather than a field added beside it, so a client built from `schemas/` knows the
+recovery exists. It repeats every original argument, including any completed by
+guidance, and changes only what the failure suggests; `--recompute` is never
+added. An agent can run `retry.argv` verbatim. A cancelled run has no result
+object at all, only an error with code `cancelled`; the same command run again
+resumes it.
 
 The draft proposed a separate `outputs` array. It was dropped during
 implementation: `modules[]` already is that list once each entry carries its own
@@ -130,12 +134,16 @@ cerul skill --install claude  ~/.claude/skills/cerul/SKILL.md
 cerul skill --install codex   ~/.codex/skills/cerul/SKILL.md
 cerul skill --install pi      ~/.pi/agent/skills/cerul/SKILL.md
 cerul skill --dir DIR         any other skills directory
+cerul skill --install claude --force   replace a skill that was changed
 ```
 
-Receipt: `✓ Wrote ~/.claude/skills/cerul/SKILL.md (cerul 0.0.7)`. The file
-records the CLI version in its front matter; a later `--install` overwrites
-only a file that carries the same `generated-by: cerul` marker, never a
-user-edited one, and says so. Listed under `Maintain` in root help.
+Receipt: `✓ Wrote ~/.claude/skills/cerul/SKILL.md (cerul 0.0.6)`. The file records
+the CLI version in its front matter. Installing replaces a file an older build
+wrote, because that is an upgrade. It refuses when the file carries this build's
+version but no longer matches what this build writes, because that means somebody
+edited it; `--force` is the way past that. A file with no marker at all is never
+replaced. Printing the skill, or writing it to a named directory, needs neither a
+workspace nor a home directory.
 
 ## 3. Documentation
 
