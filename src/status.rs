@@ -33,6 +33,9 @@ pub struct EpisodeStatus {
     pub media: PathBuf,
     pub sidecar: PathBuf,
     pub media_present: bool,
+    /// Episode-relative length of the primary stream, read from the sidecar.
+    #[serde(default)]
+    pub duration_us: Option<i64>,
     pub annotations: Vec<String>,
     pub embedding_spaces: Vec<String>,
     pub embeddings: Vec<EmbeddingStatus>,
@@ -68,6 +71,232 @@ fn file_names(directory: &Path, suffix: &str) -> Result<Vec<String>> {
     }
     names.sort();
     Ok(names)
+}
+
+/// One published annotation record, reduced to what a person reads in a list.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TimelineEntry {
+    pub episode: String,
+    pub stream: String,
+    /// Full annotation name, for example `semantic.subtask`.
+    pub annotation: String,
+    pub start_us: i64,
+    pub end_us: i64,
+    /// The record's own fields written as one line. The record itself stays
+    /// authoritative; this is a reading aid, not a new data format.
+    pub summary: String,
+    pub record: crate::annotations::Record,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TimelineEpisode {
+    pub episode_id: String,
+    pub media: PathBuf,
+    pub sidecar: PathBuf,
+    pub duration_us: Option<i64>,
+    /// Annotation names present for this episode, in file order.
+    pub annotations: Vec<String>,
+    /// Records that matched the selection before `limit` was applied.
+    pub total: usize,
+    pub entries: Vec<TimelineEntry>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Timeline {
+    pub episodes: Vec<TimelineEpisode>,
+}
+#[derive(Debug, Clone)]
+pub struct TimelineOptions {
+    /// Semantic item or full annotation name; `None` reads every published item.
+    pub kind: Option<String>,
+    pub limit: usize,
+}
+
+/// Writes one record as a line, using the fields that item actually defines.
+/// An unknown item falls back to its own JSON so nothing is silently dropped.
+pub fn summarize_record(annotation: &str, record: &crate::annotations::Record) -> String {
+    let text = |key: &str| {
+        record
+            .fields
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let item = annotation
+        .rsplit('/')
+        .next()
+        .unwrap_or(annotation)
+        .strip_prefix("semantic.")
+        .unwrap_or(annotation);
+    match item {
+        "task" | "subtask" => text("text"),
+        "event" => {
+            let objects = record
+                .fields
+                .get("objects")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            let outcome = text("outcome");
+            let mut line = text("verb");
+            if !objects.is_empty() {
+                line.push(' ');
+                line.push_str(&objects);
+            }
+            if !outcome.is_empty() {
+                line.push_str(" → ");
+                line.push_str(&outcome);
+            }
+            line
+        }
+        "interaction" => {
+            let contact = match record
+                .fields
+                .get("contact")
+                .and_then(serde_json::Value::as_bool)
+            {
+                Some(true) => " · in contact",
+                Some(false) => " · no contact",
+                None => "",
+            };
+            format!("{} · {}{contact}", text("hand"), text("object"))
+        }
+        "state" => {
+            let (before, after) = (text("before"), text("after"));
+            let change = match (before.is_empty(), after.is_empty()) {
+                (false, false) => format!("{before} → {after}"),
+                (true, false) => after,
+                (false, true) => before,
+                (true, true) => String::new(),
+            };
+            let head = format!("{} · {}", text("object"), text("attribute"));
+            if change.is_empty() {
+                head
+            } else {
+                format!("{head}: {change}")
+            }
+        }
+        "flag" => format!("{}: {}", text("kind"), text("note")),
+        "progress" => {
+            let value = record
+                .fields
+                .get("value")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or_default();
+            let done = record
+                .fields
+                .get("done")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or_default();
+            format!("{:.0}%{}", value * 100., if done { " · done" } else { "" })
+        }
+        _ => serde_json::to_string(&record.fields).unwrap_or_default(),
+    }
+}
+
+/// Reads published annotation records in time order. Local and read-only: it
+/// opens sidecars only, makes no model call, and returns records unchanged.
+pub fn timeline(
+    workspace: &Path,
+    path: Option<&Path>,
+    options: &TimelineOptions,
+) -> Result<Timeline> {
+    let wanted = options.kind.as_ref().map(|kind| {
+        let item = kind.strip_prefix("semantic.").unwrap_or(kind);
+        format!("semantic.{item}")
+    });
+    let selection = path
+        .map(|p| {
+            if p.exists() {
+                fs::canonicalize(p)
+            } else {
+                Ok(p.to_owned())
+            }
+        })
+        .transpose()?;
+    let mut episodes = Vec::new();
+    for entry in read_registry(workspace)? {
+        if selection
+            .as_ref()
+            .is_some_and(|path| !entry.media.starts_with(path) && !entry.sidecar.starts_with(path))
+        {
+            continue;
+        }
+        let episode: Episode =
+            serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json"))?)
+                .context("invalid registered episode")?;
+        episode.validate()?;
+        let mut annotations = Vec::new();
+        let mut entries = Vec::new();
+        for stream in &episode.streams {
+            if !matches!(stream, crate::episode::Stream::Video { .. }) {
+                continue;
+            }
+            let directory = crate::index::stations::stream_directory(
+                &entry.sidecar,
+                stream.id(),
+                &episode.time.reference,
+            );
+            for name in file_names(&directory, ".jsonl")? {
+                if !name.starts_with("semantic.") || name.contains("conflicts") {
+                    continue;
+                }
+                let file = AnnotationFile::read(&directory.join(format!("{name}.jsonl")))?;
+                // A file whose inputs changed describes media that no longer
+                // exists in that form; showing its records would mislead.
+                if file.header.stream != stream.id()
+                    || !crate::index::stations::has_current_input(&episode, &file)?
+                {
+                    continue;
+                }
+                annotations.push(name.clone());
+                if wanted.as_ref().is_some_and(|kind| kind != &name) {
+                    continue;
+                }
+                for record in file.records {
+                    entries.push(TimelineEntry {
+                        episode: episode.episode_id.clone(),
+                        stream: stream.id().to_owned(),
+                        annotation: name.clone(),
+                        start_us: record.start_us,
+                        end_us: record.end_us,
+                        summary: summarize_record(&name, &record),
+                        record,
+                    });
+                }
+            }
+        }
+        if annotations.is_empty() {
+            continue;
+        }
+        annotations.sort();
+        annotations.dedup();
+        entries.sort_by(|a, b| {
+            (a.start_us, a.end_us, &a.annotation, &a.stream).cmp(&(
+                b.start_us,
+                b.end_us,
+                &b.annotation,
+                &b.stream,
+            ))
+        });
+        let total = entries.len();
+        entries.truncate(options.limit);
+        episodes.push(TimelineEpisode {
+            episode_id: entry.episode_id,
+            duration_us: episode.duration_us().ok(),
+            media: entry.media,
+            sidecar: entry.sidecar,
+            annotations,
+            total,
+            entries,
+        });
+    }
+    Ok(Timeline { episodes })
 }
 
 /// Reads only local state: no dependency probe, model call, lock, or filesystem mutation.
@@ -182,6 +411,7 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
         episodes.push(EpisodeStatus {
             episode_id: entry.episode_id,
             media_present: entry.media.is_file(),
+            duration_us: episode.duration_us().ok(),
             media: entry.media,
             sidecar: entry.sidecar,
             annotations,

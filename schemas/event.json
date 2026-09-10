@@ -36,6 +36,74 @@
       ]
     },
     {
+      "description": "A durable unit of work that a rerun will reuse instead of repeating.",
+      "type": "object",
+      "properties": {
+        "episode": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "checkpoint"
+        },
+        "station": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "window": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "event",
+        "episode",
+        "station",
+        "window",
+        "total"
+      ]
+    },
+    {
+      "description": "A validated annotation file that now exists on disk. Distinct from a\ncheckpoint: only a published module is safe to read or train on.",
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "type": "string"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "published"
+        },
+        "path": {
+          "type": "string"
+        },
+        "records": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "episode",
+        "stream",
+        "annotation",
+        "records",
+        "path"
+      ]
+    },
+    {
       "type": "object",
       "properties": {
         "event": {

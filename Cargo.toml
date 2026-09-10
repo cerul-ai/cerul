@@ -11,7 +11,7 @@ include = [
     "/README.md", "/README.zh-CN.md", "/README.zh-TW.md", "/DESIGN.md", "/ARCHITECTURE.md", "/CONTRIBUTING.md",
     "/CODE_OF_CONDUCT.md", "/SECURITY.md",
     "/src/**/*.rs", "/examples/*.rs", "/docs/**/*.md",
-    "/packaging/licenses/*.txt", "/scripts/build-*.sh", "/scripts/test-*.py", "/scripts/check-docs.py", "/scripts/package-media-source.sh", "/schemas/*.json", "/prompts/*.md", "/docs/assets/*.png",
+    "/packaging/licenses/*.txt", "/scripts/build-*.sh", "/scripts/test-*.py", "/scripts/check-docs.py", "/scripts/package-media-source.sh", "/schemas/*.json", "/prompts/*.md", "/skills/cerul/SKILL.md", "/docs/assets/*.png",
     "/models/det.onnx", "/models/rec.onnx", "/models/characters.txt",
     "/models/LICENSE", "/models/README.md",
     "/tests/*.rs", "/tests/*.py",

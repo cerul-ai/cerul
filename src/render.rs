@@ -13,7 +13,7 @@ use cerul::{
 use console::{Style, measure_text_width, truncate_str};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     time::Duration,
@@ -418,6 +418,53 @@ impl Progress {
                 };
                 self.println(&line);
             }
+            // A checkpoint moves no counter of its own: the progress event for the
+            // same window already drew it. It exists so a machine reader can tell
+            // durable work from work still only in memory.
+            Event::Checkpoint { .. } => {}
+            Event::Published {
+                episode,
+                annotation,
+                records,
+                ..
+            } => {
+                if self.quiet {
+                    return;
+                }
+                let label = station_label(&annotation);
+                let unit = format!("{records} record{}", if records == 1 { "" } else { "s" });
+                {
+                    let summary = format!("{} {unit}", label.to_lowercase());
+                    let summaries = self.finished.entry(episode.clone()).or_default();
+                    match summaries.iter_mut().find(|(name, _)| name == &annotation) {
+                        Some(slot) => slot.1 = summary,
+                        None => summaries.push((annotation.clone(), summary)),
+                    }
+                }
+                let message = format!(
+                    "{} {:<13} {}",
+                    self.palette.ok("✓"),
+                    label,
+                    self.palette.dim(&format!("{unit} · published"))
+                );
+                match self.bars.get(&(episode.clone(), annotation.clone())) {
+                    Some(bar) => {
+                        bar.set_style(
+                            ProgressStyle::with_template("    {prefix:<20!} {msg}")
+                                .expect("static template"),
+                        );
+                        bar.set_message(message);
+                        bar.finish();
+                    }
+                    None => {
+                        let name = self.name(&episode);
+                        self.println(&format!(
+                            "  {} {name}  {label}  {unit} · published",
+                            self.palette.ok("✓")
+                        ));
+                    }
+                }
+            }
             Event::Progress {
                 episode,
                 station,
@@ -516,9 +563,77 @@ fn next_steps(out: &mut dyn Write, palette: &Palette, items: &[(&str, &str)]) ->
         .unwrap_or(0);
     for (cmd, note) in items {
         let pad = " ".repeat(width - measure_text_width(cmd) + 4);
-        writeln!(out, "  {}{pad}{}", palette.cmd(cmd), palette.dim(note))?;
+        writeln!(
+            out,
+            "  {}{pad}{}",
+            palette.cmd(cmd),
+            palette.dim(note).trim_end()
+        )?;
     }
     Ok(())
+}
+
+/// The closing block of a result: what to run now that this finished. Three
+/// commands is the most anyone reads, so callers pass their best three.
+fn next_block(out: &mut dyn Write, palette: &Palette, items: &[(&str, &str)]) -> io::Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    writeln!(out)?;
+    writeln!(out, "{}", palette.bold("Next"))?;
+    next_steps(out, palette, items)
+}
+
+/// Aligned `label  value` rows: the facts a screen states before its result.
+fn facts(out: &mut dyn Write, palette: &Palette, rows: &[(&str, String)]) -> io::Result<()> {
+    let width = rows
+        .iter()
+        .map(|(label, _)| measure_text_width(label))
+        .max()
+        .unwrap_or(0);
+    for (label, value) in rows {
+        if value.is_empty() {
+            continue;
+        }
+        let pad = " ".repeat(width - measure_text_width(label) + 3);
+        writeln!(out, "  {}{pad}{value}", palette.dim(label))?;
+    }
+    Ok(())
+}
+
+/// The `--semantic` value a person types, from the annotation's internal name.
+fn item_name(annotation: &str) -> &str {
+    let item = annotation.rsplit('/').next().unwrap_or(annotation);
+    item.strip_prefix("semantic.").unwrap_or(item)
+}
+
+/// Quotes one argument so a copied command survives spaces, quotes, and globs.
+pub fn shell_quote(value: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./=:,@+".contains(c);
+    if !value.is_empty() && value.chars().all(safe) {
+        return value.to_owned();
+    }
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// One shell line that runs `argv` exactly, whatever the paths contain.
+pub fn shell_command(argv: &[String]) -> String {
+    argv.iter()
+        .map(|argument| shell_quote(argument))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A path as a person would type it: `~` while that stays unambiguous, and the
+/// full quoted path once the characters would otherwise change what runs.
+pub fn shell_path(path: &Path) -> String {
+    let display = tilde(path);
+    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./=:,@+~".contains(c);
+    if display.chars().all(safe) {
+        display
+    } else {
+        shell_quote(&path.to_string_lossy())
+    }
 }
 
 /// The screen shown for a bare `cerul`. Until the first video is searchable it
@@ -681,7 +796,24 @@ pub fn tilde(path: &Path) -> String {
     path.display().to_string()
 }
 
-fn checks(episode: &cerul::status::EpisodeStatus, palette: &Palette) -> String {
+/// The workspace overview. One row per video with a column per capability, so
+/// "indexed" stops standing for three different facts. `detail` adds the files
+/// a person needs when they asked about one path.
+pub fn status(
+    out: &mut dyn Write,
+    palette: &Palette,
+    status: &Status,
+    models: &ModelSummary,
+    probed: bool,
+    detail: bool,
+) -> io::Result<()> {
+    writeln!(
+        out,
+        "Workspace {}   {}",
+        tilde(&status.workspace),
+        palette.dim(&format!("·   cerul {}", status.version))
+    )?;
+    writeln!(out)?;
     let mark = |ready: bool| {
         if ready {
             palette.ok("✓")
@@ -689,90 +821,154 @@ fn checks(episode: &cerul::status::EpisodeStatus, palette: &Palette) -> String {
             palette.dim("–")
         }
     };
-    let has = |name: &str| episode.annotations.iter().any(|a| a == name);
-    let search = episode.embeddings.iter().any(|e| e.complete);
-    let semantic = episode
-        .annotations
-        .iter()
-        .any(|a| a.starts_with("semantic"));
-    let mut parts = vec![
-        format!("screen text {}", mark(has("screen_text"))),
-        format!("speech {}", mark(has("transcript"))),
-        format!("search {}", mark(search)),
-    ];
-    if semantic {
-        parts.push(format!("annotations {}", mark(true)));
-    }
-    if let Some(failed) = episode.embeddings.iter().find(|e| !e.complete) {
-        parts.push(palette.warn(&format!(
-            "search incomplete{}",
-            failed
-                .error
-                .as_deref()
-                .map(|e| format!(": {e}"))
-                .unwrap_or_default()
-        )));
-    }
-    if !episode.media_present {
-        parts.push(palette.warn("media missing"));
-    }
-    parts.join("   ")
-}
-
-pub fn status(
-    out: &mut dyn Write,
-    palette: &Palette,
-    status: &Status,
-    models: &ModelSummary,
-    probed: bool,
-) -> io::Result<()> {
-    writeln!(
-        out,
-        "Workspace  {}   ·   cerul {}",
-        tilde(&status.workspace),
-        status.version
-    )?;
-    writeln!(out)?;
-    writeln!(
-        out,
-        "{}",
-        palette.bold(&format!("Videos ({})", status.episodes.len()))
-    )?;
+    let search_state = |episode: &cerul::status::EpisodeStatus| -> (String, String) {
+        if episode.embeddings.iter().any(|state| state.complete) {
+            ("ready".into(), palette.ok("ready"))
+        } else if episode.embeddings.is_empty() {
+            ("–".into(), palette.dim("–"))
+        } else {
+            ("partial".into(), palette.warn("partial"))
+        }
+    };
+    let items = |episode: &cerul::status::EpisodeStatus| -> Vec<String> {
+        let mut names: Vec<String> = episode
+            .annotations
+            .iter()
+            .filter(|name| name.contains("semantic."))
+            .map(|name| item_name(name).to_owned())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    let station = |episode: &cerul::status::EpisodeStatus, name: &str| {
+        episode
+            .annotations
+            .iter()
+            .any(|annotation| annotation == name || annotation.ends_with(&format!("/{name}")))
+    };
     if status.episodes.is_empty() {
         writeln!(
             out,
-            "  none yet   {}",
-            palette.dim("add one with: cerul index ./video.mp4")
+            "  {}",
+            palette.dim("no videos yet   ·   add one with: cerul index ./video.mp4")
         )?;
-    }
-    let width = status
-        .episodes
-        .iter()
-        .map(|e| measure_text_width(&file_name(&e.media)))
-        .max()
-        .unwrap_or(0)
-        .min(40);
-    for episode in &status.episodes {
-        let name = truncate_str(&file_name(&episode.media), 40, "…").to_string();
-        let pad = " ".repeat(width.saturating_sub(measure_text_width(&name)));
-        writeln!(out, "  {name}{pad}   {}", checks(episode, palette))?;
+    } else if console::Term::stdout().size().1 < 80 {
+        // Below 80 columns the row becomes a block: a wrapped table is unreadable
+        // and a truncated path is useless.
+        for episode in &status.episodes {
+            let (plain, styled) = search_state(episode);
+            let _ = plain;
+            writeln!(
+                out,
+                "  {}   {}",
+                palette.bold(&file_name(&episode.media)),
+                palette.dim(&episode.duration_us.map(clock).unwrap_or_default())
+            )?;
+            writeln!(
+                out,
+                "    search {styled}   screen text {}   speech {}",
+                mark(station(episode, "screen_text")),
+                mark(station(episode, "transcript"))
+            )?;
+            let labels = items(episode);
+            if !labels.is_empty() {
+                writeln!(
+                    out,
+                    "    {} {}",
+                    palette.dim("annotations"),
+                    labels.join(" ")
+                )?;
+            }
+            if detail {
+                writeln!(out, "    {}", palette.dim(&tilde(&episode.sidecar)))?;
+            }
+        }
+    } else {
+        let name_of = |episode: &cerul::status::EpisodeStatus| {
+            truncate_str(&file_name(&episode.media), 28, "…").to_string()
+        };
+        let width = status
+            .episodes
+            .iter()
+            .map(|episode| measure_text_width(&name_of(episode)))
+            .chain(std::iter::once(5))
+            .max()
+            .unwrap_or(5);
+        let pad = |text: &str, styled: &str, to: usize| {
+            format!(
+                "{styled}{}",
+                " ".repeat(to.saturating_sub(measure_text_width(text)))
+            )
+        };
         writeln!(
             out,
-            "    {}",
-            palette.dim(&format!("annotations: {}", tilde(&episode.sidecar)))
+            "  {}",
+            palette.dim(&format!(
+                "{:<width$}   {:<8} {:<9} {:<6} {:<8} {}",
+                "Video", "Length", "Search", "Text", "Speech", "Annotations"
+            ))
+        )?;
+        for episode in &status.episodes {
+            let name = name_of(episode);
+            let length = episode.duration_us.map(clock).unwrap_or_else(|| "–".into());
+            let (plain, styled) = search_state(episode);
+            let labels = items(episode);
+            let annotations = match labels.len() {
+                0 => palette.dim("–"),
+                1..=3 => labels.join(" "),
+                _ => format!(
+                    "{} {}",
+                    labels[..3].join(" "),
+                    palette.dim(&format!("+{}", labels.len() - 3))
+                ),
+            };
+            writeln!(
+                out,
+                "  {}   {:<8} {} {} {} {annotations}",
+                pad(&name, &palette.bold(&name), width),
+                length,
+                pad(&plain, &styled, 9),
+                pad("✓", &mark(station(episode, "screen_text")), 6),
+                pad("✓", &mark(station(episode, "transcript")), 8),
+            )?;
+            if detail {
+                writeln!(out, "    {}", palette.dim(&tilde(&episode.sidecar)))?;
+            }
+        }
+    }
+    let missing: Vec<&cerul::status::EpisodeStatus> = status
+        .episodes
+        .iter()
+        .filter(|episode| !episode.media_present)
+        .collect();
+    if !missing.is_empty() {
+        writeln!(
+            out,
+            "  {} {} video file{} moved away; their annotations are still here",
+            palette.warn("!"),
+            missing.len(),
+            if missing.len() == 1 { "" } else { "s" }
+        )?;
+    }
+    if let Some(failed) = status
+        .episodes
+        .iter()
+        .flat_map(|episode| &episode.embeddings)
+        .find(|state| !state.complete && state.error.is_some())
+    {
+        writeln!(
+            out,
+            "  {} search index incomplete: {}",
+            palette.warn("!"),
+            failed.error.as_deref().unwrap_or_default()
         )?;
     }
     writeln!(out)?;
-    writeln!(out, "{}", palette.bold("Models"))?;
     let dims = models
         .embedding_dims
         .map(|d| format!(" ({d}d)"))
         .unwrap_or_default();
-    writeln!(
-        out,
-        "  Gemini   search {}{}   ·   speech & vision {}",
-        models.embedding, dims, models.transcription
-    )?;
     let check = if probed {
         let reachable = |name: &str| match status.capabilities.get(name) {
             Some(Some(true)) => palette.ok("ok"),
@@ -786,31 +982,114 @@ pub fn status(
             reachable("vision")
         )
     } else {
-        palette.dim("not checked · run cerul status --providers to verify")
+        palette.dim("endpoints not checked · cerul status --providers verifies them")
     };
-    writeln!(
+    let ocr = match status.capabilities.get("ocr") {
+        Some(Some(true)) => "OCR runs locally",
+        _ => "OCR unavailable",
+    };
+    facts(
         out,
-        "           {}   ·   {check}",
-        models.key.summary(palette)
+        palette,
+        &[
+            (
+                "Models",
+                format!(
+                    "{}   {}{dims} · {} · {}",
+                    models.key.provider,
+                    models.embedding,
+                    models.vision,
+                    models.key.summary(palette)
+                ),
+            ),
+            ("", check),
+            (
+                "Storage",
+                format!(
+                    "sidecars beside each video · {} vector space{} · {ocr}",
+                    status.spaces.len(),
+                    if status.spaces.len() == 1 { "" } else { "s" }
+                ),
+            ),
+        ],
     )?;
     for (name, provider) in &status.providers {
         if let Some(error) = &provider.error {
-            writeln!(out, "           {} {name}: {error}", palette.warn("!"))?;
+            writeln!(out, "  {} {name}: {error}", palette.warn("!"))?;
         }
     }
-    writeln!(out)?;
-    let ocr = match status.capabilities.get("ocr") {
-        Some(Some(true)) => "screen text OCR runs locally",
-        _ => "screen text OCR unavailable",
-    };
+    if !status.episodes.is_empty() && !detail {
+        writeln!(out)?;
+        writeln!(
+            out,
+            "{}",
+            palette.dim("cerul status <path> for files · add --timeline to read the annotations")
+        )?;
+    }
+    Ok(())
+}
+
+/// Where the agent skill can go, or where it just went. Read-only until asked.
+pub fn skill(
+    out: &mut dyn Write,
+    palette: &Palette,
+    installed: Option<&Path>,
+    planned: Option<&Path>,
+    targets: &BTreeMap<String, PathBuf>,
+) -> io::Result<()> {
+    if let Some(path) = installed {
+        writeln!(
+            out,
+            "{} Wrote {}   {}",
+            palette.ok("✓"),
+            tilde(path),
+            palette.dim(&format!("cerul {}", env!("CARGO_PKG_VERSION")))
+        )?;
+        writeln!(out)?;
+        return writeln!(
+            out,
+            "{}",
+            palette.dim("Start a new agent session so it picks the skill up.")
+        );
+    }
+    if let Some(path) = planned {
+        writeln!(
+            out,
+            "{} would write {}",
+            palette.bold("Dry run:"),
+            tilde(path)
+        )?;
+        return Ok(());
+    }
     writeln!(
         out,
-        "{}",
-        palette.dim(&format!(
-            "Storage  indexes live beside your videos (*.cerul) · {} vector space{} cached · {ocr}",
-            status.spaces.len(),
-            if status.spaces.len() == 1 { "" } else { "s" }
-        ))
+        "{}   {}",
+        palette.bold("Agent skill"),
+        palette.dim("teaches a coding agent to drive cerul through --json")
+    )?;
+    writeln!(out)?;
+    let width = targets
+        .keys()
+        .map(|name| measure_text_width(name))
+        .max()
+        .unwrap_or(0);
+    for (name, path) in targets {
+        let pad = " ".repeat(width - measure_text_width(name) + 3);
+        let state = if path.is_file() {
+            palette.ok("installed")
+        } else {
+            palette.dim("not installed")
+        };
+        writeln!(out, "  {name}{pad}{state}   {}", palette.dim(&tilde(path)))?;
+    }
+    next_block(
+        out,
+        palette,
+        &[
+            ("cerul skill --install claude", "write it for that agent"),
+            ("cerul skill --dir ./skills", "write it anywhere else"),
+            ("cerul skill --print", "read it, or pipe it somewhere"),
+        ],
     )
 }
 
@@ -1003,14 +1282,19 @@ pub fn index(
         )?;
     }
     if ready > 0 {
-        writeln!(out)?;
-        writeln!(out, "{}", palette.bold("Try"))?;
-        next_steps(
+        next_block(
             out,
             palette,
             &[
-                ("cerul search \"what you're looking for\"", "find moments"),
-                ("cerul search \"...\" --save ./clips", "export clips"),
+                (
+                    "cerul search \"what you're looking for\"",
+                    "find moments by meaning",
+                ),
+                (
+                    "cerul search --text \"exact words\"",
+                    "match screen text or speech",
+                ),
+                ("cerul status", "what is searchable and where it lives"),
             ],
         )?;
     }
@@ -1108,18 +1392,7 @@ pub fn search(
     }
     let columns = console::Term::stdout().size().1.clamp(60, 110) as usize;
     let body = columns.saturating_sub(12);
-    let separator = palette.dim("  ·  ");
-    writeln!(
-        out,
-        "🔍 {} for {subject}",
-        palette.bold(&format!(
-            "{} result{}",
-            report.hits.len(),
-            if report.hits.len() == 1 { "" } else { "s" }
-        ))
-    )?;
-    writeln!(out)?;
-    // One card per video: the same recording matched at several moments is one
+    // One block per video: the same recording matched at several moments is one
     // thing a person is looking at, not several unrelated results.
     let mut groups: Vec<(String, Vec<(usize, &search::Hit)>)> = Vec::new();
     for (index, hit) in report.hits.iter().enumerate() {
@@ -1133,7 +1406,21 @@ pub fn search(
             None => groups.push((key, vec![(index, hit)])),
         }
     }
-    let rule = |mark: &str| palette.dim(mark);
+    writeln!(
+        out,
+        "{} for {subject}   {}",
+        palette.bold(&format!(
+            "{} moment{}",
+            report.hits.len(),
+            if report.hits.len() == 1 { "" } else { "s" }
+        )),
+        palette.dim(&format!(
+            "in {} video{}",
+            groups.len(),
+            if groups.len() == 1 { "" } else { "s" }
+        ))
+    )?;
+    writeln!(out)?;
     for (_, moments) in &groups {
         let first = moments[0].1;
         let name = first
@@ -1145,43 +1432,29 @@ pub fn search(
             Some(path) => context.terminal.file_link(&palette.bold(&name), path),
             None => palette.bold(&name),
         };
-        let count = if moments.len() > 1 {
-            format!(
-                "{}{}",
-                separator,
-                palette.dim(&format!("{} moments", moments.len()))
-            )
-        } else {
-            String::new()
-        };
-        writeln!(out, "  {} {title}{count}", rule("┌"))?;
+        writeln!(out, "  {title}")?;
         for (index, hit) in moments {
-            writeln!(out, "  {}", rule("│"))?;
-            let mut meta = Vec::new();
+            let mut meta = vec![format!("{} → {}", clock(hit.start_us), clock(hit.end_us))];
+            // A similarity is a ranking score, not a probability that the moment
+            // is the one asked for, so it is never labelled a match percentage.
             if let Some(score) = hit.score {
-                meta.push(format!(
-                    "📊 {}",
-                    palette.ok(&format!("{:.0}% match", (score * 100.).clamp(0., 100.)))
-                ));
+                meta.push(format!("similarity {:.0}%", (score * 100.).clamp(0., 100.)));
+            } else if context.text {
+                meta.push("exact".into());
             }
-            meta.push(format!(
-                "🕐 {}",
-                palette.dim(&format!("{} → {}", clock(hit.start_us), clock(hit.end_us)))
-            ));
-            meta.push(format!("🎬 {}", palette.dim(kind_label(hit.matched))));
+            meta.push(kind_label(hit.matched).to_owned());
             writeln!(
                 out,
-                "  {}  {}  {}",
-                rule("│"),
+                "  {}  {}",
                 palette.cmd(&format!("[{}]", index + 1)),
-                meta.join(&separator).trim_end()
+                palette.dim(&meta.join("   "))
             )?;
             if let Some(preview) = hit
                 .preview
                 .as_deref()
                 .filter(|_| context.terminal.images.is_some())
             {
-                write!(out, "  {}       ", rule("│"))?;
+                write!(out, "       ")?;
                 if context.terminal.image(out, preview, 30, 8)? {
                     writeln!(out)?;
                 }
@@ -1195,53 +1468,28 @@ pub fn search(
                     last.push('…');
                 }
                 for line in lines {
-                    writeln!(
-                        out,
-                        "  {}      {}",
-                        rule("│"),
-                        palette.dim(&format!("\"{line}\""))
-                    )?;
+                    writeln!(out, "       {line}")?;
                 }
             }
             if let Some(path) = hit.media.as_deref() {
                 let (label, target) = context.player.open(path, hit.start_us);
-                writeln!(
-                    out,
-                    "  {}       🔗 {}",
-                    rule("│"),
-                    context.terminal.link(&palette.cmd(&label), &target)
-                )?;
+                if context.terminal.hyperlinks {
+                    writeln!(
+                        out,
+                        "       {}",
+                        context.terminal.link(&palette.cmd(&label), &target)
+                    )?;
+                }
             }
             if let Some(clip) = hit.clip.as_deref() {
                 writeln!(
                     out,
-                    "  {}       🎞 {}   {}",
-                    rule("│"),
+                    "       {}   {}",
                     context.terminal.file_link(&palette.cmd("Saved clip"), clip),
                     palette.dim(&tilde(clip))
                 )?;
             }
         }
-        match first.media.as_deref() {
-            Some(path) => writeln!(out, "  {} {}", rule("└"), palette.dim(&tilde(path)))?,
-            None => writeln!(out, "  {}", rule("└"))?,
-        }
-        writeln!(out)?;
-    }
-    if let Some((number, _)) = report
-        .hits
-        .iter()
-        .enumerate()
-        .find(|(_, hit)| hit.media.is_some())
-    {
-        writeln!(
-            out,
-            "{}",
-            palette.dim(&format!(
-                "Open a moment in your player: cerul open {}",
-                number + 1
-            ))
-        )?;
         writeln!(out)?;
     }
     if context.terminal.images.is_none() && report.hits.iter().any(|hit| hit.preview.is_some()) {
@@ -1252,7 +1500,6 @@ pub fn search(
                 "Still frames were saved but this terminal cannot draw them; iTerm2, Ghostty, Kitty, and WezTerm can."
             )
         )?;
-        writeln!(out)?;
     }
     if report
         .hits
@@ -1264,27 +1511,45 @@ pub fn search(
             "{}",
             palette.dim("Visual matches cover an index window (30s by default); re-index with --chunk 10s for finer moments.")
         )?;
-        writeln!(out)?;
     }
-    if let Some(directory) = &context.saved_to {
-        writeln!(
-            out,
-            "{} clip{} saved to {}",
-            report.hits.iter().filter(|h| h.clip.is_some()).count(),
-            if report.hits.len() == 1 { "" } else { "s" },
-            directory.display()
-        )?;
-    } else if let Some(query) = &context.query {
-        let flag = if context.text { " --text" } else { "" };
-        next_steps(
-            out,
-            palette,
-            &[(
-                &format!("cerul search{flag} \"{query}\" --save ./clips"),
+    let mut steps: Vec<(String, &str)> = Vec::new();
+    if let Some((number, _)) = report
+        .hits
+        .iter()
+        .enumerate()
+        .find(|(_, hit)| hit.media.is_some())
+    {
+        steps.push((
+            format!("cerul open {}", number + 1),
+            "play that moment in your player",
+        ));
+    }
+    match (&context.saved_to, &context.query) {
+        (Some(directory), _) => {
+            let saved = report.hits.iter().filter(|hit| hit.clip.is_some()).count();
+            writeln!(out)?;
+            writeln!(
+                out,
+                "{} clip{} saved to {}",
+                saved,
+                if saved == 1 { "" } else { "s" },
+                tilde(directory)
+            )?;
+        }
+        (None, Some(query)) => {
+            let flag = if context.text { " --text" } else { "" };
+            steps.push((
+                format!("cerul search{flag} {} --save ./clips", shell_quote(query)),
                 "save these moments as clips",
-            )],
-        )?;
+            ));
+        }
+        (None, None) => {}
     }
+    let steps: Vec<(&str, &str)> = steps
+        .iter()
+        .map(|(command, note)| (command.as_str(), *note))
+        .collect();
+    next_block(out, palette, &steps)?;
     Ok(())
 }
 
@@ -1356,85 +1621,381 @@ pub fn remove(
     writeln!(out, "{}", palette.dim(note))
 }
 
+/// The annotation receipt: what exists now, where it is, and what to run next.
+/// A checkpoint on disk is not an annotation, so only published modules get a
+/// record count and a path here.
 pub fn annotate(
     out: &mut dyn Write,
     palette: &Palette,
     report: &annotate::pipeline::Report,
     names: &BTreeMap<String, PathBuf>,
+    retry: Option<&str>,
 ) -> io::Result<()> {
-    if report.dry_run {
-        writeln!(out, "{} nothing was written.", palette.bold("Dry run:"))?;
-    }
     if report.modules.is_empty() && report.writebacks.is_empty() {
         writeln!(out, "Nothing to annotate.")?;
         return Ok(());
     }
+    if report.dry_run {
+        writeln!(
+            out,
+            "{} nothing was written and no model was called.",
+            palette.bold("Dry run:")
+        )?;
+        writeln!(out)?;
+    }
+    // One block per input: the same recording labelled four ways is one thing a
+    // person is looking at, not four unrelated results.
+    let mut groups: Vec<(&str, Vec<&annotate::pipeline::ModuleResult>)> = Vec::new();
     for module in &report.modules {
-        let name = names
-            .get(&module.episode)
-            .map(|p| file_name(p))
-            .unwrap_or_else(|| module.episode.clone());
-        let label = station_label(&module.annotation);
-        match (&module.error, module.complete) {
-            (None, true) => writeln!(
-                out,
-                "{} {}  {label}  {}",
-                palette.ok("✓"),
-                palette.bold(&name),
-                palette.dim(&format!("{} records", module.records))
-            )?,
-            (None, false) => writeln!(
-                out,
-                "{} {}  {label}  {}",
-                palette.warn("!"),
-                palette.bold(&name),
-                palette.dim(&format!("incomplete, {} records so far", module.records))
-            )?,
-            (Some(error), _) => {
-                writeln!(out, "{} {}  {label}", palette.err("✗"), palette.bold(&name))?;
-                writeln!(out, "    {error}")?;
+        match groups
+            .iter_mut()
+            .find(|(episode, _)| *episode == module.episode.as_str())
+        {
+            Some((_, modules)) => modules.push(module),
+            None => groups.push((module.episode.as_str(), vec![module])),
+        }
+    }
+    let mut written = false;
+    for (episode, modules) in &groups {
+        // Episodes of one dataset share their MP4 shards, so a media file name
+        // would label two different results identically. The dataset and the
+        // episode index are what tell them apart.
+        let source = &modules[0].source;
+        let name = match modules[0].dataset {
+            true => format!(
+                "{} · episode {}",
+                file_name(source),
+                episode.rsplit('/').next().unwrap_or(episode)
+            ),
+            false if source.as_os_str().is_empty() => names
+                .get(*episode)
+                .map(|media| file_name(media))
+                .unwrap_or_else(|| (*episode).to_string()),
+            false => file_name(source),
+        };
+        if written {
+            writeln!(out)?;
+        }
+        written = true;
+        if report.dry_run {
+            let items = modules
+                .iter()
+                .map(|module| item_name(&module.annotation))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            writeln!(out, "  {}   {}", palette.bold(&name), palette.dim(&items))?;
+            continue;
+        }
+        let published = modules.iter().filter(|module| module.complete).count();
+        let (mark, title) = match (published, published == modules.len()) {
+            (_, true) => (palette.ok("✓"), format!("Annotated {name}")),
+            (0, _) => (palette.err("✗"), format!("Could not annotate {name}")),
+            _ => (palette.warn("!"), format!("Annotated {name} partially")),
+        };
+        writeln!(out, "{mark} {}", palette.bold(&title))?;
+        writeln!(out)?;
+        // Cameras of one episode share a file name, so the stream has to appear
+        // whenever more than one of them was annotated.
+        let streams: BTreeSet<&str> = modules.iter().map(|m| m.stream.as_str()).collect();
+        let label = |module: &annotate::pipeline::ModuleResult| {
+            if streams.len() > 1 {
+                format!("{} · {}", module.stream, item_name(&module.annotation))
+            } else {
+                item_name(&module.annotation).to_owned()
+            }
+        };
+        let width = modules
+            .iter()
+            .map(|module| measure_text_width(&label(module)))
+            .max()
+            .unwrap_or(0);
+        let counts: Vec<String> = modules
+            .iter()
+            .map(|module| {
+                if module.complete {
+                    format!(
+                        "{} record{}",
+                        module.records,
+                        if module.records == 1 { "" } else { "s" }
+                    )
+                } else {
+                    String::new()
+                }
+            })
+            .collect();
+        let count_width = counts
+            .iter()
+            .map(|count| measure_text_width(count))
+            .max()
+            .unwrap_or(0);
+        let mixed = published != modules.len();
+        for (module, count) in modules.iter().zip(&counts) {
+            let glyph = if mixed {
+                let mark = match (&module.error, module.complete) {
+                    (_, true) => palette.ok("✓"),
+                    (Some(_), _) => palette.err("✗"),
+                    _ => palette.dim("·"),
+                };
+                format!("{mark} ")
+            } else {
+                String::new()
+            };
+            let text = label(module);
+            let pad = " ".repeat(width - measure_text_width(&text) + 3);
+            match (&module.error, module.complete) {
+                (_, true) => {
+                    let gap = " ".repeat(count_width - measure_text_width(count) + 3);
+                    let path = module
+                        .path
+                        .as_deref()
+                        .map(tilde)
+                        .unwrap_or_else(|| "published".into());
+                    writeln!(
+                        out,
+                        "  {glyph}{text}{pad}{count}{gap}{}",
+                        palette.dim(&path)
+                    )?;
+                }
+                (Some(error), _) => writeln!(
+                    out,
+                    "  {glyph}{text}{pad}{}",
+                    palette.warn(&format!("stopped · {error}"))
+                )?,
+                (None, false) => {
+                    writeln!(out, "  {glyph}{text}{pad}{}", palette.dim("not started"))?
+                }
             }
         }
     }
     for writeback in &report.writebacks {
+        if written {
+            writeln!(out)?;
+        }
+        written = true;
         match &writeback.error {
-            None => writeln!(
-                out,
-                "{} wrote LeRobot dataset {}",
-                palette.ok("✓"),
-                tilde(&writeback.destination)
-            )?,
+            None => {
+                writeln!(
+                    out,
+                    "{} {}",
+                    palette.ok("✓"),
+                    palette.bold(&format!(
+                        "Wrote LeRobot dataset {}",
+                        file_name(&writeback.destination)
+                    ))
+                )?;
+                writeln!(out, "  {}", palette.dim(&tilde(&writeback.destination)))?;
+            }
             Some(error) => {
                 writeln!(
                     out,
-                    "{} LeRobot writeback failed for {}",
+                    "{} {}",
                     palette.err("✗"),
-                    tilde(&writeback.source)
+                    palette.bold(&format!(
+                        "LeRobot writeback failed for {}",
+                        file_name(&writeback.source)
+                    ))
                 )?;
-                writeln!(out, "    {error}")?;
+                writeln!(out, "  {error}")?;
             }
         }
     }
+    if !report.dry_run {
+        let media = report
+            .modules
+            .iter()
+            .find(|module| module.complete)
+            .and_then(|module| names.get(&module.episode));
+        let mut steps: Vec<(String, &str)> = Vec::new();
+        if let Some(path) = media {
+            steps.push((
+                format!("cerul status {} --timeline", shell_path(path)),
+                "read the labels in order",
+            ));
+        }
+        if report
+            .modules
+            .iter()
+            .any(|module| module.complete && item_name(&module.annotation) == "event")
+        {
+            steps.push((
+                "cerul search --filter 'semantic.event.verb=grasp'".into(),
+                "find one action across videos",
+            ));
+        }
+        let steps: Vec<(&str, &str)> = steps
+            .iter()
+            .map(|(command, note)| (command.as_str(), *note))
+            .collect();
+        next_block(out, palette, &steps)?;
+    }
     if report.partial {
+        writeln!(out)?;
+        let anything = report.modules.iter().any(|module| module.complete);
+        match retry {
+            Some(command) => {
+                // Promising that finished work is reused is only reassuring when
+                // something actually finished.
+                writeln!(
+                    out,
+                    "{}",
+                    palette.dim(match anything {
+                        true => "Finished windows are saved and will be reused. Continue with:",
+                        false => "Nothing was published. After fixing the problem above:",
+                    })
+                )?;
+                writeln!(out, "  {}", palette.cmd(command))?;
+            }
+            None => writeln!(
+                out,
+                "{}",
+                palette
+                    .dim("Finished windows are saved; re-run the same command to resume the rest.")
+            )?,
+        }
+    }
+    if !report.dry_run && report.modules.iter().any(|module| module.complete) {
         writeln!(out)?;
         writeln!(
             out,
             "{}",
-            palette.dim("Finished windows are saved; re-run the same command to resume the rest.")
+            palette.dim("Labels are model-generated; review them before training on them.")
         )?;
+    }
+    Ok(())
+}
+
+/// Published annotation records in time order: the cheapest way to judge whether
+/// a run produced anything worth keeping, without opening a JSONL file.
+pub fn timeline(
+    out: &mut dyn Write,
+    palette: &Palette,
+    timeline: &cerul::status::Timeline,
+    kind: Option<&str>,
+) -> io::Result<()> {
+    if timeline.episodes.is_empty() {
+        // Screen text and speech are annotations too, but a timeline is for the
+        // labels a person asked a model for, so say which kind is missing.
+        writeln!(out, "No semantic annotations here yet.")?;
+        return next_block(
+            out,
+            palette,
+            &[(
+                "cerul annotate ./video.mp4 --semantic subtask,event,interaction,state",
+                "label actions in a video",
+            )],
+        );
+    }
+    for (position, episode) in timeline.episodes.iter().enumerate() {
+        if position > 0 {
+            writeln!(out)?;
+        }
+        let items = episode
+            .annotations
+            .iter()
+            .map(|name| item_name(name))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let length = episode
+            .duration_us
+            .map(|us| format!("  {}", clock(us)))
+            .unwrap_or_default();
+        writeln!(
+            out,
+            "{}{length}  {}",
+            palette.bold(&file_name(&episode.media)),
+            palette.dim(&format!("·  {items}  ·  {}", tilde(&episode.sidecar)))
+        )?;
+        writeln!(out)?;
+        if episode.entries.is_empty() {
+            writeln!(
+                out,
+                "  {}",
+                palette.dim(&match kind {
+                    Some(kind) => format!("no {kind} records"),
+                    None => "no records".into(),
+                })
+            )?;
+            continue;
+        }
+        let times: Vec<String> = episode
+            .entries
+            .iter()
+            .map(|entry| {
+                // A moment and a span are different facts; only a span gets a range.
+                if entry.end_us > entry.start_us {
+                    format!("{} – {}", clock(entry.start_us), clock(entry.end_us))
+                } else {
+                    clock(entry.start_us)
+                }
+            })
+            .collect();
+        let time_width = times
+            .iter()
+            .map(|t| measure_text_width(t))
+            .max()
+            .unwrap_or(0);
+        let name_width = episode
+            .entries
+            .iter()
+            .map(|entry| measure_text_width(item_name(&entry.annotation)))
+            .max()
+            .unwrap_or(0);
+        for (entry, time) in episode.entries.iter().zip(&times) {
+            let name = item_name(&entry.annotation);
+            writeln!(
+                out,
+                "  {time:>time_width$}   {}{}{}",
+                palette.cmd(name),
+                " ".repeat(name_width - measure_text_width(name) + 3),
+                entry.summary
+            )?;
+        }
+        if episode.total > episode.entries.len() {
+            writeln!(out)?;
+            writeln!(
+                out,
+                "{}",
+                palette.dim(&format!(
+                    "showing {} of {} records · --limit {} for more{}",
+                    episode.entries.len(),
+                    episode.total,
+                    episode.total.min(1000),
+                    if kind.is_some() {
+                        ""
+                    } else {
+                        " · --type event for one kind"
+                    }
+                ))
+            )?;
+        }
     }
     Ok(())
 }
 
 /// Human error line plus a hint on how to recover.
 pub fn error(palette: &Palette, code: u8, message: &str, hint: Option<&str>) -> String {
-    let mut text = format!("{} {message}", palette.err("error:"));
+    // What went wrong, then how to get out of it, then the code a script reads.
+    // Cancelling is a choice somebody made, so it is not painted as a failure.
+    let category = match code {
+        2 => "invalid arguments or configuration",
+        3 => "unavailable dependency or capability",
+        5 => "cancelled",
+        6 => "partial result",
+        _ => "execution failure",
+    };
+    let mark = if code == 5 {
+        palette.warn("!")
+    } else {
+        palette.err("✗")
+    };
+    let mut text = format!("{mark} {message}");
     if let Some(hint) = hint {
-        text.push_str(&format!("\n  {} {hint}", palette.dim("hint:")));
+        text.push_str(&format!("\n  {}", palette.cmd(hint)));
     }
-    if code == 5 {
-        text = format!("{} {message}", palette.warn("cancelled:"));
-    }
+    text.push_str(&format!(
+        "\n  {}",
+        palette.dim(&format!("exit {code} · {category}"))
+    ));
     text
 }
 
@@ -1448,6 +2009,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut status = cerul::status::inspect(dir.path(), None).unwrap();
         status.episodes.push(cerul::status::EpisodeStatus {
+            duration_us: Some(150_000_000),
             episode_id: "demo/0".into(),
             media: PathBuf::from("/videos/demo.mp4"),
             sidecar: PathBuf::from("/videos/demo.mp4.cerul"),
@@ -1478,8 +2040,15 @@ mod tests {
         assert!(text.contains("key saved"));
         assert!(text.contains("cerul annotate ./video.mp4 --semantic"));
         assert!(text.contains("cerul annotate --help"));
+        // The overview is a table; the files belong to the view a person asked
+        // for by naming a path.
         let mut out = Vec::new();
-        super::status(&mut out, &palette, &status, &models, false).unwrap();
+        super::status(&mut out, &palette, &status, &models, false, false).unwrap();
+        let overview = String::from_utf8(out).unwrap();
+        assert!(overview.contains("demo.mp4"), "{overview}");
+        assert!(!overview.contains("/videos/demo.mp4.cerul"), "{overview}");
+        let mut out = Vec::new();
+        super::status(&mut out, &palette, &status, &models, false, true).unwrap();
         assert!(
             String::from_utf8(out)
                 .unwrap()
@@ -1526,11 +2095,14 @@ mod tests {
         assert!(!text.contains("b52ef6450d471af5"), "{text}");
         assert!(!text.contains("0.74"), "{text}");
         assert!(text.contains("a demo.mp4"), "{text}");
-        assert!(text.contains("74% match"), "{text}");
+        assert!(text.contains("similarity 74%"), "{text}");
         assert!(text.contains("00:12 → 00:19"), "{text}");
         assert!(text.contains("speech"), "{text}");
         assert!(text.contains("perfecting this harness"), "{text}");
-        assert!(text.contains("Open video"), "{text}");
+        // Without hyperlink support a label with no URL behind it is noise; the
+        // numbered result and `cerul open` are what actually play the moment.
+        assert!(!text.contains("Open video"), "{text}");
+        assert!(text.contains("cerul open 1"), "{text}");
         // No colour, hyperlink, or image control sequences without support.
         assert!(!text.contains('\u{1b}'), "{text}");
     }
@@ -1558,8 +2130,10 @@ mod tests {
         let mut out = Vec::new();
         search(&mut out, &Palette::new(false), &report, &context).unwrap();
         let text = String::from_utf8(out).unwrap();
-        assert_eq!(text.matches("a demo.mp4").count(), 2, "{text}");
+        // Two moments, one heading: the file is named once.
+        assert_eq!(text.matches("a demo.mp4").count(), 1, "{text}");
         assert!(text.contains("2 moments"), "{text}");
+        assert!(text.contains("in 1 video"), "{text}");
         assert!(text.contains("[1]") && text.contains("[2]"), "{text}");
         assert!(text.contains("01:30 → 01:36"), "{text}");
         assert!(text.contains("cerul open 1"), "{text}");
@@ -1589,6 +2163,185 @@ mod tests {
         assert_eq!(
             Player::System.open(Path::new("/videos/a demo.mp4"), 12_500_000),
             ("Open video".into(), "file:///videos/a%20demo.mp4".into())
+        );
+    }
+
+    fn module(item: &str, records: usize, error: Option<&str>) -> annotate::pipeline::ModuleResult {
+        annotate::pipeline::ModuleResult {
+            episode: "demo/0".into(),
+            stream: "primary".into(),
+            annotation: format!("semantic.{item}"),
+            records,
+            complete: error.is_none(),
+            error: error.map(str::to_owned),
+            source: PathBuf::from("/videos/demo.mp4"),
+            dataset: false,
+            path: error
+                .is_none()
+                .then(|| PathBuf::from(format!("/videos/demo.mp4.cerul/semantic.{item}.jsonl"))),
+        }
+    }
+
+    #[test]
+    fn the_annotation_receipt_names_every_published_file_and_what_to_run_next() {
+        let report = annotate::pipeline::Report {
+            modules: vec![module("subtask", 12, None), module("event", 18, None)],
+            writebacks: Vec::new(),
+            partial: false,
+            dry_run: false,
+        };
+        let names = BTreeMap::from([("demo/0".to_owned(), PathBuf::from("/videos/demo.mp4"))]);
+        let mut out = Vec::new();
+        annotate(&mut out, &Palette::new(false), &report, &names, None).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("Annotated demo.mp4"), "{text}");
+        // The episode hash is an internal name; a person needs the file.
+        assert!(!text.contains("demo/0"), "{text}");
+        assert!(text.contains("subtask"), "{text}");
+        assert!(text.contains("12 records"), "{text}");
+        assert!(
+            text.contains("/videos/demo.mp4.cerul/semantic.event.jsonl"),
+            "{text}"
+        );
+        assert!(
+            text.contains("cerul status /videos/demo.mp4 --timeline"),
+            "{text}"
+        );
+        assert!(text.contains("cerul search --filter"), "{text}");
+        assert!(text.contains("review them before training"), "{text}");
+    }
+
+    #[test]
+    fn a_partial_run_separates_published_work_from_the_command_that_continues_it() {
+        let report = annotate::pipeline::Report {
+            modules: vec![
+                module("subtask", 12, None),
+                module("event", 0, Some("gemini rate limit (429)")),
+                annotate::pipeline::ModuleResult {
+                    records: 0,
+                    complete: false,
+                    ..module("state", 0, None)
+                },
+            ],
+            writebacks: Vec::new(),
+            partial: true,
+            dry_run: false,
+        };
+        let names = BTreeMap::from([("demo/0".to_owned(), PathBuf::from("/videos/demo.mp4"))]);
+        let mut out = Vec::new();
+        let retry = "cerul annotate /videos/demo.mp4 --semantic subtask,event,state --rpm 6";
+        annotate(&mut out, &Palette::new(false), &report, &names, Some(retry)).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("partially"), "{text}");
+        assert!(text.contains("12 records"), "{text}");
+        assert!(text.contains("stopped · gemini rate limit (429)"), "{text}");
+        assert!(text.contains("not started"), "{text}");
+        assert!(text.contains(retry), "{text}");
+        // Recomputing would throw away the windows that did finish.
+        assert!(!text.contains("--recompute"), "{text}");
+    }
+
+    fn record(
+        start_us: i64,
+        end_us: i64,
+        fields: &[(&str, serde_json::Value)],
+    ) -> cerul::annotations::Record {
+        cerul::annotations::Record {
+            id: format!("r-{start_us}"),
+            start_us,
+            end_us,
+            confidence: None,
+            fields: fields
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.clone()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn the_timeline_orders_records_and_writes_each_kind_in_its_own_words() {
+        let entries = [
+            (
+                "semantic.subtask",
+                record(0, 14_000_000, &[("text", "reach for the cup".into())]),
+            ),
+            (
+                "semantic.event",
+                record(
+                    3_000_000,
+                    3_000_000,
+                    &[
+                        ("verb", "grasp".into()),
+                        ("objects", serde_json::json!(["cup"])),
+                    ],
+                ),
+            ),
+            (
+                "semantic.state",
+                record(
+                    20_000_000,
+                    20_000_000,
+                    &[
+                        ("object", "cup".into()),
+                        ("attribute", "location".into()),
+                        ("before", "on table".into()),
+                        ("after", "in hand".into()),
+                    ],
+                ),
+            ),
+        ];
+        let timeline = cerul::status::Timeline {
+            episodes: vec![cerul::status::TimelineEpisode {
+                episode_id: "demo/0".into(),
+                media: PathBuf::from("/videos/demo.mp4"),
+                sidecar: PathBuf::from("/videos/demo.mp4.cerul"),
+                duration_us: Some(150_000_000),
+                annotations: vec!["semantic.subtask".into(), "semantic.event".into()],
+                total: 53,
+                entries: entries
+                    .iter()
+                    .map(|(annotation, record)| cerul::status::TimelineEntry {
+                        episode: "demo/0".into(),
+                        stream: "primary".into(),
+                        annotation: (*annotation).to_owned(),
+                        start_us: record.start_us,
+                        end_us: record.end_us,
+                        summary: cerul::status::summarize_record(annotation, record),
+                        record: record.clone(),
+                    })
+                    .collect(),
+            }],
+        };
+        let mut out = Vec::new();
+        super::timeline(&mut out, &Palette::new(false), &timeline, None).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("demo.mp4  02:30"), "{text}");
+        assert!(text.contains("00:00 – 00:14   subtask"), "{text}");
+        assert!(text.contains("reach for the cup"), "{text}");
+        // A moment has one time, not a range that starts and ends together.
+        assert!(
+            text.contains("00:03") && !text.contains("00:03 – 00:03"),
+            "{text}"
+        );
+        assert!(text.contains("grasp cup"), "{text}");
+        assert!(
+            text.contains("cup · location: on table → in hand"),
+            "{text}"
+        );
+        assert!(text.contains("showing 3 of 53 records"), "{text}");
+    }
+
+    #[test]
+    fn a_command_survives_being_copied_out_of_the_receipt() {
+        assert_eq!(shell_quote("./demo.mp4"), "./demo.mp4");
+        assert_eq!(
+            shell_quote("my videos/a demo.mp4"),
+            "'my videos/a demo.mp4'"
+        );
+        assert_eq!(shell_quote("it's here.mp4"), r"'it'\''s here.mp4'");
+        assert_eq!(
+            shell_command(&["cerul".into(), "annotate".into(), "a b.mp4".into()]),
+            "cerul annotate 'a b.mp4'"
         );
     }
 

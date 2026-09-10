@@ -113,7 +113,13 @@ Copy this prompt into an agent that can use a terminal:
 Install Cerul by following https://github.com/cerul-ai/cerul/blob/main/docs/agent-setup.md. Help me set up my Gemini API key securely, search a local video, and save a matching clip. Teach me the commands in my language.
 ```
 
-[Agent setup guide →](docs/agent-setup.md)
+Agents that read skills can learn the whole command line from Cerul itself:
+
+```sh
+cerul skill --install claude    # also: codex, pi, or --dir ./skills
+```
+
+[Agent setup guide →](docs/agent-setup.md) · [Agent contract →](docs/agent.md)
 
 ## More things to try
 

@@ -1,6 +1,7 @@
 mod credentials;
 #[cfg(test)]
 mod documentation_tests;
+mod guide;
 mod render;
 use anyhow::{Context, Result};
 use cerul::{
@@ -117,6 +118,15 @@ enum Command {
         /// Verify configured model endpoints with small test requests (cached for seven days).
         #[arg(long)]
         providers: bool,
+        /// Read the published annotations in time order instead of the summary.
+        #[arg(long)]
+        timeline: bool,
+        /// Only one semantic item, for example event.
+        #[arg(long, value_name = "ITEM", requires = "timeline")]
+        r#type: Option<String>,
+        /// Most annotation records to show per video.
+        #[arg(long, default_value_t = 50, value_name = "N", requires = "timeline")]
+        limit: usize,
     },
     /// Open a result from the last search in a video player, at its moment.
     Open {
@@ -135,6 +145,8 @@ enum Command {
     Annotate(AnnotateArgs),
     /// Remove indexed videos, or free the disk they and their caches use.
     Remove(RemoveArgs),
+    /// Print or install the agent skill that teaches this CLI to a coding agent.
+    Skill(SkillArgs),
     /// Print a shell completion script, for example: cerul completions zsh.
     ///
     /// Hidden from the command list: it is run once when setting up a shell, and
@@ -144,6 +156,41 @@ enum Command {
         /// Shell to generate for.
         shell: clap_complete::Shell,
     },
+}
+#[derive(Args)]
+struct SkillArgs {
+    /// Install for this agent: claude, codex, or pi.
+    #[arg(long, value_name = "AGENT", conflicts_with = "print")]
+    install: Option<Agent>,
+    /// Install into this skills directory instead of an agent's own.
+    #[arg(long, value_name = "DIR", conflicts_with = "print")]
+    dir: Option<PathBuf>,
+    /// Write the skill to stdout instead of installing it.
+    #[arg(long)]
+    print: bool,
+}
+/// Agents that read the same skill format from a known directory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum Agent {
+    Claude,
+    Codex,
+    Pi,
+}
+impl Agent {
+    fn directory(&self, home: &Path) -> PathBuf {
+        match self {
+            Self::Claude => home.join(".claude/skills"),
+            Self::Codex => home.join(".codex/skills"),
+            Self::Pi => home.join(".pi/agent/skills"),
+        }
+    }
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Pi => "pi",
+        }
+    }
 }
 #[derive(Args)]
 struct AuthArgs {
@@ -335,6 +382,198 @@ fn exit_code(error: &anyhow::Error) -> u8 {
     }
 }
 
+/// Marks a file this build wrote, so installing again replaces Cerul's own copy
+/// and never a file somebody edited by hand.
+const SKILL_MARKER: &str = "generated-by: cerul";
+
+/// The skill's command section, generated from this build's own argument
+/// definitions so that it cannot drift from `--help`.
+fn command_reference() -> String {
+    let mut command = Cli::command();
+    command.build();
+    let mut text = String::new();
+    let describe = |argument: &clap::Arg| -> String {
+        let takes_values = argument.get_action().takes_values();
+        let mut name = match (argument.get_long(), argument.get_short()) {
+            (Some(long), _) => format!("--{long}"),
+            (None, Some(short)) => format!("-{short}"),
+            (None, None) => format!(
+                "<{}>{}",
+                argument.get_id().as_str().to_uppercase().replace('_', "-"),
+                // Only a positional that really accepts several values is
+                // written as one; the rest take exactly one argument.
+                match argument.get_num_args() {
+                    Some(range) if range.max_values() > 1 => "...",
+                    _ => "",
+                }
+            ),
+        };
+        if takes_values
+            && argument.get_long().is_some()
+            && let Some(values) = argument.get_value_names()
+        {
+            name.push_str(&format!(" <{}>", values.join("> <")));
+        }
+        let mut help = argument
+            .get_help()
+            .map(|help| help.to_string().replace('\n', " "))
+            .unwrap_or_default();
+        // A default only means something where a value can be given; printing
+        // "default false" for every flag teaches nothing.
+        let defaults: Vec<String> = argument
+            .get_default_values()
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect();
+        if takes_values && !defaults.is_empty() {
+            help.push_str(&format!(" (default {})", defaults.join(", ")));
+        }
+        format!("  {name:<26}  {}\n", help.trim())
+    };
+    let listed = |argument: &&clap::Arg| {
+        !argument.is_hide_set() && !matches!(argument.get_id().as_str(), "help" | "version")
+    };
+    text.push_str("These options work on every command:\n\n");
+    for argument in command.get_arguments().filter(listed) {
+        text.push_str(&describe(argument));
+    }
+    for subcommand in command.get_subcommands().filter(|c| !c.is_hide_set()) {
+        text.push_str(&format!("\n### cerul {}\n\n", subcommand.get_name()));
+        if let Some(about) = subcommand.get_about() {
+            text.push_str(&format!("{}\n\n", about.to_string().replace('\n', " ")));
+        }
+        // Global options belong to the list above; repeating them under each
+        // command turns the reference into something nobody reads.
+        let mut arguments = subcommand
+            .get_arguments()
+            .filter(|argument| listed(argument) && !argument.is_global_set())
+            .peekable();
+        if arguments.peek().is_none() {
+            for nested in subcommand.get_subcommands().filter(|c| !c.is_hide_set()) {
+                text.push_str(&format!(
+                    "  cerul {} {:<20}  {}\n",
+                    subcommand.get_name(),
+                    nested.get_name(),
+                    nested
+                        .get_about()
+                        .map(|about| about.to_string().replace('\n', " "))
+                        .unwrap_or_default()
+                ));
+            }
+            continue;
+        }
+        for argument in arguments {
+            text.push_str(&describe(argument));
+        }
+    }
+    text
+}
+
+/// The skill file exactly as it is installed and as it is committed to the
+/// repository, so a person can take either copy and get the same instructions.
+fn skill_text() -> String {
+    let template = include_str!("../prompts/skill.md");
+    let (front, body) = template
+        .split_once("---\n")
+        .and_then(|(_, rest)| rest.split_once("\n---\n"))
+        .map(|(front, body)| (front.to_owned(), body.to_owned()))
+        .unwrap_or_else(|| (String::new(), template.to_owned()));
+    format!(
+        "---\n{front}\n{SKILL_MARKER} {}\n---\n{}\n{}",
+        env!("CARGO_PKG_VERSION"),
+        body.trim_end(),
+        command_reference()
+    )
+}
+
+#[derive(serde::Serialize)]
+struct SkillReport {
+    version: String,
+    /// Where the file was actually written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    installed: Option<PathBuf>,
+    /// Where `--dry-run` would have written it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    planned: Option<PathBuf>,
+    targets: BTreeMap<String, PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skill: Option<String>,
+}
+
+/// A command that continues unfinished work. It repeats the original invocation
+/// and changes only what the failure calls for, so running it is always safe:
+/// finished windows are reused and nothing is recomputed on purpose.
+#[derive(Debug, Clone, serde::Serialize)]
+struct Retry {
+    argv: Vec<String>,
+    reason: &'static str,
+}
+
+/// Provider wording differs by endpoint, so the categories are matched on the
+/// signals every one of them sends rather than on one vendor's message.
+fn rate_limited(error: &str) -> bool {
+    let text = error.to_lowercase();
+    [
+        "429",
+        "rate limit",
+        "rate-limit",
+        "resource_exhausted",
+        "quota",
+    ]
+    .iter()
+    .any(|signal| text.contains(signal))
+}
+
+fn retry_after(report: &cerul::annotate::pipeline::Report, original: &[String]) -> Option<Retry> {
+    if !report.partial || report.dry_run {
+        return None;
+    }
+    let limited = report
+        .modules
+        .iter()
+        .filter_map(|module| module.error.as_deref())
+        .any(rate_limited);
+    let (program, rest) = original.split_first()?;
+    let mut argv = vec![
+        Path::new(program)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| program.clone()),
+    ];
+    // The rate cap is the one argument this command is allowed to replace.
+    let mut rpm: Option<u32> = None;
+    let mut expecting = false;
+    for argument in rest {
+        if expecting {
+            expecting = false;
+            rpm = argument.parse().ok();
+            continue;
+        }
+        if argument == "--rpm" {
+            expecting = true;
+            continue;
+        }
+        if let Some(value) = argument.strip_prefix("--rpm=") {
+            rpm = value.parse().ok();
+            continue;
+        }
+        argv.push(argument.clone());
+    }
+    let reason = if limited { "rate_limit" } else { "incomplete" };
+    // Halving a cap the person already chose respects their intent; a first
+    // limit starts low enough that a retry is worth attempting at all.
+    let next = match (limited, rpm) {
+        (true, Some(current)) => Some((current / 2).max(1)),
+        (true, None) => Some(6),
+        (false, current) => current,
+    };
+    if let Some(value) = next {
+        argv.push("--rpm".into());
+        argv.push(value.to_string());
+    }
+    Some(Retry { argv, reason })
+}
+
 /// Everything a command can produce. JSON mode serializes it; human mode renders it.
 enum Outcome {
     Home(cerul::status::Status, render::ModelSummary),
@@ -342,7 +581,11 @@ enum Outcome {
         status: cerul::status::Status,
         models: render::ModelSummary,
         probed: bool,
+        /// A person who named a path wants the files, not only the summary.
+        detail: bool,
     },
+    Timeline(cerul::status::Timeline, Option<String>),
+    Skill(SkillReport),
     Auth(render::KeyState, Option<&'static str>),
     Remove(
         cerul::clean::Report,
@@ -358,7 +601,11 @@ enum Outcome {
     },
     Index(pipeline::Report, BTreeMap<String, PathBuf>),
     Search(cerul::search::Report, render::SearchContext),
-    Annotate(cerul::annotate::pipeline::Report, BTreeMap<String, PathBuf>),
+    Annotate(
+        cerul::annotate::pipeline::Report,
+        BTreeMap<String, PathBuf>,
+        Option<Retry>,
+    ),
 }
 impl Outcome {
     fn json(&self) -> Result<Value> {
@@ -385,7 +632,17 @@ impl Outcome {
             Outcome::Index(report, _) => serde_json::to_value(report)?,
             Outcome::Search(report, _) => serde_json::to_value(report)?,
             Outcome::Remove(report, _, _) => serde_json::to_value(report)?,
-            Outcome::Annotate(report, _) => serde_json::to_value(report)?,
+            Outcome::Timeline(timeline, _) => serde_json::to_value(timeline)?,
+            Outcome::Skill(report) => serde_json::to_value(report)?,
+            Outcome::Annotate(report, _, retry) => {
+                let mut value = serde_json::to_value(report)?;
+                // Unfinished work needs a command, not a description of one: this
+                // is the original invocation with only the failure's fix applied.
+                if let Some(retry) = retry {
+                    value["retry"] = serde_json::to_value(retry)?;
+                }
+                value
+            }
         })
     }
     fn render(&self, out: &mut dyn Write, palette: &Palette) -> io::Result<()> {
@@ -395,7 +652,23 @@ impl Outcome {
                 status,
                 models,
                 probed,
-            } => render::status(out, palette, status, models, *probed),
+                detail,
+            } => render::status(out, palette, status, models, *probed, *detail),
+            Outcome::Timeline(timeline, kind) => {
+                render::timeline(out, palette, timeline, kind.as_deref())
+            }
+            Outcome::Skill(report) => match &report.skill {
+                // The printed skill is the file itself: no colour, no heading,
+                // nothing a redirect would have to strip back out.
+                Some(text) => write!(out, "{text}"),
+                None => render::skill(
+                    out,
+                    palette,
+                    report.installed.as_deref(),
+                    report.planned.as_deref(),
+                    &report.targets,
+                ),
+            },
             Outcome::Auth(key, action) => {
                 match action {
                     Some("set") => {
@@ -432,7 +705,12 @@ impl Outcome {
             Outcome::Remove(report, names, unknown) => {
                 render::remove(out, palette, report, names, unknown)
             }
-            Outcome::Annotate(report, names) => render::annotate(out, palette, report, names),
+            Outcome::Annotate(report, names, retry) => {
+                let command = retry
+                    .as_ref()
+                    .map(|retry| render::shell_command(&retry.argv));
+                render::annotate(out, palette, report, names, command.as_deref())
+            }
         }
     }
 }
@@ -668,7 +946,45 @@ async fn execute(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(O
             let config = config(cli).map_err(|e| category(2, e))?;
             Ok((Outcome::Home(status, models(&config)), 0))
         }
-        Some(Command::Status { path, providers }) => {
+        Some(Command::Status {
+            path,
+            providers,
+            timeline,
+            r#type,
+            limit,
+        }) => {
+            if *timeline {
+                anyhow::ensure!(
+                    !providers,
+                    CliError(
+                        2,
+                        "--timeline reads local files; --providers checks endpoints".into()
+                    )
+                );
+                anyhow::ensure!(*limit > 0, CliError(2, "--limit must be at least 1".into()));
+                if let Some(kind) = r#type {
+                    let item = kind.strip_prefix("semantic.").unwrap_or(kind);
+                    anyhow::ensure!(
+                        cerul::annotations::SEMANTIC_ITEMS.contains(&item),
+                        CliError(
+                            2,
+                            format!(
+                                "unknown annotation type {item}; choose one of: {}",
+                                cerul::annotations::SEMANTIC_ITEMS.join(", ")
+                            )
+                        )
+                    );
+                }
+                let timeline = cerul::status::timeline(
+                    &workspace,
+                    path.as_deref(),
+                    &cerul::status::TimelineOptions {
+                        kind: r#type.clone(),
+                        limit: *limit,
+                    },
+                )?;
+                return Ok((Outcome::Timeline(timeline, r#type.clone()), 0));
+            }
             let mut status = cerul::status::inspect(&workspace, path.as_deref())?;
             let config = config(cli).map_err(|e| category(2, e))?;
             let mut partial = false;
@@ -690,6 +1006,7 @@ async fn execute(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(O
                     status,
                     models: models(&config),
                     probed: *providers && !cli.dry_run,
+                    detail: path.is_some(),
                 },
                 if partial { 6 } else { 0 },
             ))
@@ -828,7 +1145,11 @@ async fn execute(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(O
             .await?;
             sink.finish();
             let code = if report.partial { 6 } else { 0 };
-            Ok((Outcome::Annotate(report, names(&workspace)), code))
+            let invocation: Vec<String> = std::env::args_os()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect();
+            let retry = retry_after(&report, &invocation);
+            Ok((Outcome::Annotate(report, names(&workspace), retry), code))
         }
         Some(Command::Search(args)) => {
             let config = config(cli).map_err(|e| category(2, e))?;
@@ -899,6 +1220,79 @@ async fn execute(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(O
                         player: render::Player::detect(),
                     },
                 ),
+                0,
+            ))
+        }
+        Some(Command::Skill(args)) => {
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .context("set HOME to locate an agent's skills directory")
+                .map_err(|e| category(2, e))?;
+            let targets: BTreeMap<String, PathBuf> = [Agent::Claude, Agent::Codex, Agent::Pi]
+                .iter()
+                .map(|agent| {
+                    (
+                        agent.label().to_owned(),
+                        agent.directory(&home).join("cerul/SKILL.md"),
+                    )
+                })
+                .collect();
+            let version = env!("CARGO_PKG_VERSION").to_owned();
+            if args.print {
+                return Ok((
+                    Outcome::Skill(SkillReport {
+                        version,
+                        installed: None,
+                        planned: None,
+                        targets,
+                        skill: Some(skill_text()),
+                    }),
+                    0,
+                ));
+            }
+            let destination = match (&args.dir, &args.install) {
+                (Some(directory), _) => Some(directory.join("cerul/SKILL.md")),
+                (None, Some(agent)) => Some(agent.directory(&home).join("cerul/SKILL.md")),
+                (None, None) => None,
+            };
+            let (mut installed, mut planned) = (None, None);
+            if let Some(path) = destination {
+                // Replacing Cerul's own copy is routine; replacing a file someone
+                // wrote by hand is not, so the marker has to be there first.
+                if path.exists() {
+                    let existing = fs::read_to_string(&path).unwrap_or_default();
+                    anyhow::ensure!(
+                        existing.contains(SKILL_MARKER),
+                        CliError(
+                            2,
+                            format!(
+                                "{} was not written by cerul; move it aside first",
+                                path.display()
+                            )
+                        )
+                    );
+                }
+                if cli.dry_run {
+                    planned = Some(path);
+                } else {
+                    let parent = path.parent().context("skill path has no directory")?;
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("could not create {}", parent.display()))
+                        .map_err(|e| category(4, e))?;
+                    fs::write(&path, skill_text())
+                        .with_context(|| format!("could not write {}", path.display()))
+                        .map_err(|e| category(4, e))?;
+                    installed = Some(path);
+                }
+            }
+            Ok((
+                Outcome::Skill(SkillReport {
+                    version,
+                    installed,
+                    planned,
+                    targets,
+                    skill: None,
+                }),
                 0,
             ))
         }
@@ -1144,9 +1538,25 @@ fn hint(code: u8, error: &anyhow::Error, env: &str) -> Option<String> {
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    let arguments: Vec<_> = std::env::args_os().collect();
+    run(std::env::args_os().collect(), true).await
+}
+
+/// One invocation, from arguments to exit code. `guided` is false for the run a
+/// menu started, so a completed command can never open another menu.
+async fn run(arguments: Vec<std::ffi::OsString>, guided: bool) -> std::process::ExitCode {
+    let prompts = Palette::new(console::colors_enabled_stderr());
+    // Guidance completes the arguments and then steps out of the way: what runs
+    // is what the ordinary parser makes of them, exactly as if they were typed.
+    let arguments = match guided {
+        true => match guide::complete(arguments.clone(), &prompts) {
+            guide::Guided::Completed(completed) => completed,
+            guide::Guided::Untouched => arguments,
+            guide::Guided::Left => return std::process::ExitCode::SUCCESS,
+        },
+        false => arguments,
+    };
     let json = arguments.iter().any(|arg| arg == "--json");
-    let cli = match Cli::try_parse_from(arguments) {
+    let cli = match Cli::try_parse_from(arguments.iter().cloned()) {
         Ok(cli) => cli,
         Err(error) => {
             if matches!(
@@ -1264,6 +1674,18 @@ async fn main() -> std::process::ExitCode {
         }
         _ => Ok(()),
     };
+    // The home screen keeps its own output and the menu is offered underneath
+    // it, so running `cerul` still shows everything it always showed.
+    if guided
+        && code == 0
+        && written.is_ok()
+        && cli.command.is_none()
+        && mode == Mode::Human
+        && !cli.quiet
+        && let Some(next) = guide::home_menu(&prompts)
+    {
+        return Box::pin(run(next, false)).await;
+    }
     match written {
         Ok(()) => std::process::ExitCode::from(code),
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {

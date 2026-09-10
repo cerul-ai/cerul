@@ -30,6 +30,7 @@ def documents():
         "examples",
         "models",
         "prompts",
+        "skills",
         "tests/fixtures",
         ".github",
     ):

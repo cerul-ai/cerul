@@ -106,6 +106,20 @@ pub struct ModuleResult {
     pub records: usize,
     pub complete: bool,
     pub error: Option<String>,
+    /// What this result belongs to: the video file, or the dataset root when the
+    /// episode came from one. Episodes of a dataset share their MP4 shards, so a
+    /// media file name alone cannot tell two results apart; the dataset and the
+    /// episode index can.
+    #[serde(default)]
+    pub source: PathBuf,
+    /// True when the episode came from a LeRobot dataset.
+    #[serde(default)]
+    pub dataset: bool,
+    /// Where the published annotation file is, once validation and publication
+    /// succeeded. A checkpoint on disk is not a published file, so an incomplete
+    /// or dry-run module has no path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WritebackResult {
@@ -376,6 +390,19 @@ async fn run_inner(
                     records: 0,
                     complete: false,
                     error: None,
+                    source: match dataset {
+                        true => episode.source.root.clone(),
+                        false => episode
+                            .video(&episode.time.reference)
+                            .ok()
+                            .and_then(|stream| match stream {
+                                crate::episode::Stream::Video { path, .. } => Some(path.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| episode.source.root.clone()),
+                    },
+                    dataset,
+                    path: None,
                 };
                 if !options.dry_run {
                     match semantic::run(
@@ -398,6 +425,17 @@ async fn run_inner(
                         Ok(product) => {
                             result.complete = true;
                             result.records = product.annotation.records.len();
+                            let published =
+                                stream_directory(&sidecar, &stream, &episode.time.reference)
+                                    .join(format!("semantic.{item}.jsonl"));
+                            events.emit(Event::Published {
+                                episode: episode.episode_id.clone(),
+                                stream: stream.clone(),
+                                annotation: result.annotation.clone(),
+                                records: result.records as u64,
+                                path: published.clone(),
+                            });
+                            result.path = Some(published);
                             if options.write_lerobot
                                 && item == "subtask"
                                 && stream == episode.time.reference

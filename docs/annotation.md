@@ -77,6 +77,16 @@ or state data. Optional subtask writeback has additional compatibility rules:
 follow the [LeRobot subtask tutorial](lerobot-subtasks.md) and
 [writeback compatibility guide](lerobot.md) before using `--write-lerobot`.
 
+## Read the labels
+
+```sh
+cerul status ./video.mp4 --timeline
+```
+
+This prints the published records in time order, one line each, so you can judge
+a run without opening a JSONL file. Narrow it with `--type event` and lengthen it
+with `--limit 200`. It reads sidecars only: no model call and no network.
+
 ## Find and inspect the results
 
 ```sh

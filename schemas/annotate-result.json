@@ -39,6 +39,11 @@
         "complete": {
           "type": "boolean"
         },
+        "dataset": {
+          "description": "True when the episode came from a LeRobot dataset.",
+          "type": "boolean",
+          "default": false
+        },
         "episode": {
           "type": "string"
         },
@@ -48,10 +53,22 @@
             "null"
           ]
         },
+        "path": {
+          "description": "Where the published annotation file is, once validation and publication\nsucceeded. A checkpoint on disk is not a published file, so an incomplete\nor dry-run module has no path.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "records": {
           "type": "integer",
           "format": "uint",
           "minimum": 0
+        },
+        "source": {
+          "description": "What this result belongs to: the video file, or the dataset root when the\nepisode came from one. Episodes of a dataset share their MP4 shards, so a\nmedia file name alone cannot tell two results apart; the dataset and the\nepisode index can.",
+          "type": "string",
+          "default": ""
         },
         "stream": {
           "type": "string"
