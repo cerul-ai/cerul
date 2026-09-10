@@ -6,7 +6,7 @@
 //! run. Guidance appears only when a person is at both ends of the process.
 //! Everything it draws goes to stderr, leaving results on stdout alone.
 use crate::render::{self, Palette};
-use console::{Key, Term, measure_text_width};
+use console::{Key, Term, measure_text_width, truncate_str};
 use std::{
     ffi::OsString,
     fs,
@@ -74,54 +74,13 @@ pub fn select<T: Clone>(
         return Ok(None);
     }
     let term = Term::stderr();
-    let width = choices
-        .iter()
-        .map(|choice| measure_text_width(&choice.label))
-        .max()
-        .unwrap_or(0);
-    let mut cursor = 0usize;
-    let mut drawn = 0usize;
     term.hide_cursor()?;
-    let chosen = loop {
-        if drawn > 0 {
-            term.clear_last_lines(drawn)?;
-        }
-        term.write_line(&palette.bold(title))?;
-        for (index, choice) in choices.iter().enumerate() {
-            let here = index == cursor;
-            let pad = " ".repeat(width - measure_text_width(&choice.label) + 3);
-            let label = if here {
-                palette.bold(&choice.label)
-            } else {
-                choice.label.clone()
-            };
-            let note = if choice.note.is_empty() {
-                String::new()
-            } else {
-                format!("{pad}{}", palette.dim(&choice.note))
-            };
-            term.write_line(&format!(
-                "{} {label}{note}",
-                if here { palette.cmd("❯") } else { " ".into() }
-            ))?;
-        }
-        term.write_line(&palette.dim("↑↓ move · Enter select · Esc leave"))?;
-        drawn = choices.len() + 2;
-        match term.read_key() {
-            Ok(Key::ArrowUp) => cursor = cursor.checked_sub(1).unwrap_or(choices.len() - 1),
-            Ok(Key::ArrowDown) => cursor = (cursor + 1) % choices.len(),
-            Ok(Key::Enter) => break Some(cursor),
-            Ok(Key::Escape) | Ok(Key::CtrlC) => break None,
-            // A terminal that cannot report keys cannot run a menu either.
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => break None,
-            Err(_) => break None,
-            _ => {}
-        }
-    };
-    term.clear_last_lines(drawn)?;
+    // Whatever happens inside, the cursor comes back: a terminal left without
+    // one outlives this process and there is no undo for it.
+    let chosen = run_menu(&term, palette, title, choices);
     term.show_cursor()?;
-    // What was asked and what was answered stay on screen; the list does not.
-    match chosen {
+    match chosen? {
+        // What was asked and what was answered stay on screen; the list does not.
         Some(index) => {
             term.write_line(&format!(
                 "{} {}",
@@ -132,6 +91,61 @@ pub fn select<T: Clone>(
         }
         None => Ok(None),
     }
+}
+
+fn run_menu<T>(
+    term: &Term,
+    palette: &Palette,
+    title: &str,
+    choices: &[Choice<T>],
+) -> io::Result<Option<usize>> {
+    let width = choices
+        .iter()
+        .map(|choice| measure_text_width(&choice.label))
+        .max()
+        .unwrap_or(0);
+    let mut cursor = 0usize;
+    let mut drawn = 0usize;
+    let chosen = loop {
+        if drawn > 0 {
+            term.clear_last_lines(drawn)?;
+        }
+        // A line that wraps is two lines to the terminal and one to this loop,
+        // which would clear the wrong rows on the next redraw.
+        let columns = (term.size().1 as usize).max(20);
+        let line = |text: &str| term.write_line(truncate_str(text, columns - 1, "…").as_ref());
+        line(&palette.bold(title))?;
+        for (index, choice) in choices.iter().enumerate() {
+            let here = index == cursor;
+            let pad = " ".repeat(width - measure_text_width(&choice.label) + 3);
+            let label = match here {
+                true => palette.bold(&choice.label),
+                false => choice.label.clone(),
+            };
+            let note = match choice.note.is_empty() {
+                true => String::new(),
+                false => format!("{pad}{}", palette.dim(&choice.note)),
+            };
+            line(&format!(
+                "{} {label}{note}",
+                if here { palette.cmd("❯") } else { " ".into() }
+            ))?;
+        }
+        line(&palette.dim("↑↓ move · Enter select · Esc leave"))?;
+        drawn = choices.len() + 2;
+        match term.read_key() {
+            Ok(Key::ArrowUp) => cursor = cursor.checked_sub(1).unwrap_or(choices.len() - 1),
+            Ok(Key::ArrowDown) => cursor = (cursor + 1) % choices.len(),
+            Ok(Key::Enter) => break Some(cursor),
+            // Leaving is a normal answer, and so is a terminal that cannot
+            // report keys at all: both mean this menu asked for nothing.
+            Ok(Key::Escape) | Ok(Key::CtrlC) => break None,
+            Err(_) => break None,
+            _ => {}
+        }
+    };
+    term.clear_last_lines(drawn)?;
+    Ok(chosen)
 }
 
 /// One typed line. An empty answer means the person changed their mind.
