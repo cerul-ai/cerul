@@ -6,9 +6,9 @@ audio, or text to your configured endpoints. The source media stays unchanged.
 ## Prepare
 
 Install a complete bundle or build this checkout following the
-[installation guide](../docs/installation.md). Complete bundles include FFmpeg,
+[installation guide](installation.md). Complete bundles include FFmpeg,
 ffprobe, and OCR weights. The first interactive run guides default Gemini key
-setup; an existing `GEMINI_API_KEY` also works. Use [configuration](../docs/configuration.md)
+setup; an existing `GEMINI_API_KEY` also works. Use [configuration](configuration.md)
 for other endpoints.
 
 Choose a dedicated workspace so this example does not mix with other indexes:
@@ -42,14 +42,17 @@ seconds of padding, clamped to the episode's source range.
 In a terminal the hits are grouped into one card per video, each moment carrying
 its match percentage, time range, excerpt, and a link. With IINA installed the
 link opens the video at the matched moment; otherwise it opens the file from the
-beginning. Every moment is numbered, and `cerul open N` plays that moment with
+beginning. Every moment is numbered, and `cerul open 2` plays the second moment with
 mpv, IINA, VLC, or ffplay when one of them is installed. Terminals implementing the iTerm2 or Kitty graphics
 protocol (iTerm2, Ghostty, Kitty, WezTerm) also draw a still frame from the start
 of the hit; `--preview` forces the frames and `--no-preview` suppresses them.
 Frames are cached under workspace `cache/previews/`, query embeddings under
-`cache/queries/`, and both are freed by `cerul remove --cache`. The first search
-of a new phrase waits for one model request; repeating or refining it is local. Visual hits cover a whole index window, so re-index with a
-shorter `--chunk` when you need finer moments.
+`cache/queries/`, and both are freed by `cerul remove --cache`. Repeating the
+same query in the same embedding space reuses its cached vector, including
+when you change filters or the result limit. Changing the query text requires
+a new embedding request. Expired capability checks may still contact the
+provider. Visual hits cover a whole index window; re-index with a shorter
+`--chunk` when you need finer moments.
 
 ## Add semantic annotations
 
@@ -78,14 +81,23 @@ cerul remove --all-indexes
 cerul index ./demo.mp4
 ```
 
-The same command forgets one video: `cerul remove ./demo.mp4` deletes that
-video's sidecar and the rows projected from it. The video file is never touched,
-a path that was never indexed is reported rather than treated as an error, and
-an interactive run confirms before anything authoritative is lost.
+The final command, `cerul index ./demo.mp4`, restores indexes from intact
+sidecar vectors without model calls. Cache/index cleaning preserves sidecars
+and source media.
 
-The final command restores indexes from intact sidecar vectors without model
-calls. Cache/index cleaning preserves sidecars and source media. Deleting
-sidecars requires an explicit `--sidecars PATH --yes` request.
+## Remove a video's derived data
+
+`cerul remove ./demo.mp4` deletes the video's sidecar and the index rows
+projected from it. The source video is preserved. An interactive run confirms
+before deleting authoritative data; a path that was never indexed is reported
+rather than treated as an error.
+
+For a noninteractive removal, use `cerul --yes remove ./demo.mp4`.
+After removing sidecars, indexing that video again must regenerate the deleted
+outputs and can call your model endpoints. Use the index-cleaning commands
+above when you want to preserve those outputs for a zero-model-call rebuild.
+
+## Use structured output
 
 For programmatic use, `--json` writes one final JSON object to stdout and NDJSON
 progress/log events to stderr:
@@ -94,5 +106,8 @@ progress/log events to stderr:
 cerul --json search "A cup on a table" > hits.json 2> events.jsonl
 ```
 
-See [schemas](../schemas) for generated contracts and [configuration](../docs/configuration.md)
+See [schemas](../schemas) for generated contracts and [configuration](configuration.md)
 for endpoint selection and exit codes.
+
+For action labels in ordinary videos or demonstrations, see the
+[annotation guide](annotation.md).

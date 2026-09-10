@@ -1,6 +1,6 @@
-name: Decision Request
-description: Track a non-trivial architecture, infrastructure, or workflow decision
-title: "[Decision] "
+name: Core Design Proposal
+description: Propose a change to the core, CLI, data formats, or contributor workflow
+title: "[Design] "
 labels:
   - decision
 body:
@@ -8,7 +8,7 @@ body:
     id: context
     attributes:
       label: Context
-      description: What decision needs to be made and why now?
+      description: What limitation does this address for users or contributors? Omit private operational details.
     validations:
       required: true
   - type: textarea

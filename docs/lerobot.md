@@ -34,11 +34,8 @@ Relevant primary references:
 - [Dataset writer and shard boundaries](https://github.com/huggingface/lerobot/blob/2774d9bddcbbda50e697e162e89e7eaada8d7105/src/lerobot/datasets/dataset_writer.py)
 - [Language column types](https://github.com/huggingface/lerobot/blob/2774d9bddcbbda50e697e162e89e7eaada8d7105/src/lerobot/datasets/language.py)
 
-The staged `write_out` library path has passed the pinned official loader on a
-five-episode, 40-frame fixture, both with existing language columns and with no
-language columns. The harness compares every original frame field, including
-decoded images, actions, and state; it also checks untouched episodes and active
-subtask timestamps. A rejected validator leaves the destination unpublished.
+## Writeback and recovery
+
 `annotate --semantic subtask --write-lerobot --out DIR` publishes a complete
 output dataset. Without `--out`, the command retains rollback copies and a durable
 replacement journal under `.cerul/writeback`. On interruption, the next writeback
@@ -58,22 +55,13 @@ those canonical columns and explicitly labels its synthetic compatibility case
 v3.1. This is not evidence that an official v3.1 recorder or upgrade command
 exists. Cerul does not upgrade user datasets.
 
-To reproduce the existing-language case, install the pinned LeRobot checkout
-with its dataset and PyAV dependencies in a separate validation environment:
-
-```sh
-python tests/lerobot_roundtrip.py create /tmp/cerul-acceptance-source
-HF_HOME=/tmp/cerul-acceptance-cache cargo run --locked --example verify_lerobot_writeback -- \
-  /tmp/cerul-acceptance-source /tmp/cerul-acceptance-output /absolute/path/to/validation/python
-```
-
-Use fresh source and output paths. Python and the official loader are acceptance
-test dependencies, not Cerul runtime dependencies.
+For the pinned loader environment, fixture details, and reproduction commands,
+see [developer validation](development/validation.md#official-lerobot-loader).
 
 Dataset reads and output copies take a shared advisory lock on the source
 folder; in-place replacement and recovery take an exclusive lock on that same
 folder. This coordinates separate workspaces without requiring writes to a
-read-only source dataset. Lock conflicts fail immediately. The supported M1
+read-only source dataset. Lock conflicts fail immediately. Supported
 filesystems must implement POSIX advisory locks; unrelated tools that ignore
 those locks still require external coordination.
 

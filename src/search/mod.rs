@@ -479,8 +479,8 @@ async fn run_inner(
                     let text = options.query.clone().unwrap();
                     (text.clone(), Input::Text(text))
                 };
-                // The same question in the same space always embeds the same way,
-                // so repeated and refined searches need no further model calls.
+                // Reuse a vector for the same query and space when filters change.
+                // Different query text receives a different cache identity.
                 let cached = workspace.join("cache").join("queries").join(format!(
                     "{}.json",
                     storage::cache_key(&(&space, &identity))?
@@ -762,6 +762,7 @@ mod tests {
             (200, ok.clone()),
             (200, ok.clone()),
             (200, ok.clone()),
+            (200, ok.clone()),
             (200, ok),
         ]);
         let dir = tempfile::tempdir().unwrap();
@@ -832,6 +833,19 @@ mod tests {
         assert_eq!(report.hits[0].start_us, 26_000_000);
         assert_eq!(report.hits[0].end_us, 27_000_000);
         assert_eq!(report.hits[0].excerpt, "unit 13");
+        // A changed query must receive its own embedding, not reuse the old one.
+        let rewritten = run(
+            &workspace,
+            &config,
+            &Options {
+                query: Some("pick up cup".into()),
+                ..options.clone()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rewritten.hits.len(), 1);
         let image_report = run(
             &workspace,
             &config,
@@ -848,7 +862,25 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(image_report.hits[0].start_us, 26_000_000);
-        assert_eq!(server.join().unwrap().len(), 5);
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 6); // Three probes, two text queries, one image.
+        assert!(requests[3].1.to_string().contains("regrasp cup"));
+        assert!(requests[4].1.to_string().contains("pick up cup"));
+        // With a fresh capability cache, filtering the same query works after
+        // the endpoint stops. Neither filters nor limit belong to the query key.
+        let repeated = run(
+            &workspace,
+            &config,
+            &Options {
+                limit: 2,
+                filters: Vec::new(),
+                ..options.clone()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(!repeated.hits.is_empty());
         // The endpoint has stopped. These modes must not probe or embed.
         fs::remove_dir_all(workspace.join("index")).unwrap();
         let counted = run(
