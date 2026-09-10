@@ -1029,6 +1029,93 @@ pub fn status(
     Ok(())
 }
 
+/// What replacing the program will do, before anybody is asked to agree to it.
+pub fn upgrade_plan(
+    out: &mut dyn Write,
+    palette: &Palette,
+    available: &crate::upgrade::Available,
+) -> io::Result<()> {
+    writeln!(
+        out,
+        "{} {}",
+        palette.bold(&format!(
+            "cerul {} → {}",
+            available.current, available.latest
+        )),
+        palette.dim("· the newest published release")
+    )?;
+    writeln!(out)?;
+    facts(
+        out,
+        palette,
+        &[
+            ("Runs", available.installer.clone()),
+            ("Replaces", crate::upgrade::INSTALLED.join(", ")),
+            (
+                "Keeps",
+                "your workspace, saved key, and annotation files".into(),
+            ),
+        ],
+    )?;
+    writeln!(out)
+}
+
+/// The upgrade result: what is installed now, and what to do about it.
+pub fn upgrade(
+    out: &mut dyn Write,
+    palette: &Palette,
+    available: &crate::upgrade::Available,
+    upgraded: bool,
+) -> io::Result<()> {
+    if upgraded {
+        writeln!(
+            out,
+            "{} {}",
+            palette.ok("✓"),
+            palette.bold(&format!("Upgraded to cerul {}", available.latest))
+        )?;
+        return next_block(
+            out,
+            palette,
+            &[
+                ("cerul --version", "confirm which build answers now"),
+                ("cerul", "what is indexed and what to do next"),
+            ],
+        );
+    }
+    if !available.newer {
+        return writeln!(
+            out,
+            "{} {}   {}",
+            palette.ok("✓"),
+            palette.bold(&format!(
+                "cerul {} is the newest release",
+                available.current
+            )),
+            palette.dim("nothing to install")
+        );
+    }
+    writeln!(
+        out,
+        "{} {}",
+        palette.warn("!"),
+        palette.bold(&format!(
+            "cerul {} is behind {}",
+            available.current, available.latest
+        ))
+    )?;
+    writeln!(out)?;
+    facts(out, palette, &[("Installer", available.installer.clone())])?;
+    next_block(
+        out,
+        palette,
+        &[(
+            "cerul upgrade --yes",
+            "install it without being asked again",
+        )],
+    )
+}
+
 /// Where the agent skill can go, or where it just went. Read-only until asked.
 pub fn skill(
     out: &mut dyn Write,
@@ -2449,6 +2536,48 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("file-000.mp4"), "{text}");
+    }
+
+    #[test]
+    fn upgrading_says_what_it_would_replace_and_what_it_would_keep() {
+        let available = crate::upgrade::Available {
+            current: "0.0.6".into(),
+            latest: "0.0.7".into(),
+            newer: true,
+            installer: "https://example.test/v0.0.7/cerul-installer.sh".into(),
+        };
+        let render = |available: &crate::upgrade::Available, upgraded| {
+            let mut out = Vec::new();
+            super::upgrade(&mut out, &Palette::new(false), available, upgraded).unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        // Behind, and not installed: the command to install is the whole point.
+        let text = render(&available, false);
+        assert!(text.contains("0.0.6 is behind 0.0.7"), "{text}");
+        assert!(text.contains("cerul upgrade --yes"), "{text}");
+        assert!(text.contains("cerul-installer.sh"), "{text}");
+
+        let text = render(&available, true);
+        assert!(text.contains("Upgraded to cerul 0.0.7"), "{text}");
+        assert!(text.contains("cerul --version"), "{text}");
+
+        // Nothing to do is a result, not a warning.
+        let current = crate::upgrade::Available {
+            current: "0.0.7".into(),
+            newer: false,
+            ..available.clone()
+        };
+        let text = render(&current, false);
+        assert!(text.contains("0.0.7 is the newest release"), "{text}");
+        assert!(!text.contains("upgrade --yes"), "{text}");
+
+        // What replacing the program touches, said before anyone agrees to it.
+        let mut out = Vec::new();
+        super::upgrade_plan(&mut out, &Palette::new(false), &available).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("cerul 0.0.6 → 0.0.7"), "{text}");
+        assert!(text.contains("cerul-ffmpeg"), "{text}");
+        assert!(text.contains("saved key"), "{text}");
     }
 
     #[test]

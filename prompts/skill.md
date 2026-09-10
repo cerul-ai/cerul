@@ -17,6 +17,12 @@ https://github.com/cerul-ai/cerul/blob/main/docs/agent-setup.md. Do not install
 Rust, Python, Ollama, or system FFmpeg for this workflow, and do not switch to a
 source build when a download fails; report the error instead.
 
+`cerul --json upgrade` reports the newest published release and installs
+nothing. It replaces the program only with `--yes`, so ask the user before
+running `cerul upgrade --yes`: it changes which build answers every later
+command. A build too old for a flag you need is a reason to offer the upgrade,
+not to work around it.
+
 Run `cerul --json auth` to see whether a key is available. It reports whether a
 key is saved or exported, never the value. Never echo a key, print part of it,
 write it to a log or a commit, or read an unrelated project's `.env`. When no key

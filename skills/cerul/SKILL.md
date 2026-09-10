@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
 generated-by: cerul 0.0.7
-generated-sha256: e0f5e6313d19393cf8e283f595734d14c3ac64ff5fea743383ccd1367b9f1a81
+generated-sha256: 5e32acf08e156e8e4969f4fd3dc79bab70bf0b95dc90d3bb4aaf620786ded8d8
 ---
 
 # Cerul
@@ -18,6 +18,12 @@ Run `cerul --version`. If it is missing, follow the installation runbook at
 https://github.com/cerul-ai/cerul/blob/main/docs/agent-setup.md. Do not install
 Rust, Python, Ollama, or system FFmpeg for this workflow, and do not switch to a
 source build when a download fails; report the error instead.
+
+`cerul --json upgrade` reports the newest published release and installs
+nothing. It replaces the program only with `--yes`, so ask the user before
+running `cerul upgrade --yes`: it changes which build answers every later
+command. A build too old for a flag you need is a reason to offer the upgrade,
+not to work around it.
 
 Run `cerul --json auth` to see whether a key is available. It reports whether a
 key is saved or exported, never the value. Never echo a key, print part of it,
@@ -213,6 +219,11 @@ Remove indexed videos, or free the disk they and their caches use
   --all-indexes               Free every search index; each rebuilds from sidecars with no model calls
   --index <SPACE>             Free one search index by space id; rebuilt from sidecars on next use
   --compact                   Reclaim space inside search indexes without dropping them
+
+### cerul upgrade
+
+Install the newest published release of Cerul over this one
+
 
 ### cerul skill
 

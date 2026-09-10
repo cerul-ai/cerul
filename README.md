@@ -48,6 +48,9 @@ Supports **macOS Apple Silicon** and **Linux x86_64 (Ubuntu 24.04 or newer)**.
 curl -fsSL https://cerul.ai/install.sh | sh
 ```
 
+Later, `cerul upgrade` installs the newest release over this one and leaves your
+workspace, key, and annotations alone.
+
 ### 2. Add a video
 
 ```sh

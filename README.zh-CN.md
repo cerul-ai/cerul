@@ -44,6 +44,8 @@ Cerul 是一个搜索视频、导出片段的命令行工具。安装包已包�
 curl -fsSL https://cerul.ai/install.sh | sh
 ```
 
+之后用 `cerul upgrade` 升级到最新版本，工作区、密钥和标注文件都不受影响。
+
 ### 2. 添加视频
 
 ```sh

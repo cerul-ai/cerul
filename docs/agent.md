@@ -80,14 +80,18 @@ The schema for these lives in [`schemas/event.json`](../schemas/event.json).
 
 `index`, `search`, `status`, `status --timeline`, `annotate`, and `remove`
 each have a generated schema in [`schemas/`](../schemas/), produced from the Rust
-result types. `auth`, `open`, and `skill` return small objects with no generated
-schema; their shapes are:
+result types. `auth`, `open`, `skill`, and `upgrade` return small objects with no
+generated schema; their shapes are:
 
 ```json
 {"provider":"gemini","endpoint":"…","env":"GEMINI_API_KEY","env_set":false,"saved":true,"credentials_path":"…","action":"set"}
 {"media":"/v/demo.mp4","start_us":12000000,"player":"mpv","seeks":true,"opened":true}
-{"version":"0.0.6","installed":"…/SKILL.md","targets":{"claude":"…"},"skill":"---\nname: cerul\n…"}
+{"version":"0.0.7","installed":"…/SKILL.md","targets":{"claude":"…"},"skill":"---\nname: cerul\n…"}
+{"current":"0.0.6","latest":"0.0.7","newer":true,"installer":"https://…/cerul-installer.sh","upgraded":false}
 ```
+
+`upgrade` reports in `--json` and installs nothing; replacing the program needs
+an explicit `--yes`, which is a decision to put to the user rather than take.
 
 `auth` never reports a key's value, or any part of one. Two fields on the
 generated results matter most to an agent.
