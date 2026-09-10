@@ -9,6 +9,15 @@ Existing tags and `ffmpeg-vendor-*` assets must be preserved for downstream comp
 Public installation uses GitHub Releases and the permanent website installer
 redirect. npm and Homebrew publication are separate from generating their artifacts.
 
+0. In the release PR, set the version in Cargo.toml and packaging/dist.toml,
+   refresh Cargo.lock, and regenerate the agent skill, which records the version
+   and a digest of its own contents:
+
+   ```sh
+   cargo run --locked -- skill --print > skills/cerul/SKILL.md
+   ```
+
+   A stale copy fails `cargo test` rather than reaching a release.
 1. Verify PR checks and acceptance results, then merge the release PR into `main`.
 2. From the merged `main`, confirm Cargo.toml and packaging/dist.toml agree on
    the version being released, then create and push the matching tag. The
