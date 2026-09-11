@@ -21,9 +21,15 @@ with tempfile.TemporaryDirectory(prefix="cerul-bundle-test-") as temp:
     env.update(HOME=str(home), PATH=str(empty))
     subprocess.run([str(bundle / "cerul-ffmpeg"), "-v", "error", "-loop", "1", "-i", str(root / "tests/fixtures/ocr-text.png"), "-t", "1", "-r", "2", "-pix_fmt", "yuv420p", "-c:v", "libx264", str(temp / "demo.mp4")], env=env, check=True)
     result = subprocess.run([str(bundle / "cerul"), "--json", "--workspace", str(temp / "workspace"), "index", str(temp / "demo.mp4"), "--no-audio", "--jobs", "1"], env=env, capture_output=True, text=True, timeout=120)
-    assert result.returncode == 6, (result.returncode, result.stdout, result.stderr)
+    assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
+    assert "GEMINI_API_KEY" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert not (temp / "demo.mp4.cerul/episode.json").exists()
+    # The static fixture needs no model request when still windows are skipped.
+    # This exercises packaged OCR and text search without CI model credentials.
+    result = subprocess.run([str(bundle / "cerul"), "--json", "--workspace", str(temp / "workspace"), "index", str(temp / "demo.mp4"), "--no-audio", "--skip-still", "--jobs", "1"], env=env, capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
     indexed = json.loads(result.stdout)
-    assert all(len(stream["errors"]) == 1 and "GEMINI_API_KEY" in stream["errors"][0] for episode in indexed["episodes"] for stream in episode["streams"]), indexed
+    assert all(stream["vector_rows"] == 0 and not stream["errors"] for episode in indexed["episodes"] for stream in episode["streams"]), indexed
     result = subprocess.run([str(bundle / "cerul"), "--json", "--workspace", str(temp / "workspace"), "search", "--text", "CERUL"], env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, (result.stdout, result.stderr)
     data = json.loads(result.stdout)
