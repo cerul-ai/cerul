@@ -85,6 +85,107 @@ fn failure(kind: Failure, message: impl Into<String>) -> anyhow::Error {
     .into()
 }
 
+// Only known protocol codes are safe to expose; free-form provider fields can
+// contain credentials or user media. Never include response text in errors.
+fn response_reason(value: &Value) -> &str {
+    match value.as_str().unwrap_or("UNKNOWN") {
+        reason @ ("STOP"
+        | "MAX_TOKENS"
+        | "SAFETY"
+        | "RECITATION"
+        | "OTHER"
+        | "BLOCKLIST"
+        | "PROHIBITED_CONTENT"
+        | "SPII"
+        | "LANGUAGE"
+        | "MALFORMED_RESPONSE"
+        | "MALFORMED_FUNCTION_CALL"
+        | "UNEXPECTED_TOOL_CALL"
+        | "TOO_MANY_TOOL_CALLS"
+        | "FINISH_REASON_UNSPECIFIED"
+        | "BLOCK_REASON_UNSPECIFIED"
+        | "IMAGE_SAFETY"
+        | "IMAGE_PROHIBITED_CONTENT"
+        | "IMAGE_OTHER"
+        | "NO_IMAGE"
+        | "IMAGE_RECITATION"
+        | "MISSING_THOUGHT_SIGNATURE"
+        | "ESCALATION") => reason,
+        _ => "UNKNOWN",
+    }
+}
+
+fn structured_text(response: &Value, gemini: bool) -> Result<String> {
+    if gemini {
+        let blocked = &response["promptFeedback"]["blockReason"];
+        if blocked.is_string() && blocked != "BLOCK_REASON_UNSPECIFIED" {
+            return Err(failure(
+                Failure::Rejected,
+                format!(
+                    "Gemini blocked the request (promptFeedback.blockReason={}); no structured output was generated",
+                    response_reason(blocked)
+                ),
+            ));
+        }
+        let candidate = &response["candidates"][0];
+        let reason = &candidate["finishReason"];
+        if reason.is_string() && reason != "STOP" {
+            let code = response_reason(reason);
+            let kind = if matches!(
+                code,
+                "SAFETY"
+                    | "RECITATION"
+                    | "BLOCKLIST"
+                    | "PROHIBITED_CONTENT"
+                    | "SPII"
+                    | "ESCALATION"
+            ) {
+                Failure::Rejected
+            } else {
+                Failure::InvalidResponse
+            };
+            return Err(failure(
+                kind,
+                format!("Gemini did not complete structured output (finishReason={code})"),
+            ));
+        }
+        Ok(candidate["content"]["parts"]
+            .as_array()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter(|p| p["thought"] != true)
+                    .filter_map(|p| p["text"].as_str())
+                    .collect::<String>()
+            })
+            .unwrap_or_default())
+    } else {
+        let choice = &response["choices"][0];
+        if choice["message"]["refusal"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+        {
+            return Err(failure(
+                Failure::Rejected,
+                "model refused the structured output request",
+            ));
+        }
+        if choice["finish_reason"] == "length" {
+            return Err(failure(
+                Failure::InvalidResponse,
+                "model structured output was truncated (finish_reason=length)",
+            ));
+        }
+        if choice["finish_reason"] == "content_filter" {
+            return Err(failure(
+                Failure::Rejected,
+                "model blocked structured output (finish_reason=content_filter)",
+            ));
+        }
+        Ok(choice["message"]["content"].as_str().unwrap_or("").into())
+    }
+}
+
 #[derive(Clone)]
 pub struct Provider {
     pub endpoint: Endpoint,
@@ -506,30 +607,21 @@ impl Provider {
             content.extend(inputs.iter().map(Input::openai));
             self.json("chat/completions",json!({"model":self.endpoint.model,"messages":[{"role":"user","content":content}],"response_format":{"type":"json_schema","json_schema":{"name":"cerul_output","strict":true,"schema":schema}}})).await?
         };
-        let text = if self.endpoint.kind == "gemini" {
-            response["candidates"][0]["content"]["parts"]
-                .as_array()
-                .map(|parts| {
-                    parts
-                        .iter()
-                        .filter(|p| p["thought"] != true)
-                        .filter_map(|p| p["text"].as_str())
-                        .collect::<String>()
-                })
-                .unwrap_or_default()
-        } else {
-            response["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap_or("")
-                .into()
-        };
-        serde_json::from_str(&text).map_err(|_| {
-            failure(
+        let text = structured_text(&response, self.endpoint.kind == "gemini")?;
+        if text.trim().is_empty() {
+            return Err(failure(
                 Failure::InvalidResponse,
-                "model returned no structured output",
-            )
+                "model returned empty structured output (no non-thought text)",
+            ));
+        }
+        serde_json::from_str(&text).map_err(|error| {
+            failure(Failure::InvalidResponse, format!(
+                "model returned invalid structured JSON ({} bytes, category={:?}, line={}, column={})",
+                text.len(), error.classify(), error.line(), error.column()
+            ))
         })
     }
+
     pub async fn transcribe(&self, audio: Vec<u8>, duration_us: i64) -> Result<Value> {
         ensure!(duration_us > 0, "invalid transcription duration");
         let response = if self.endpoint.kind == "gemini" {
@@ -767,6 +859,114 @@ pub(crate) mod tests {
                 .contains("query: query")
         );
     }
+    #[tokio::test]
+    async fn structured_response_failures_preserve_reason_without_exposing_payloads() {
+        let cases = vec![
+            (
+                json!({"promptFeedback":{"blockReason":"OTHER","blockReasonMessage":"private payload"}}),
+                "gemini",
+                Failure::Rejected,
+                "blockReason=OTHER",
+            ),
+            (
+                json!({"promptFeedback":{"blockReason":"private payload"}}),
+                "gemini",
+                Failure::Rejected,
+                "blockReason=UNKNOWN",
+            ),
+            (
+                json!({"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[{"text":"{}"}]}}]}),
+                "gemini",
+                Failure::InvalidResponse,
+                "finishReason=MAX_TOKENS",
+            ),
+            (
+                json!({"candidates":[{"finishReason":"SAFETY"}]}),
+                "gemini",
+                Failure::Rejected,
+                "finishReason=SAFETY",
+            ),
+            (
+                json!({"candidates":[]}),
+                "gemini",
+                Failure::InvalidResponse,
+                "empty structured output",
+            ),
+            (
+                json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"thought":true,"text":"private payload"}]}}]}),
+                "gemini",
+                Failure::InvalidResponse,
+                "empty structured output",
+            ),
+            (
+                json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"private payload"}]}}]}),
+                "gemini",
+                Failure::InvalidResponse,
+                "invalid structured JSON",
+            ),
+            (
+                json!({"choices":[{"message":{"refusal":"private payload"}}]}),
+                "openai",
+                Failure::Rejected,
+                "refused",
+            ),
+            (
+                json!({"choices":[{"finish_reason":"length","message":{"content":"{}"}}]}),
+                "openai",
+                Failure::InvalidResponse,
+                "truncated",
+            ),
+            (
+                json!({"choices":[{"finish_reason":"content_filter"}]}),
+                "openai",
+                Failure::Rejected,
+                "content_filter",
+            ),
+        ];
+        for (body, kind, expected, detail) in cases {
+            let (base, server) = server(vec![(200, body)]);
+            let error = provider(base, kind)
+                .generate("check", &[], json!({"type":"object"}))
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<ProviderError>().unwrap().kind,
+                expected
+            );
+            assert!(error.to_string().contains(detail), "{error}");
+            assert!(!error.to_string().contains("private payload"));
+            assert_eq!(
+                server.join().unwrap().len(),
+                1,
+                "response failures must not be retried"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn gemini_structured_output_joins_text_and_ignores_thoughts() {
+        let (base, server) = server(vec![(
+            200,
+            json!({"candidates":[{"finishReason":"STOP","content":{"parts":[
+                {"thought":true,"text":"not JSON"}, {"text":"{\"ok\":"}, {"text":"true}"}
+            ]}}]}),
+        )]);
+        let schema =
+            json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]});
+        assert_eq!(
+            provider(base, "gemini")
+                .generate("check", &[], schema.clone())
+                .await
+                .unwrap(),
+            json!({"ok":true})
+        );
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests[0].1["generationConfig"]["responseJsonSchema"],
+            schema
+        );
+    }
+
     #[tokio::test]
     async fn openai_vision_and_transcription_use_distinct_wire_contracts() {
         let (base, server) = server(vec![

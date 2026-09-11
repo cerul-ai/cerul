@@ -392,7 +392,25 @@ pub async fn transcript(
                     )?;
                     let response = provider
                         .transcribe(fs::read(audio)?, window.end_us - window.start_us)
-                        .await?;
+                        .await
+                        .map_err(|error| {
+                            let message = format!(
+                                "speech transcription window {} ({}-{}s): {error}",
+                                index + 1,
+                                media::seconds(window.start_us),
+                                media::seconds(window.end_us)
+                            );
+                            if let Some(provider_error) =
+                                error.downcast_ref::<crate::providers::ProviderError>()
+                            {
+                                anyhow::Error::new(crate::providers::ProviderError {
+                                    kind: provider_error.kind,
+                                    message,
+                                })
+                            } else {
+                                anyhow::anyhow!(message)
+                            }
+                        })?;
                     let records = probes::segments(response, window.end_us - window.start_us)?;
                     checkpoints.save(&checkpoint, &records)?;
                     records
@@ -482,6 +500,81 @@ pub fn text_for_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn blocked_transcription_reports_window_without_publishing_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("speech.mp4");
+        media::run(
+            crate::media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=32x32:rate=1:duration=2",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:sample_rate=16000:duration=2",
+                    "-c:v",
+                    "libx264",
+                    "-c:a",
+                    "aac",
+                    "-shortest",
+                ])
+                .arg(&video),
+        )
+        .unwrap();
+        let (base, server) = crate::providers::tests::server(vec![
+            (
+                200,
+                json!({"candidates":[{"content":{"parts":[{"text":"{\"segments\":[]}"}]}}]}),
+            ),
+            (200, json!({"promptFeedback":{"blockReason":"OTHER"}})),
+        ]);
+        let mut endpoint = crate::config::Config::default().transcription;
+        endpoint.base_url = base;
+        let provider = Provider::new(
+            endpoint,
+            None,
+            1,
+            None,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .unwrap();
+        let episode = crate::index::discover::ordinary_episode(&video).unwrap();
+        let workspace = dir.path().join("workspace");
+        let sidecar = crate::index::discover::publish_episode(&workspace, &episode, None).unwrap();
+        let error = transcript(
+            &episode,
+            "primary",
+            &sidecar,
+            &workspace,
+            &provider,
+            false,
+            &mut |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<crate::providers::ProviderError>()
+                .unwrap()
+                .kind,
+            crate::providers::Failure::Rejected
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("speech transcription window 1 (0.000000-2.000000s)"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("blockReason=OTHER"));
+        assert!(!sidecar.join("transcript.jsonl").exists());
+        assert_eq!(server.join().unwrap().len(), 2);
+    }
+
     #[tokio::test]
     async fn ten_minute_audio_uses_bounded_requests_and_offsets_segment_times_once() {
         let dir = tempfile::tempdir().unwrap();

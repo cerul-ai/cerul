@@ -111,3 +111,26 @@ for endpoint selection and exit codes.
 
 For action labels in ordinary videos or demonstrations, see the
 [annotation guide](annotation.md).
+
+## Diagnose speech failures
+
+If Gemini blocks an audio request, Cerul reports the transcription window and
+`promptFeedback.blockReason` or `finishReason`. `OTHER` is an unspecified
+provider rejection, not evidence of malformed JSON. Blocked responses are not
+automatically retried, and no successful transcript is published for them.
+A truncated response and an empty or invalid JSON response have separate errors.
+Provider response text, credentials, and free-form rejection messages are not
+included in these diagnostics.
+
+Completed screen text and checkpoints remain available. Inspect the stored
+failure with `cerul status ./video.mp4 --json`. To save events and the final
+report from an explicitly requested rerun:
+
+```sh
+cerul index ./video.mp4 --json > result.json 2> events.jsonl
+```
+
+Cerul does not automatically save a complete request/response log. Retrying can
+make new billable model calls. If speech is not needed, `cerul index ./video.mp4
+--no-audio` explicitly skips transcription; visual indexing still uses the
+configured embedding endpoint.
