@@ -1093,7 +1093,7 @@ fn names(workspace: &Path) -> BTreeMap<String, PathBuf> {
         })
         .unwrap_or_default()
 }
-const MEDIA_NOTICE: &str = "Using Gemini (media may be sent, usage billed to your key):";
+const MEDIA_NOTICE: &str = "Using model endpoint (media may be sent, usage billed to your key):";
 
 async fn execute(
     cli: &Cli,

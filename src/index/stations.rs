@@ -286,13 +286,34 @@ pub fn screen_text(
 
 const WINDOW_US: i64 = 60_000_000;
 fn transcript_params(provider: &Provider) -> serde_json::Value {
-    json!({"kind":provider.endpoint.kind,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"window_us":WINDOW_US,"timestamp_protocol":if provider.endpoint.kind == "gemini" && provider.endpoint.model.starts_with("gemini-3.5-transcribe") {"native-word-phrases/2"} else {"seconds/1"}})
+    json!({"kind":provider.endpoint.kind,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"window_us":WINDOW_US,"timestamp_protocol":if provider.endpoint.uses_native_transcription() {"native-word-phrases/2"} else {"seconds/1"}})
 }
 fn transcript_key(episode: &Episode, stream: &str, provider: &Provider) -> Result<String> {
     // Short audio windows avoid long-context timestamp drift and keep inline
     // mono 16 kHz PCM requests well below the encoded request-size limit.
     let params = transcript_params(provider);
     station_key(episode, stream, "transcript", &params)
+}
+
+// A recomputation gets its own resumable checkpoint generation. The marker remains
+// until publication succeeds, even when the previous authoritative file is retained.
+fn retry_path(sidecar: &Path, key: &str) -> PathBuf {
+    sidecar
+        .join("staging/checkpoints")
+        .join(format!("transcript-{key}.pending"))
+}
+pub(crate) fn begin_transcript_recompute(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    provider: &Provider,
+) -> Result<()> {
+    let key = transcript_key(episode, stream, provider)?;
+    let generation = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos()
+        .to_string();
+    storage::atomic_write(&retry_path(sidecar, &key), generation.as_bytes())
 }
 
 pub fn transcript_pending(
@@ -313,6 +334,9 @@ pub fn transcript_pending(
     }
     let key = transcript_key(episode, stream, provider)?;
     let path = stream_directory(sidecar, stream, &episode.time.reference).join("transcript.jsonl");
+    if retry_path(sidecar, &key).is_file() {
+        return Ok(true);
+    }
     if existing(&path, &key, episode.duration_us()?, recompute)?.is_some() {
         return Ok(false);
     }
@@ -345,7 +369,15 @@ pub async fn transcript(
     let duration = episode.duration_us()?;
     let directory = stream_directory(sidecar, stream, &episode.time.reference);
     let path = directory.join("transcript.jsonl");
-    if let Some(file) = existing(&path, &key, duration, recompute)? {
+    let pending = retry_path(sidecar, &key);
+    if recompute && !pending.is_file() {
+        begin_transcript_recompute(episode, stream, sidecar, provider)?;
+    }
+    let generation = pending
+        .is_file()
+        .then(|| fs::read_to_string(&pending))
+        .transpose()?;
+    if let Some(file) = existing(&path, &key, duration, recompute || generation.is_some())? {
         return Ok(file);
     }
     let Stream::Video {
@@ -363,8 +395,11 @@ pub async fn transcript(
         let checkpoints = Checkpoints::new(sidecar);
         let windows = media::chunks(range_us[1] - range_us[0], WINDOW_US, 0)?;
         for (index, window) in windows.iter().enumerate() {
-            let checkpoint = storage::cache_key(&(&key, window))?;
-            let cached = if !recompute {
+            let checkpoint = match &generation {
+                Some(generation) => storage::cache_key(&(&key, window, generation))?,
+                None => storage::cache_key(&(&key, window))?,
+            };
+            let cached = if !recompute || generation.is_some() {
                 checkpoints.load::<Vec<Record>>(&checkpoint)?
             } else {
                 None
@@ -476,7 +511,27 @@ pub async fn transcript(
             "upstream transcript changed; run index to refresh vectors",
         )?;
     }
+    // Promote only a complete generation, so later checkpoint-only reconstruction
+    // cannot resurrect the transcript from before the successful recomputation.
+    if let Some(generation) = &generation {
+        let checkpoints = Checkpoints::new(sidecar);
+        for window in media::chunks(range_us[1] - range_us[0], WINDOW_US, 0)? {
+            if let Some(records) = checkpoints.load::<Vec<Record>>(&storage::cache_key(&(
+                &file.header.input_hash,
+                window,
+                generation,
+            ))?)? {
+                checkpoints.save(
+                    &storage::cache_key(&(&file.header.input_hash, window))?,
+                    &records,
+                )?;
+            }
+        }
+    }
     file.publish(&path, duration, None)?;
+    if generation.is_some() {
+        fs::remove_file(pending)?;
+    }
     Ok(file)
 }
 

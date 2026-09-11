@@ -163,7 +163,7 @@ async fn prompt(
     }
     eprintln!("  checking the configured endpoint…");
     let mut validation = endpoint.clone();
-    if validation.kind == "gemini" && !validation.model.starts_with("gemini-3.5-transcribe") {
+    if validation.kind == "gemini" && !validation.uses_native_transcription() {
         validation.model = "gemini-embedding-2".into();
         validation.dims = Some(1536);
     }

@@ -373,6 +373,14 @@ async fn run_inner(
         // leave useful local output; unsupported protocols and credentials are hard errors.
         if !options.no_audio {
             for stream in &selected {
+                if options.embedding.recompute {
+                    stations::begin_transcript_recompute(
+                        &episode,
+                        stream,
+                        &planned,
+                        &transcription,
+                    )?;
+                }
                 if !stations::transcript_pending(
                     &episode,
                     stream,
@@ -845,6 +853,12 @@ mod tests {
                 ),
             ),
             (200, json!({"promptFeedback":{"blockReason":"OTHER"}})),
+            (
+                200,
+                generated(
+                    json!({"segments":[{"start":0.1,"end":0.9,"text":"retained speech","lang":"en"}]}),
+                ),
+            ),
         ]);
         let (embedding_base, embedding_server) =
             crate::providers::tests::server(vec![
@@ -955,7 +969,23 @@ mod tests {
         )
         .unwrap();
         assert!(state.complete && state.error.is_some());
-        assert_eq!(server.join().unwrap().len(), 3);
+        options.embedding.recompute = false;
+        let recovered = run(
+            std::slice::from_ref(&source),
+            &workspace,
+            &config,
+            &options,
+            CancellationToken::new(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(!recovered.partial);
+        assert!(matches!(
+            recovered.episodes[0].streams[0].speech,
+            SpeechStatus::Complete
+        ));
+        assert_eq!(server.join().unwrap().len(), 4);
         assert_eq!(embedding_server.join().unwrap().len(), 7);
     }
 

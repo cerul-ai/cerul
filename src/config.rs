@@ -52,6 +52,17 @@ pub struct Endpoint {
     pub enabled: Option<bool>,
 }
 
+impl Endpoint {
+    pub fn uses_native_transcription(&self) -> bool {
+        self.kind == "gemini"
+            && self
+                .model
+                .strip_prefix("models/")
+                .unwrap_or(&self.model)
+                .starts_with("gemini-3.5-transcribe")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Perception {

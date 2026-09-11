@@ -465,7 +465,7 @@ impl Provider {
         }
         let url = self.route(action)?;
         let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-        if !loopback && !get {
+        if !get {
             self.resolve_key().await?;
         }
         if self.key_header().is_none() && !loopback && !get {
@@ -635,9 +635,7 @@ impl Provider {
 
     pub async fn transcribe(&self, audio: Vec<u8>, duration_us: i64) -> Result<Value> {
         ensure!(duration_us > 0, "invalid transcription duration");
-        if self.endpoint.kind == "gemini"
-            && self.endpoint.model.starts_with("gemini-3.5-transcribe")
-        {
+        if self.endpoint.uses_native_transcription() {
             let response = self.json("generateContent", json!({
                 "contents": [{"role": "user", "parts": [Input::Audio(audio, "audio/wav".into()).gemini()]}],
                 "generationConfig": {"audioTranscriptionConfig": {"mode": "VERBATIM", "wordTimestamp": true}}
@@ -903,7 +901,7 @@ pub(crate) mod tests {
             ]}}]}),
         )]);
         let mut provider = provider(base, "gemini");
-        provider.endpoint.model = "gemini-3.5-transcribe".into();
+        provider.endpoint.model = "models/gemini-3.5-transcribe".into();
         let result = provider.transcribe(vec![0; 44], 1_000_000).await.unwrap();
         assert_eq!(result["segments"][0]["start_us"], 125000);
         assert_eq!(result["segments"][0]["end_us"], 900000);
@@ -1269,6 +1267,29 @@ pub(crate) mod tests {
 #[cfg(test)]
 mod credential_scope_tests {
     use super::*;
+    #[tokio::test]
+    async fn loopback_requests_resolve_saved_credentials() {
+        let (base, server) = tests::server(vec![(
+            200,
+            serde_json::json!({"embedding":{"values":[1.,0.]}}),
+        )]);
+        let resolver: CredentialResolver =
+            Arc::new(|_| Box::pin(async { Ok(Some("local-fixture-key".into())) }));
+        with_credential_resolver(resolver, async {
+            let mut endpoint = crate::config::Config::default().embedding;
+            endpoint.base_url = base;
+            endpoint.dims = Some(2);
+            let provider =
+                Provider::new(endpoint, None, 1, None, CancellationToken::new()).unwrap();
+            provider
+                .embed(Input::Text("fixture".into()), true)
+                .await
+                .unwrap();
+            assert_eq!(provider.key_header().unwrap(), "local-fixture-key");
+        })
+        .await;
+        assert_eq!(server.join().unwrap().len(), 1);
+    }
     #[tokio::test]
     async fn host_resolution_is_lazy_and_missing_credentials_are_resolved_once() {
         use std::sync::atomic::{AtomicUsize, Ordering};
