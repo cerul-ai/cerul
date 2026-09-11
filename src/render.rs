@@ -955,11 +955,11 @@ pub fn status(
         .episodes
         .iter()
         .flat_map(|episode| &episode.embeddings)
-        .find(|state| !state.complete && state.error.is_some())
+        .find(|state| state.error.is_some())
     {
         writeln!(
             out,
-            "  {} search index incomplete: {}",
+            "  {} processing issue: {}",
             palette.warn("!"),
             failed.error.as_deref().unwrap_or_default()
         )?;
@@ -1276,6 +1276,7 @@ pub fn index_plan(
     paths: &[PathBuf],
     no_ocr: bool,
     no_audio: bool,
+    speech_model: &str,
 ) -> io::Result<()> {
     let names: Vec<String> = paths.iter().map(|path| file_name(path)).collect();
     writeln!(
@@ -1289,7 +1290,10 @@ pub fn index_plan(
         stations.push(format!("screen text {}", palette.dim("(local)")));
     }
     if !no_audio {
-        stations.push(format!("speech {}", palette.dim("(Gemini)")));
+        stations.push(format!(
+            "speech {}",
+            palette.dim(&format!("({speech_model})"))
+        ));
     }
     stations.push(format!("search index {}", palette.dim("(Gemini)")));
     writeln!(out, "  {}", stations.join(&palette.dim("  ·  ")))?;

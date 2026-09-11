@@ -112,6 +112,13 @@ for endpoint selection and exit codes.
 For action labels in ordinary videos or demonstrations, see the
 [annotation guide](annotation.md).
 
+## Optional speech transcription
+
+Use `cerul config` to choose Gemini, Groq, OpenAI, or a custom transcription
+service. Choose Disabled to keep video embeddings and local OCR without a separate
+transcript. The chooser appears when indexing audio with missing ASR settings;
+non-interactive runs skip unconfigured ASR. See [configuration](configuration.md).
+
 ## Diagnose speech failures
 
 If Gemini blocks an audio request, Cerul reports the transcription window and
@@ -124,11 +131,10 @@ A truncated response and an empty or invalid JSON response have separate errors.
 Provider response text, credentials, and free-form rejection messages are not
 included in these diagnostics.
 
-Completed screen text and checkpoints remain available. For an incomplete
-index, inspect its saved failure with `cerul status ./video.mp4 --json`. If a
-`--recompute` attempt fails while an older complete index remains valid, status
-continues to describe that preserved index and does not retain the latest
-attempt's error. Capture the command report and events to keep that failure:
+Completed screen text and checkpoints remain available. Video/OCR vectors can
+remain searchable even when speech fails. Inspect the saved diagnostic with
+`cerul status ./video.mp4 --json`; a complete embedding state may carry a speech
+error. Capture the full command report and events for additional context:
 
 ```sh
 cerul index ./video.mp4 --json > result.json 2> events.jsonl

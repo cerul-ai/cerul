@@ -153,3 +153,7 @@ Cerul's Rust code is Apache-2.0. Bundles also contain separately licensed media
 tools and OCR weights; see [third-party notices](THIRD_PARTY_NOTICES.md).
 The [Cerul name and logo](docs/assets/README.md) identify the project and do not
 imply endorsement of third-party products.
+
+Speech transcription is optional. Run `cerul config` to choose Gemini, Groq,
+OpenAI, a custom OpenAI-compatible service, or Disabled. Multimodal search uses
+Gemini Embedding 2 and requires a Gemini key. See [configuration](docs/configuration.md).

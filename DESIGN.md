@@ -14,8 +14,8 @@ installation instructions are in the [documentation](docs/README.md).
 | Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
 | Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
 | Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, and query instruction template. The same model name at different endpoints is a different space. Queries must match exactly. |
-| Endpoints | `embedding`, `vision`, and `transcription` support `kind = gemini \| openai` with user keys. `perception` is reserved and processing is not implemented. Missing perception must not block indexing/search. |
-| Default models | One Gemini key: `gemini-embedding-2` at 1536 dimensions and `gemini-3.8-flash`. |
+| Endpoints | The CLI fixes embedding to Gemini Embedding 2. Vision and optional transcription support `kind = gemini \| openai` with user keys. `perception` is reserved and processing is not implemented. Missing perception must not block indexing/search. |
+| Default models | Required Gemini embedding: `gemini-embedding-2` at 1536 dimensions. Vision: `gemini-3.8-flash`. Optional ASR preset: `gemini-3.5-transcribe`. |
 | OCR | Embedded PP-OCRv6 small, approximately 31 MB of weights, CPU inference through `tract-onnx`, enabled by default. This is the only embedded model and the only exception to endpoint-based inference. |
 | Retrieval | One multimodal space. Each 30-second unit has up to three independently embedded rows: video, transcript, screen text. The embedding endpoint must accept video and images; unsupported endpoints fail, without a text-only fallback. No BM25 or fusion. Exact strings use `--text` substring matching. Annotation filtering happens before vector search. |
 | Annotations | Three fixed families: `semantic`, `grounding`, `world`. Subtypes may grow. All derived records are annotations. |
@@ -130,7 +130,7 @@ Results: `hits[]` containing episode, stream, start_us, end_us, optional frame_r
 
 Return a workspace overview or an episode's annotation inventory. Running `cerul` without a command is equivalent to status.
 
-Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes embedding, vision, and transcription, plus perception only when explicitly configured, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not imply that this version implements grounding/world.
+Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes embedding, vision, and enabled transcription, plus perception only when explicitly configured, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not imply that this version implements grounding/world.
 
 ## 4. Configuration and models
 
@@ -143,7 +143,7 @@ secret values. Provider adapters must preserve these request contracts:
 | --- | --- | --- |
 | Embedding | `embedContent`, outputDimensionality=1536. Text query instruction: `task: search result \| query: {query}`. | `/v1/embeddings` with text, image, and video support. Reject text-only endpoints. |
 | Vision | `generateContent` with responseSchema. | `/v1/chat/completions` with image_url and json_schema. |
-| Transcription | Audio `generateContent` with a segment schema. | `/v1/audio/transcriptions`, verbose_json, segment timestamps. |
+| Transcription | Native word timestamps for `gemini-3.5-transcribe`; prompted segments for other Gemini models. | `/v1/audio/transcriptions`, verbose_json, segment timestamps. |
 
 Probe the remote calls actually needed, not command names. Index probes embedding only for pending vectors and transcription only for pending audio. Annotate probes selected vision/perception capabilities. Semantic search can refresh an expired embedding capability probe even when its query vector is cached. Filters alone, exact text, sidecar rebuilds, ordinary status, and cleanup make no probe calls.
 
@@ -286,3 +286,13 @@ capabilities from work excluded from this repository.
 
 Do not add speculative interface layers before a fifth station, second embedding
 provider, or fourth annotation family creates a concrete need.
+
+## Optional speech configuration
+
+`cerul config` selects Gemini, Groq, OpenAI, a custom OpenAI-compatible ASR, or
+Disabled. Interactive indexing offers this when audio is present and ASR settings
+or credentials are missing, not solely on first launch. Disabled is persisted;
+unconfigured speech is skipped without prompts in machine mode. Credentials are
+private and separate from model configuration. ASR failure retains searchable
+video/OCR vectors, records a diagnostic, and returns partial success. Repeating
+index resumes missing speech windows without recomputing completed OCR.

@@ -635,6 +635,15 @@ impl Provider {
 
     pub async fn transcribe(&self, audio: Vec<u8>, duration_us: i64) -> Result<Value> {
         ensure!(duration_us > 0, "invalid transcription duration");
+        if self.endpoint.kind == "gemini"
+            && self.endpoint.model.starts_with("gemini-3.5-transcribe")
+        {
+            let response = self.json("generateContent", json!({
+                "contents": [{"role": "user", "parts": [Input::Audio(audio, "audio/wav".into()).gemini()]}],
+                "generationConfig": {"audioTranscriptionConfig": {"mode": "VERBATIM", "wordTimestamp": true}}
+            })).await?;
+            return native_transcript(&response);
+        }
         let response = if self.endpoint.kind == "gemini" {
             let prompt = format!(
                 "Transcribe this {}-second audio clip accurately. Return chronological speech segments with start and end measured in seconds from the beginning of THIS clip. Include silence in the timeline; do not reset time at speech or pauses. Every segment must have end greater than start. If there is no speech, return an empty segments array, not a placeholder segment. Keep spoken text in its original language; lang is an ISO language code. Do not invent speech in silence.",
@@ -690,6 +699,92 @@ impl Provider {
         }
         Ok(json!({"segments":normalized}))
     }
+}
+
+/// Normalize Gemini's native word annotations without asking a language model to invent JSON.
+fn native_transcript(response: &Value) -> Result<Value> {
+    let text = structured_text(response, true)?;
+    let parts = match response["candidates"][0]["content"]["parts"].as_array() {
+        Some(parts) => parts,
+        None if response["candidates"][0]["finishReason"] == "STOP" && text.trim().is_empty() => {
+            return Ok(json!({"segments":[]}));
+        }
+        None => {
+            return Err(failure(
+                Failure::InvalidResponse,
+                "Gemini transcription returned no parts",
+            ));
+        }
+    };
+    let mut segments = Vec::new();
+    for part in parts {
+        if part["thought"] == true {
+            continue;
+        }
+        if let Some(words) = part["audioTranscription"]["words"].as_array() {
+            for word in words {
+                let offset = |field: &str| -> Result<i64> {
+                    let raw = word[field]
+                        .as_str()
+                        .and_then(|s| s.strip_suffix('s'))
+                        .context("invalid native transcription offset")?;
+                    let value: f64 = raw.parse().context("invalid native transcription offset")?;
+                    ensure!(
+                        value.is_finite() && (0. ..1e12).contains(&value),
+                        "invalid native transcription offset"
+                    );
+                    Ok((value * 1_000_000.).round() as i64)
+                };
+                let word_text = word["word"]
+                    .as_str()
+                    .context("native transcription word missing text")?;
+                segments.push(json!({"start_us":offset("startOffset")?, "end_us":offset("endOffset")?, "text":word_text, "lang":null}));
+            }
+        }
+    }
+    ensure!(
+        !segments.is_empty() || text.trim().is_empty(),
+        failure(
+            Failure::Unsupported,
+            "transcription endpoint returned text without word timestamps"
+        )
+    );
+    // Native recognizers can attach punctuation or short words to an instant.
+    // Keep those tokens in a neighboring timed phrase instead of fabricating a duration.
+    let mut phrases: Vec<Value> = Vec::new();
+    for segment in segments {
+        let start = segment["start_us"].as_i64().unwrap();
+        let end = segment["end_us"].as_i64().unwrap();
+        ensure!(
+            end >= start,
+            "native transcription has reversed word timestamps"
+        );
+        if let Some(last) = phrases.last_mut() {
+            let last_start = last["start_us"].as_i64().unwrap();
+            let last_end = last["end_us"].as_i64().unwrap();
+            if start == end
+                || last_start == last_end
+                || (end - last_start <= 5_000_000 && start - last_end <= 750_000)
+            {
+                last["start_us"] = json!(last_start.min(start));
+                last["end_us"] = json!(last_end.max(end));
+                last["text"] = json!(format!(
+                    "{} {}",
+                    last["text"].as_str().unwrap(),
+                    segment["text"].as_str().unwrap()
+                ));
+                continue;
+            }
+        }
+        phrases.push(segment);
+    }
+    ensure!(
+        phrases
+            .iter()
+            .all(|p| p["end_us"].as_i64() > p["start_us"].as_i64()),
+        "native transcription has no positive-duration speech interval"
+    );
+    Ok(json!({"segments":phrases}))
 }
 
 #[cfg(test)]
@@ -774,6 +869,7 @@ pub(crate) mod tests {
                 base_url: base,
                 api_key_env: "TEST_KEY".into(),
                 dims: Some(2),
+                enabled: None,
             },
             None,
             2,
@@ -782,6 +878,51 @@ pub(crate) mod tests {
         )
         .unwrap()
     }
+    #[tokio::test]
+    async fn native_asr_preserves_word_offsets_and_does_not_request_json_generation() {
+        let (base, server) = server(vec![(
+            200,
+            json!({"candidates":[{"finishReason":"STOP","content":{"parts":[
+                {"text":"hello", "audioTranscription":{"words":[{"word":"hello","startOffset":"0.125s","endOffset":"0.900s"}]}}
+            ]}}]}),
+        )]);
+        let mut provider = provider(base, "gemini");
+        provider.endpoint.model = "gemini-3.5-transcribe".into();
+        let result = provider.transcribe(vec![0; 44], 1_000_000).await.unwrap();
+        assert_eq!(result["segments"][0]["start_us"], 125000);
+        assert_eq!(result["segments"][0]["end_us"], 900000);
+        let joined = native_transcript(&json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"audioTranscription":{"words":[
+            {"word":"hello","startOffset":"0.1s","endOffset":"0.8s"},
+            {"word":"!","startOffset":"0.8s","endOffset":"0.8s"}
+        ]}}]}}]})).unwrap();
+        assert_eq!(joined["segments"][0]["text"], "hello !");
+        assert_eq!(joined["segments"].as_array().unwrap().len(), 1);
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests[0].1["generationConfig"]["audioTranscriptionConfig"]["wordTimestamp"],
+            true
+        );
+        assert!(
+            requests[0].1["generationConfig"]
+                .get("responseJsonSchema")
+                .is_none()
+        );
+        assert_eq!(
+            native_transcript(&json!({"candidates":[{"finishReason":"STOP"}]})).unwrap()["segments"],
+            json!([])
+        );
+        assert!(native_transcript(&json!({})).is_err());
+        assert!(native_transcript(&json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"missing timestamps"}]}}]})).is_err());
+        assert!(native_transcript(&json!({"promptFeedback":{"blockReason":"OTHER"}})).is_err());
+        assert_eq!(
+            native_transcript(
+                &json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":""}]}}]})
+            )
+            .unwrap()["segments"],
+            json!([])
+        );
+    }
+
     #[tokio::test]
     async fn gemini_json_retry_hint_is_observed_and_default_backoff_is_cancellable() {
         let (base, server) = server_with_retry_header(

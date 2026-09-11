@@ -286,7 +286,7 @@ pub fn screen_text(
 
 const WINDOW_US: i64 = 60_000_000;
 fn transcript_params(provider: &Provider) -> serde_json::Value {
-    json!({"kind":provider.endpoint.kind,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"window_us":WINDOW_US,"timestamp_protocol":"seconds/1"})
+    json!({"kind":provider.endpoint.kind,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"window_us":WINDOW_US,"timestamp_protocol":if provider.endpoint.kind == "gemini" && provider.endpoint.model.starts_with("gemini-3.5-transcribe") {"native-word-phrases/1"} else {"seconds/1"}})
 }
 fn transcript_key(episode: &Episode, stream: &str, provider: &Provider) -> Result<String> {
     // Short audio windows avoid long-context timestamp drift and keep inline
@@ -398,10 +398,12 @@ pub async fn transcript(
                         })
                         .map_err(|error| {
                             let message = format!(
-                                "speech transcription window {} ({}-{}s): {error}",
+                                "speech transcription window {} ({}-{}s), model {} at {}: {error}",
                                 index + 1,
                                 media::seconds(window.start_us),
-                                media::seconds(window.end_us)
+                                media::seconds(window.end_us),
+                                provider.endpoint.model,
+                                provider.endpoint.base_url
                             );
                             if let Some(provider_error) =
                                 error.downcast_ref::<crate::providers::ProviderError>()
@@ -548,6 +550,7 @@ mod tests {
                 (200, response),
             ]);
             let mut endpoint = crate::config::Config::default().transcription;
+            endpoint.model = "gemini-3.8-flash".into();
             endpoint.base_url = base;
             let provider = Provider::new(
                 endpoint,
@@ -632,6 +635,7 @@ mod tests {
         responses.extend((0..10).map(|_| reply(segment.clone())));
         let (base, server) = crate::providers::tests::server(responses);
         let mut endpoint = crate::config::Config::default().transcription;
+        endpoint.model = "gemini-3.8-flash".into();
         endpoint.base_url = base;
         let provider = Provider::new(
             endpoint,

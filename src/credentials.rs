@@ -66,15 +66,17 @@ pub fn resolver(
         let cancel = cancel.clone();
         Box::pin(async move {
             let mut stored = keys.lock().await;
-            if stored.is_none() {
-                *stored = Some(path().as_deref().map(read).transpose()?.unwrap_or_default());
-            }
+            *stored = Some(path().as_deref().map(read).transpose()?.unwrap_or_default());
             let keys = stored.as_mut().unwrap();
             let scope = credential_scope(&endpoint);
             if let Some(key) = keys.get(&scope) {
                 return Ok(Some(key.clone()));
             }
-            if !interactive {
+            if !interactive
+                || endpoint.kind != "gemini"
+                || endpoint.base_url.trim_end_matches('/')
+                    != "https://generativelanguage.googleapis.com/v1beta"
+            {
                 return Ok(None);
             }
             prompt(&endpoint, keys, cancel).await
@@ -131,27 +133,26 @@ async fn prompt(
     keys: &mut Keys,
     cancel: CancellationToken,
 ) -> Result<Option<String>> {
-    if endpoint.kind != "gemini"
-        || endpoint.base_url.trim_end_matches('/')
-            != "https://generativelanguage.googleapis.com/v1beta"
-    {
-        return Ok(None);
-    }
     let scope = credential_scope(endpoint);
     let path = path();
     let palette = crate::render::Palette::new(console::colors_enabled_stderr());
     eprintln!();
     eprintln!(
         "{}",
-        palette.bold("Cerul needs a Gemini API key for speech and semantic search.")
+        palette.bold(&format!(
+            "Configure {} at {}",
+            endpoint.model, endpoint.base_url
+        ))
     );
-    eprintln!("  Get one at https://aistudio.google.com/apikey");
+    if endpoint.kind == "gemini" {
+        eprintln!("  Get a key at https://aistudio.google.com/apikey");
+    }
     eprintln!(
         "  {}",
-        palette.dim("Stored privately in ~/.cerul/credentials.json. Gemini receives media during processing; API charges may apply.")
+        palette.dim("Stored privately in ~/.cerul/credentials.json. The selected service receives media during processing; API charges may apply.")
     );
-    let key = rpassword::prompt_password("Gemini API key (hidden, blank to cancel): ")
-        .inspect_err(|error| {
+    let key =
+        rpassword::prompt_password("API key (hidden, blank to cancel): ").inspect_err(|error| {
             if error.kind() == std::io::ErrorKind::Interrupted {
                 cancel.cancel();
             }
@@ -160,17 +161,31 @@ async fn prompt(
         cancel.cancel();
         anyhow::bail!("setup cancelled");
     }
-    eprint!(
-        "{}",
-        palette.dim("  checking the key with a small text request…")
-    );
-    let validation = cerul::config::Config::default().embedding;
+    eprintln!("  checking the configured endpoint…");
+    let mut validation = endpoint.clone();
+    if validation.kind == "gemini" && !validation.model.starts_with("gemini-3.5-transcribe") {
+        validation.model = "gemini-embedding-2".into();
+        validation.dims = Some(1536);
+    }
+    let embedding_check = validation.dims.is_some();
     let provider = Provider::new(validation, Some(key.trim().to_owned()), 1, None, cancel)?;
-    let checked = provider
-        .embed(Input::Text("Cerul setup".into()), true)
-        .await;
-    eprintln!();
-    checked.context("API key validation failed; key was not saved")?;
+    let checked = if embedding_check {
+        provider
+            .embed(Input::Text("Cerul setup".into()), true)
+            .await
+            .map(|_| ())
+    } else {
+        let workspace = tempfile::tempdir()?;
+        cerul::providers::probes::check(
+            &provider,
+            cerul::providers::probes::Capability::Transcription,
+            workspace.path(),
+            true,
+        )
+        .await
+        .map(|_| ())
+    };
+    checked.context("endpoint validation failed; key was not saved")?;
     keys.insert(scope, key.trim().to_owned());
     save(
         path.as_deref()

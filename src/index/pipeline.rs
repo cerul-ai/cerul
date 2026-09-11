@@ -61,9 +61,20 @@ pub struct EpisodeResult {
     pub streams: Vec<StreamResult>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeechStatus {
+    Disabled,
+    NotConfigured,
+    NoAudio,
+    Complete,
+    Failed,
+    Planned,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StreamResult {
     pub stream: String,
     pub indexed: bool,
+    pub speech: SpeechStatus,
     pub vector_rows: usize,
     pub errors: Vec<String>,
 }
@@ -134,6 +145,49 @@ fn interrupted(cancel: &CancellationToken) -> Result<()> {
     Ok(())
 }
 
+/// Read-only planning for a CLI deciding whether missing speech settings are relevant.
+/// A fully cached transcript never requires a key just to rebuild an index.
+pub fn pending_transcription(
+    paths: &[PathBuf],
+    workspace: &Path,
+    config: &Config,
+    options: &Options,
+) -> Result<bool> {
+    let registry = discover::read_registry(workspace)?;
+    let provider = Provider::new(
+        config.transcription.clone(),
+        None,
+        1,
+        None,
+        CancellationToken::new(),
+    )?;
+    for input in discover::discover(paths)? {
+        let episodes = match input {
+            Input::Video(path) => vec![discover::ordinary_episode(&path)?],
+            Input::LeRobot(path) => crate::lerobot::read(&path)?,
+        };
+        for episode in episodes {
+            if !selected(&episode, options.only.as_deref()) {
+                continue;
+            }
+            let sidecar =
+                discover::sidecar_path(&episode, &registry, options.sidecar_dir.as_deref())?;
+            for stream in streams(&episode, &options.streams)? {
+                if stations::transcript_pending(
+                    &episode,
+                    &stream,
+                    &sidecar,
+                    &provider,
+                    options.embedding.recompute,
+                )? {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
 pub async fn run(
     paths: &[PathBuf],
     workspace: &Path,
@@ -158,6 +212,10 @@ async fn run_inner(
     events: &mut dyn EventSink,
 ) -> Result<Report> {
     config.validate()?;
+    let mut effective = options.clone();
+    let explicitly_disabled = options.no_audio || config.transcription.enabled == Some(false);
+    effective.no_audio |= config.transcription.enabled != Some(true);
+    let options = &effective;
     ensure!(
         options.jobs > 0 && options.rpm != Some(0),
         "jobs and RPM must be positive"
@@ -207,6 +265,7 @@ async fn run_inner(
                 streams: selected
                     .into_iter()
                     .map(|stream| StreamResult {
+                        speech: SpeechStatus::Planned,
                         stream,
                         indexed: false,
                         vector_rows: 0,
@@ -266,6 +325,7 @@ async fn run_inner(
             &discover::read_registry(workspace)?,
             options.sidecar_dir.as_deref(),
         )?;
+        let mut speech_blocked = std::collections::BTreeMap::new();
         // Probe only uncached audio work, before OCR. Offline endpoints may still
         // leave useful local output; unsupported protocols and credentials are hard errors.
         if !options.no_audio {
@@ -288,11 +348,16 @@ async fn run_inner(
                 .await
                 {
                     Ok(_) => {}
-                    Err(error)
-                        if error.downcast_ref::<ProviderError>().is_some_and(|e| {
-                            matches!(e.kind, Failure::Unavailable | Failure::MissingKey)
-                        }) => {}
-                    Err(error) => return Err(error),
+                    Err(error) if cancel.is_cancelled() => return Err(error),
+                    Err(error) => {
+                        speech_blocked.insert(
+                            stream.clone(),
+                            format!(
+                                "model {} at {}: {error}",
+                                transcription.endpoint.model, transcription.endpoint.base_url
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -329,9 +394,9 @@ async fn run_inner(
                 {
                     Ok(_) => {}
                     Err(error)
-                        if error.downcast_ref::<ProviderError>().is_some_and(|e| {
-                            matches!(e.kind, Failure::Unavailable | Failure::MissingKey)
-                        }) =>
+                        if error
+                            .downcast_ref::<ProviderError>()
+                            .is_some_and(|e| matches!(e.kind, Failure::Unavailable)) =>
                     {
                         blocked.insert(stream.clone(), error.to_string());
                     }
@@ -370,6 +435,9 @@ async fn run_inner(
             };
             let transcript = if options.no_audio {
                 None
+            } else if let Some(error) = speech_blocked.get(&stream) {
+                errors.push(format!("speech: {error}"));
+                None
             } else {
                 match stations::transcript(
                     &episode,
@@ -383,16 +451,7 @@ async fn run_inner(
                 .await
                 {
                     Ok(file) => Some(file),
-                    Err(error)
-                        if error.downcast_ref::<ProviderError>().is_some_and(|e| {
-                            matches!(
-                                e.kind,
-                                Failure::Unsupported | Failure::MissingKey | Failure::Cancelled
-                            )
-                        }) =>
-                    {
-                        return Err(error);
-                    }
+                    Err(error) if cancel.is_cancelled() => return Err(error),
                     Err(error) => {
                         errors.push(error.to_string());
                         None
@@ -402,7 +461,8 @@ async fn run_inner(
             if let Some(error) = blocked.get(&stream) {
                 errors.push(error.clone());
             }
-            let count = if errors.is_empty() {
+            let mut embedding_succeeded = false;
+            let count = if !blocked.contains_key(&stream) {
                 match embed::run(
                     &episode,
                     &stream,
@@ -417,7 +477,10 @@ async fn run_inner(
                 )
                 .await
                 {
-                    Ok(count) => count,
+                    Ok(count) => {
+                        embedding_succeeded = true;
+                        count
+                    }
                     Err(error)
                         if error.downcast_ref::<ProviderError>().is_some_and(|e| {
                             matches!(
@@ -465,16 +528,21 @@ async fn run_inner(
                 )?;
                 let preserve = if state_path.is_file() {
                     let state: embed::State = serde_json::from_slice(&fs::read(&state_path)?)?;
-                    state.complete
-                        && state.input_hash == input_hash
-                        && sidecar
-                            .join("embeddings")
-                            .join(format!("{space}.parquet"))
-                            .is_file()
+                    embedding_succeeded
+                        || (state.complete
+                            && state.input_hash == input_hash
+                            && sidecar
+                                .join("embeddings")
+                                .join(format!("{space}.parquet"))
+                                .is_file())
                 } else {
                     false
                 };
-                if !preserve {
+                if preserve {
+                    let mut state: embed::State = serde_json::from_slice(&fs::read(&state_path)?)?;
+                    state.error = Some(errors.join("; "));
+                    storage::write_json(&state_path, &state)?;
+                } else {
                     storage::write_json(
                         &state_path,
                         &embed::State {
@@ -495,9 +563,31 @@ async fn run_inner(
                     msg: format!("{} {stream}: {}", episode.episode_id, errors.join("; ")),
                 });
             }
+            if errors.is_empty() {
+                let path = embed::state_path(&sidecar, &stream, &episode.time.reference, &space);
+                if path.is_file() {
+                    let mut state: embed::State = serde_json::from_slice(&fs::read(&path)?)?;
+                    if state.error.take().is_some() {
+                        storage::write_json(&path, &state)?;
+                    }
+                }
+            }
+            let speech = if explicitly_disabled {
+                SpeechStatus::Disabled
+            } else if config.transcription.enabled.is_none() {
+                SpeechStatus::NotConfigured
+            } else if matches!(episode.video(&stream)?, Stream::Video {probe, ..} if !probe.has_audio)
+            {
+                SpeechStatus::NoAudio
+            } else if transcript.is_some() {
+                SpeechStatus::Complete
+            } else {
+                SpeechStatus::Failed
+            };
             result.streams.push(StreamResult {
+                speech,
                 stream,
-                indexed: errors.is_empty(),
+                indexed: embedding_succeeded,
                 vector_rows: count,
                 errors,
             });
@@ -668,7 +758,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_transcription_fails_before_ocr_or_sidecar_publication() {
+    async fn unsupported_transcription_keeps_video_searchable() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("audio.mp4");
         crate::media::run(
@@ -700,23 +790,87 @@ mod tests {
         )]);
         let mut config = Config::default();
         config.transcription.base_url = base;
+        config.transcription.enabled = Some(true);
+        config.transcription.model = "gemini-3.8-flash".into();
+        let (embedding_base, embedding_server) = crate::providers::tests::server(vec![
+            (
+                200,
+                serde_json::json!({"embedding":{"values":[1.,0.]}})
+            );
+            4
+        ]);
+        config.embedding.base_url = embedding_base;
+        config.embedding.dims = Some(2);
         let workspace = dir.path().join("workspace");
-        let error = run(
-            &[source],
+        let report = run(
+            std::slice::from_ref(&source),
             &workspace,
             &config,
-            &Options::default(),
+            &Options {
+                no_ocr: true,
+                ..Default::default()
+            },
             CancellationToken::new(),
             &mut |_| {},
         )
         .await
-        .unwrap_err();
-        assert_eq!(
-            error.downcast_ref::<ProviderError>().unwrap().kind,
-            Failure::Unsupported
-        );
+        .unwrap();
+        assert!(report.partial);
+        assert!(report.episodes[0].streams[0].indexed);
+        assert_eq!(report.episodes[0].streams[0].vector_rows, 1);
         assert_eq!(server.join().unwrap().len(), 1);
-        assert!(discover::read_registry(&workspace).unwrap().is_empty());
+        assert_eq!(embedding_server.join().unwrap().len(), 4);
+        let state: embed::State = serde_json::from_slice(
+            &fs::read(embed::state_path(
+                &report.episodes[0].sidecar,
+                "primary",
+                "primary",
+                &config.space_id().unwrap(),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(state.complete);
+        assert!(state.error.is_some());
+        assert_eq!(
+            super::super::lance::VectorIndex::open(
+                &workspace,
+                &config.space_id().unwrap(),
+                2,
+                false
+            )
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap(),
+            1
+        );
+        // Disabling or leaving ASR unconfigured reuses the completed video index offline.
+        for enabled in [Some(false), None] {
+            config.transcription.enabled = enabled;
+            let report = run(
+                std::slice::from_ref(&source),
+                &workspace,
+                &config,
+                &Options {
+                    no_ocr: true,
+                    ..Default::default()
+                },
+                CancellationToken::new(),
+                &mut |_| {},
+            )
+            .await
+            .unwrap();
+            assert!(!report.partial);
+            let stream = &report.episodes[0].streams[0];
+            assert!(stream.indexed);
+            assert_eq!(stream.vector_rows, 1);
+            assert!(matches!(
+                (&stream.speech, enabled),
+                (SpeechStatus::Disabled, Some(false)) | (SpeechStatus::NotConfigured, None)
+            ));
+        }
     }
     #[tokio::test]
     async fn offline_index_preserves_local_ocr_and_reports_incomplete_embedding() {

@@ -3,6 +3,7 @@ mod credentials;
 mod documentation_tests;
 mod guide;
 mod render;
+mod setup;
 mod upgrade;
 use anyhow::{Context, Result};
 use cerul::{
@@ -137,6 +138,8 @@ enum Command {
     },
     /// Manage the saved Gemini API key.
     Auth(AuthArgs),
+    /// Configure the required Gemini key and optional default speech transcription.
+    Config,
     /// Generate semantic annotations (tasks, events, states) for videos.
     #[command(
         arg_required_else_help = true,
@@ -738,6 +741,7 @@ enum Outcome {
     /// What the newest release is, and whether this run installed it.
     Upgrade(upgrade::Available, bool),
     Auth(render::KeyState, Option<&'static str>),
+    Configured(bool),
     Remove(
         cerul::clean::Report,
         BTreeMap<String, PathBuf>,
@@ -757,6 +761,7 @@ enum Outcome {
 impl Outcome {
     fn json(&self) -> Result<Value> {
         Ok(match self {
+            Outcome::Configured(saved) => json!({"configured":saved}),
             Outcome::Home(status, _) | Outcome::Status { status, .. } => {
                 serde_json::to_value(status)?
             }
@@ -816,6 +821,11 @@ impl Outcome {
                     &report.targets,
                 ),
             },
+            Outcome::Configured(saved) => writeln!(
+                out,
+                "Configuration {}.",
+                if *saved { "saved" } else { "unchanged" }
+            ),
             Outcome::Auth(key, action) => {
                 match action {
                     Some("set") => {
@@ -1222,6 +1232,11 @@ async fn execute(
                 0,
             ))
         }
+        Some(Command::Config) => {
+            anyhow::ensure!(!cli.json && !cli.quiet && !cli.yes && !cli.dry_run, CliError(2, "cerul config requires an interactive terminal; edit ~/.cerul/config.toml for scripted configuration".into()));
+            let saved = setup::configure(&config(cli)?, cancel).await?;
+            Ok((Outcome::Configured(saved), 0))
+        }
         Some(Command::Auth(args)) => {
             let config = config(cli).map_err(|e| category(2, e))?;
             let endpoint = &config.embedding;
@@ -1516,7 +1531,36 @@ async fn execute(
             ))
         }
         Some(Command::Index(args)) => {
-            let config = config(cli).map_err(|e| category(2, e))?;
+            let mut resolved = config(cli).map_err(|e| category(2, e))?;
+            if !cli.dry_run
+                && !cli.json
+                && !cli.quiet
+                && !cli.yes
+                && guide::asks(&[])
+                && !args.no_audio
+                && resolved.transcription.enabled != Some(false)
+                && (resolved.transcription.enabled.is_none()
+                    || !setup::available(&resolved.transcription))
+                && pipeline::pending_transcription(
+                    &args.paths,
+                    &workspace,
+                    &resolved,
+                    &pipeline::Options {
+                        streams: args.streams.clone(),
+                        only: args.only.clone(),
+                        sidecar_dir: args.sidecar_dir.clone(),
+                        embedding: embed::Options {
+                            recompute: cli.recompute,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                )?
+            {
+                setup::configure(&resolved, cancel.clone()).await?;
+                resolved = config(cli).map_err(|e| category(2, e))?;
+            }
+            let config = resolved;
             anyhow::ensure!(
                 args.jobs > 0 && args.rpm != Some(0),
                 CliError(2, "jobs and RPM must be positive".into())
@@ -1535,7 +1579,8 @@ async fn execute(
                     &palette,
                     &args.paths,
                     args.no_ocr,
-                    args.no_audio,
+                    args.no_audio || config.transcription.enabled != Some(true),
+                    &config.transcription.model,
                 );
             }
             let events = sink.clone();

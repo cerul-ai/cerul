@@ -47,6 +47,9 @@ pub struct Endpoint {
     pub base_url: String,
     pub api_key_env: String,
     pub dims: Option<usize>,
+    /// None means speech has not been configured; false is an explicit opt-out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -73,11 +76,12 @@ impl Default for Config {
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             api_key_env: "GEMINI_API_KEY".into(),
             dims,
+            enabled: None,
         };
         Self {
             embedding: endpoint("gemini-embedding-2", Some(1536)),
             vision: endpoint("gemini-3.8-flash", None),
-            transcription: endpoint("gemini-3.8-flash", None),
+            transcription: endpoint("gemini-3.5-transcribe", None),
             perception: Perception {
                 base_url: "https://api.cerul.ai".into(),
                 api_key_env: "CERUL_API_KEY".into(),
@@ -163,8 +167,17 @@ impl Config {
             }
         }
         for section in ["embedding", "vision", "transcription", "perception"] {
-            for field in ["kind", "model", "base_url", "api_key_env", "dims"] {
-                if section == "perception" && !matches!(field, "base_url" | "api_key_env") {
+            for field in [
+                "kind",
+                "model",
+                "base_url",
+                "api_key_env",
+                "dims",
+                "enabled",
+            ] {
+                if (field == "enabled" && section != "transcription")
+                    || (section == "perception" && !matches!(field, "base_url" | "api_key_env"))
+                {
                     continue;
                 }
                 let name = format!(
@@ -173,7 +186,12 @@ impl Config {
                     field.to_ascii_uppercase()
                 );
                 if let Some(raw) = environment.get(&name) {
-                    let value = if field == "dims" {
+                    let value = if field == "enabled" {
+                        toml::Value::Boolean(
+                            raw.parse()
+                                .with_context(|| format!("{name} must be true or false"))?,
+                        )
+                    } else if field == "dims" {
                         toml::Value::Integer(
                             raw.parse()
                                 .with_context(|| format!("{name} must be an integer"))?,
@@ -221,6 +239,14 @@ impl Config {
         merge(&mut defaults, explicit);
         let config: Self = defaults.try_into()?;
         config.validate()?;
+        let fixed = Self::default().embedding;
+        ensure!(
+            config.embedding.kind == fixed.kind
+                && config.embedding.model == fixed.model
+                && config.embedding.base_url.trim_end_matches('/') == fixed.base_url
+                && config.embedding.dims == fixed.dims,
+            "embedding is fixed to Gemini gemini-embedding-2 (1536 dimensions); only its credential setting can be changed"
+        );
         Ok(config)
     }
 
@@ -268,13 +294,34 @@ pub fn config_paths(home: &Path, cwd: &Path) -> [PathBuf; 2] {
 mod tests {
     use super::*;
     #[test]
+    fn speech_choice_is_distinct_from_missing_configuration() {
+        assert_eq!(Config::load(&[]).unwrap().transcription.enabled, None);
+        for enabled in [true, false] {
+            let config = Config::resolve(
+                &[],
+                &BTreeMap::new(),
+                toml::from_str(&format!("[transcription]\nenabled={enabled}\n")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(config.transcription.enabled, Some(enabled));
+        }
+        assert!(
+            Config::resolve(
+                &[],
+                &BTreeMap::new(),
+                toml::from_str("[embedding]\nmodel='other'\n").unwrap()
+            )
+            .is_err()
+        );
+    }
+    #[test]
     fn precedence_and_provider_defaults_do_not_copy_credentials() {
         let dir = tempfile::tempdir().unwrap();
         let global = dir.path().join("global.toml");
         let project = dir.path().join("project.toml");
         fs::write(
             &global,
-            "[embedding]\ndims=768\n[vision]\nkind='openai'\nmodel='remote'\n",
+            "[embedding]\ndims=1536\n[vision]\nkind='openai'\nmodel='remote'\n",
         )
         .unwrap();
         fs::write(&project, "[vision]\nmodel='project'\n").unwrap();
@@ -289,7 +336,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.vision.model, "cli");
-        assert_eq!(config.embedding.dims, Some(768));
+        assert_eq!(config.embedding.dims, Some(1536));
         assert_eq!(config.vision.base_url, "https://api.openai.com/v1");
         assert_eq!(config.vision.api_key_env, "OPENAI_API_KEY");
         assert!(
