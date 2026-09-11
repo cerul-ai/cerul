@@ -390,9 +390,12 @@ pub async fn transcript(
                         )?,
                         &audio,
                     )?;
-                    let response = provider
+                    let records = provider
                         .transcribe(fs::read(audio)?, window.end_us - window.start_us)
                         .await
+                        .and_then(|response| {
+                            probes::segments(response, window.end_us - window.start_us)
+                        })
                         .map_err(|error| {
                             let message = format!(
                                 "speech transcription window {} ({}-{}s): {error}",
@@ -411,7 +414,6 @@ pub async fn transcript(
                                 anyhow::anyhow!(message)
                             }
                         })?;
-                    let records = probes::segments(response, window.end_us - window.start_us)?;
                     checkpoints.save(&checkpoint, &records)?;
                     records
                 }
@@ -501,7 +503,7 @@ pub fn text_for_range(
 mod tests {
     use super::*;
     #[tokio::test]
-    async fn blocked_transcription_reports_window_without_publishing_success() {
+    async fn failed_transcription_reports_window_without_publishing_success() {
         let dir = tempfile::tempdir().unwrap();
         let video = dir.path().join("speech.mp4");
         media::run(
@@ -526,53 +528,69 @@ mod tests {
                 .arg(&video),
         )
         .unwrap();
-        let (base, server) = crate::providers::tests::server(vec![
+        for (case, response, detail) in [
             (
-                200,
-                json!({"candidates":[{"content":{"parts":[{"text":"{\"segments\":[]}"}]}}]}),
+                "blocked",
+                json!({"promptFeedback":{"blockReason":"OTHER"}}),
+                "blockReason=OTHER",
             ),
-            (200, json!({"promptFeedback":{"blockReason":"OTHER"}})),
-        ]);
-        let mut endpoint = crate::config::Config::default().transcription;
-        endpoint.base_url = base;
-        let provider = Provider::new(
-            endpoint,
-            None,
-            1,
-            None,
-            tokio_util::sync::CancellationToken::new(),
-        )
-        .unwrap();
-        let episode = crate::index::discover::ordinary_episode(&video).unwrap();
-        let workspace = dir.path().join("workspace");
-        let sidecar = crate::index::discover::publish_episode(&workspace, &episode, None).unwrap();
-        let error = transcript(
-            &episode,
-            "primary",
-            &sidecar,
-            &workspace,
-            &provider,
-            false,
-            &mut |_| {},
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(
-            error
-                .downcast_ref::<crate::providers::ProviderError>()
-                .unwrap()
-                .kind,
-            crate::providers::Failure::Rejected
-        );
-        assert!(
-            error
-                .to_string()
-                .contains("speech transcription window 1 (0.000000-2.000000s)"),
-            "{error}"
-        );
-        assert!(error.to_string().contains("blockReason=OTHER"));
-        assert!(!sidecar.join("transcript.jsonl").exists());
-        assert_eq!(server.join().unwrap().len(), 2);
+            (
+                "invalid-segment",
+                json!({"candidates":[{"content":{"parts":[{"text":json!({"segments":[{"start":0,"end":10,"text":"hello","lang":"en"}]}).to_string()}]}}]}),
+                "transcript segment exceeds clip duration",
+            ),
+        ] {
+            let (base, server) = crate::providers::tests::server(vec![
+                (
+                    200,
+                    json!({"candidates":[{"content":{"parts":[{"text":"{\"segments\":[]}"}]}}]}),
+                ),
+                (200, response),
+            ]);
+            let mut endpoint = crate::config::Config::default().transcription;
+            endpoint.base_url = base;
+            let provider = Provider::new(
+                endpoint,
+                None,
+                1,
+                None,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .unwrap();
+            let episode = crate::index::discover::ordinary_episode(&video).unwrap();
+            let workspace = dir.path().join(case);
+            let sidecar =
+                crate::index::discover::publish_episode(&workspace, &episode, None).unwrap();
+            let error = transcript(
+                &episode,
+                "primary",
+                &sidecar,
+                &workspace,
+                &provider,
+                false,
+                &mut |_| {},
+            )
+            .await
+            .unwrap_err();
+            if case == "blocked" {
+                assert_eq!(
+                    error
+                        .downcast_ref::<crate::providers::ProviderError>()
+                        .unwrap()
+                        .kind,
+                    crate::providers::Failure::Rejected
+                );
+            }
+            assert!(
+                error
+                    .to_string()
+                    .contains("speech transcription window 1 (0.000000-2.000000s)"),
+                "{error}"
+            );
+            assert!(error.to_string().contains(detail), "{error}");
+            assert!(!sidecar.join("transcript.jsonl").exists());
+            assert_eq!(server.join().unwrap().len(), 2);
+        }
     }
 
     #[tokio::test]

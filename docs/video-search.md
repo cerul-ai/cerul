@@ -122,9 +122,11 @@ A truncated response and an empty or invalid JSON response have separate errors.
 Provider response text, credentials, and free-form rejection messages are not
 included in these diagnostics.
 
-Completed screen text and checkpoints remain available. Inspect the stored
-failure with `cerul status ./video.mp4 --json`. To save events and the final
-report from an explicitly requested rerun:
+Completed screen text and checkpoints remain available. For an incomplete
+index, inspect its saved failure with `cerul status ./video.mp4 --json`. If a
+`--recompute` attempt fails while an older complete index remains valid, status
+continues to describe that preserved index and does not retain the latest
+attempt's error. Capture the command report and events to keep that failure:
 
 ```sh
 cerul index ./video.mp4 --json > result.json 2> events.jsonl

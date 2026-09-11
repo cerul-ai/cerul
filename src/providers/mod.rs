@@ -139,6 +139,10 @@ fn structured_text(response: &Value, gemini: bool) -> Result<String> {
                     | "PROHIBITED_CONTENT"
                     | "SPII"
                     | "ESCALATION"
+                    | "LANGUAGE"
+                    | "IMAGE_SAFETY"
+                    | "IMAGE_PROHIBITED_CONTENT"
+                    | "IMAGE_RECITATION"
             ) {
                 Failure::Rejected
             } else {
@@ -923,6 +927,20 @@ pub(crate) mod tests {
                 "content_filter",
             ),
         ];
+        let mut cases = cases;
+        for reason in [
+            "LANGUAGE",
+            "IMAGE_SAFETY",
+            "IMAGE_PROHIBITED_CONTENT",
+            "IMAGE_RECITATION",
+        ] {
+            cases.push((
+                json!({"candidates":[{"finishReason":reason}]}),
+                "gemini",
+                Failure::Rejected,
+                reason,
+            ));
+        }
         for (body, kind, expected, detail) in cases {
             let (base, server) = server(vec![(200, body)]);
             let error = provider(base, kind)
