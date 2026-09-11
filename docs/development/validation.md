@@ -15,6 +15,7 @@ cargo test --locked
 cargo run --locked --example generate_schemas -- --check
 python3 scripts/check-docs.py
 python3 -m unittest discover -s tests -p "test_documentation.py"
+CERUL_TEST_BINARY="$PWD/target/debug/cerul" python3 -m unittest discover -s tests -p "test_setup.py"
 cargo package --list --locked > /tmp/cerul-package-files.txt
 python3 scripts/check-docs.py --package-list /tmp/cerul-package-files.txt
 ```

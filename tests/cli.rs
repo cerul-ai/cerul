@@ -59,53 +59,22 @@ fn json_argument_errors_and_dry_run_are_machine_readable_and_do_not_write() {
     assert!(dry.stderr.is_empty());
 }
 #[test]
-fn offline_index_exits_partial_with_ndjson_events_and_endpoint_notice_once() {
+fn unsupported_embedding_configuration_is_rejected_before_processing() {
     let dir = tempfile::tempdir().unwrap();
     video(dir.path());
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let endpoint = format!(
-        "embedding.base_url=\"http://{}/\"",
-        listener.local_addr().unwrap()
-    );
-    drop(listener);
-    let output = cli(
-        dir.path(),
-        &[
-            "--json",
-            "index",
-            "sample.mp4",
-            "--no-audio",
-            "--no-ocr",
-            "--set",
-            &endpoint,
-        ],
-    );
-    assert_eq!(
-        output.status.code(),
-        Some(6),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    assert_eq!(final_json(&output)["partial"], true);
-    let events: Vec<Value> = std::str::from_utf8(&output.stderr)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(
-        events
-            .iter()
-            .filter(|e| e["msg"]
-                .as_str()
-                .is_some_and(|s| s.starts_with("Using Gemini")))
-            .count(),
-        1
-    );
-    let status = cli(dir.path(), &["--json", "status"]);
-    assert!(status.status.success());
-    let value = final_json(&status);
-    assert_eq!(value["episodes"][0]["embeddings"][0]["complete"], false);
-    assert!(status.stderr.is_empty());
+    for setting in [
+        "embedding.model=\"other\"",
+        "embedding.kind=\"openai\"",
+        "embedding.base_url=\"http://127.0.0.1:9/v1\"",
+        "embedding.dims=768",
+    ] {
+        let output = cli(
+            dir.path(),
+            &["--json", "index", "sample.mp4", "--set", setting],
+        );
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(!dir.path().join("sample.mp4.cerul").exists());
+    }
 }
 
 #[test]
@@ -459,14 +428,14 @@ fn offline_commands_ignore_unusable_saved_credentials() {
 }
 
 #[test]
-fn missing_key_keeps_local_processing_and_environment_bypasses_corrupt_saved_keys() {
+fn missing_embedding_key_and_unsupported_endpoint_fail_before_processing() {
     let dir = tempfile::tempdir().unwrap();
     video(dir.path());
     let output = cli(
         dir.path(),
         &["--json", "index", "sample.mp4", "--no-audio", "--no-ocr"],
     );
-    assert_eq!(output.status.code(), Some(6), "{:?}", output);
+    assert_eq!(output.status.code(), Some(2), "{:?}", output);
     std::fs::create_dir_all(dir.path().join(".cerul")).unwrap();
     std::fs::write(dir.path().join(".cerul/credentials.json"), "invalid").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_cerul"))
@@ -486,7 +455,7 @@ fn missing_key_keeps_local_processing_and_environment_bypasses_corrupt_saved_key
         ])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(6), "{:?}", output);
+    assert_eq!(output.status.code(), Some(2), "{:?}", output);
     assert!(!String::from_utf8_lossy(&output.stdout).contains("credential file"));
 }
 

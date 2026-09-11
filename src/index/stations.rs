@@ -286,13 +286,34 @@ pub fn screen_text(
 
 const WINDOW_US: i64 = 60_000_000;
 fn transcript_params(provider: &Provider) -> serde_json::Value {
-    json!({"kind":provider.endpoint.kind,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"window_us":WINDOW_US,"timestamp_protocol":"seconds/1"})
+    json!({"kind":provider.endpoint.kind,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"window_us":WINDOW_US,"timestamp_protocol":if provider.endpoint.uses_native_transcription() {"native-word-phrases/2"} else {"seconds/1"}})
 }
 fn transcript_key(episode: &Episode, stream: &str, provider: &Provider) -> Result<String> {
     // Short audio windows avoid long-context timestamp drift and keep inline
     // mono 16 kHz PCM requests well below the encoded request-size limit.
     let params = transcript_params(provider);
     station_key(episode, stream, "transcript", &params)
+}
+
+// A recomputation gets its own resumable checkpoint generation. The marker remains
+// until publication succeeds, even when the previous authoritative file is retained.
+fn retry_path(sidecar: &Path, key: &str) -> PathBuf {
+    sidecar
+        .join("staging/checkpoints")
+        .join(format!("transcript-{key}.pending"))
+}
+pub(crate) fn begin_transcript_recompute(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    provider: &Provider,
+) -> Result<()> {
+    let key = transcript_key(episode, stream, provider)?;
+    let generation = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos()
+        .to_string();
+    storage::atomic_write(&retry_path(sidecar, &key), generation.as_bytes())
 }
 
 pub fn transcript_pending(
@@ -313,6 +334,9 @@ pub fn transcript_pending(
     }
     let key = transcript_key(episode, stream, provider)?;
     let path = stream_directory(sidecar, stream, &episode.time.reference).join("transcript.jsonl");
+    if retry_path(sidecar, &key).is_file() {
+        return Ok(true);
+    }
     if existing(&path, &key, episode.duration_us()?, recompute)?.is_some() {
         return Ok(false);
     }
@@ -345,7 +369,15 @@ pub async fn transcript(
     let duration = episode.duration_us()?;
     let directory = stream_directory(sidecar, stream, &episode.time.reference);
     let path = directory.join("transcript.jsonl");
-    if let Some(file) = existing(&path, &key, duration, recompute)? {
+    let pending = retry_path(sidecar, &key);
+    if recompute && !pending.is_file() {
+        begin_transcript_recompute(episode, stream, sidecar, provider)?;
+    }
+    let generation = pending
+        .is_file()
+        .then(|| fs::read_to_string(&pending))
+        .transpose()?;
+    if let Some(file) = existing(&path, &key, duration, recompute || generation.is_some())? {
         return Ok(file);
     }
     let Stream::Video {
@@ -363,8 +395,11 @@ pub async fn transcript(
         let checkpoints = Checkpoints::new(sidecar);
         let windows = media::chunks(range_us[1] - range_us[0], WINDOW_US, 0)?;
         for (index, window) in windows.iter().enumerate() {
-            let checkpoint = storage::cache_key(&(&key, window))?;
-            let cached = if !recompute {
+            let checkpoint = match &generation {
+                Some(generation) => storage::cache_key(&(&key, window, generation))?,
+                None => storage::cache_key(&(&key, window))?,
+            };
+            let cached = if !recompute || generation.is_some() {
                 checkpoints.load::<Vec<Record>>(&checkpoint)?
             } else {
                 None
@@ -390,10 +425,32 @@ pub async fn transcript(
                         )?,
                         &audio,
                     )?;
-                    let response = provider
+                    let records = provider
                         .transcribe(fs::read(audio)?, window.end_us - window.start_us)
-                        .await?;
-                    let records = probes::segments(response, window.end_us - window.start_us)?;
+                        .await
+                        .and_then(|response| {
+                            probes::segments(response, window.end_us - window.start_us)
+                        })
+                        .map_err(|error| {
+                            let message = format!(
+                                "speech transcription window {} ({}-{}s), model {} at {}: {error}",
+                                index + 1,
+                                media::seconds(window.start_us),
+                                media::seconds(window.end_us),
+                                provider.endpoint.model,
+                                provider.endpoint.base_url
+                            );
+                            if let Some(provider_error) =
+                                error.downcast_ref::<crate::providers::ProviderError>()
+                            {
+                                anyhow::Error::new(crate::providers::ProviderError {
+                                    kind: provider_error.kind,
+                                    message,
+                                })
+                            } else {
+                                anyhow::anyhow!(message)
+                            }
+                        })?;
                     checkpoints.save(&checkpoint, &records)?;
                     records
                 }
@@ -454,7 +511,27 @@ pub async fn transcript(
             "upstream transcript changed; run index to refresh vectors",
         )?;
     }
+    // Promote only a complete generation, so later checkpoint-only reconstruction
+    // cannot resurrect the transcript from before the successful recomputation.
+    if let Some(generation) = &generation {
+        let checkpoints = Checkpoints::new(sidecar);
+        for window in media::chunks(range_us[1] - range_us[0], WINDOW_US, 0)? {
+            if let Some(records) = checkpoints.load::<Vec<Record>>(&storage::cache_key(&(
+                &file.header.input_hash,
+                window,
+                generation,
+            ))?)? {
+                checkpoints.save(
+                    &storage::cache_key(&(&file.header.input_hash, window))?,
+                    &records,
+                )?;
+            }
+        }
+    }
     file.publish(&path, duration, None)?;
+    if generation.is_some() {
+        fs::remove_file(pending)?;
+    }
     Ok(file)
 }
 
@@ -482,6 +559,98 @@ pub fn text_for_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn failed_transcription_reports_window_without_publishing_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("speech.mp4");
+        media::run(
+            crate::media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=32x32:rate=1:duration=2",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:sample_rate=16000:duration=2",
+                    "-c:v",
+                    "libx264",
+                    "-c:a",
+                    "aac",
+                    "-shortest",
+                ])
+                .arg(&video),
+        )
+        .unwrap();
+        for (case, response, detail) in [
+            (
+                "blocked",
+                json!({"promptFeedback":{"blockReason":"OTHER"}}),
+                "blockReason=OTHER",
+            ),
+            (
+                "invalid-segment",
+                json!({"candidates":[{"content":{"parts":[{"text":json!({"segments":[{"start":0,"end":10,"text":"hello","lang":"en"}]}).to_string()}]}}]}),
+                "transcript segment exceeds clip duration",
+            ),
+        ] {
+            let (base, server) = crate::providers::tests::server(vec![
+                (
+                    200,
+                    json!({"candidates":[{"content":{"parts":[{"text":"{\"segments\":[]}"}]}}]}),
+                ),
+                (200, response),
+            ]);
+            let mut endpoint = crate::config::Config::default().transcription;
+            endpoint.model = "gemini-3.8-flash".into();
+            endpoint.base_url = base;
+            let provider = Provider::new(
+                endpoint,
+                None,
+                1,
+                None,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .unwrap();
+            let episode = crate::index::discover::ordinary_episode(&video).unwrap();
+            let workspace = dir.path().join(case);
+            let sidecar =
+                crate::index::discover::publish_episode(&workspace, &episode, None).unwrap();
+            let error = transcript(
+                &episode,
+                "primary",
+                &sidecar,
+                &workspace,
+                &provider,
+                false,
+                &mut |_| {},
+            )
+            .await
+            .unwrap_err();
+            if case == "blocked" {
+                assert_eq!(
+                    error
+                        .downcast_ref::<crate::providers::ProviderError>()
+                        .unwrap()
+                        .kind,
+                    crate::providers::Failure::Rejected
+                );
+            }
+            assert!(
+                error
+                    .to_string()
+                    .contains("speech transcription window 1 (0.000000-2.000000s)"),
+                "{error}"
+            );
+            assert!(error.to_string().contains(detail), "{error}");
+            assert!(!sidecar.join("transcript.jsonl").exists());
+            assert_eq!(server.join().unwrap().len(), 2);
+        }
+    }
+
     #[tokio::test]
     async fn ten_minute_audio_uses_bounded_requests_and_offsets_segment_times_once() {
         let dir = tempfile::tempdir().unwrap();
@@ -521,6 +690,7 @@ mod tests {
         responses.extend((0..10).map(|_| reply(segment.clone())));
         let (base, server) = crate::providers::tests::server(responses);
         let mut endpoint = crate::config::Config::default().transcription;
+        endpoint.model = "gemini-3.8-flash".into();
         endpoint.base_url = base;
         let provider = Provider::new(
             endpoint,

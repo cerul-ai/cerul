@@ -1,8 +1,8 @@
 ---
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
-generated-by: cerul 0.0.8
-generated-sha256: 5e32acf08e156e8e4969f4fd3dc79bab70bf0b95dc90d3bb4aaf620786ded8d8
+generated-by: cerul 0.0.9
+generated-sha256: 8c660268f2e72f9f3234723fa9ae5cfaafaea012901e247cab0b461065de6b17
 ---
 
 # Cerul
@@ -193,6 +193,11 @@ Manage the saved Gemini API key
 
   cerul auth set                   Enter and verify a Gemini API key, replacing any saved one
   cerul auth remove                Delete the saved Gemini API key
+
+### cerul config
+
+Configure the required Gemini key and optional default speech transcription
+
 
 ### cerul annotate
 

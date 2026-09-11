@@ -85,6 +85,118 @@ fn failure(kind: Failure, message: impl Into<String>) -> anyhow::Error {
     .into()
 }
 
+// Only known protocol codes are safe to expose; free-form provider fields can
+// contain credentials or user media. Never include response text in errors.
+fn response_reason(value: &Value) -> &str {
+    match value.as_str().unwrap_or("UNKNOWN") {
+        reason @ ("STOP"
+        | "MAX_TOKENS"
+        | "SAFETY"
+        | "RECITATION"
+        | "OTHER"
+        | "BLOCKLIST"
+        | "PROHIBITED_CONTENT"
+        | "SPII"
+        | "LANGUAGE"
+        | "MALFORMED_RESPONSE"
+        | "MALFORMED_FUNCTION_CALL"
+        | "UNEXPECTED_TOOL_CALL"
+        | "TOO_MANY_TOOL_CALLS"
+        | "FINISH_REASON_UNSPECIFIED"
+        | "BLOCK_REASON_UNSPECIFIED"
+        | "IMAGE_SAFETY"
+        | "IMAGE_PROHIBITED_CONTENT"
+        | "IMAGE_OTHER"
+        | "NO_IMAGE"
+        | "IMAGE_RECITATION"
+        | "MISSING_THOUGHT_SIGNATURE"
+        | "ESCALATION"
+        | "MODEL_ARMOR"
+        | "JAILBREAK"
+        | "BLOCKED_REASON_UNSPECIFIED") => reason,
+        _ => "UNKNOWN",
+    }
+}
+
+fn structured_text(response: &Value, gemini: bool) -> Result<String> {
+    if gemini {
+        let blocked = &response["promptFeedback"]["blockReason"];
+        if blocked.is_string()
+            && blocked != "BLOCK_REASON_UNSPECIFIED"
+            && blocked != "BLOCKED_REASON_UNSPECIFIED"
+        {
+            return Err(failure(
+                Failure::Rejected,
+                format!(
+                    "Gemini blocked the request (promptFeedback.blockReason={}); no structured output was generated",
+                    response_reason(blocked)
+                ),
+            ));
+        }
+        let candidate = &response["candidates"][0];
+        let reason = &candidate["finishReason"];
+        if reason.is_string() && reason != "STOP" {
+            let code = response_reason(reason);
+            let kind = if matches!(
+                code,
+                "SAFETY"
+                    | "RECITATION"
+                    | "BLOCKLIST"
+                    | "PROHIBITED_CONTENT"
+                    | "SPII"
+                    | "ESCALATION"
+                    | "MODEL_ARMOR"
+                    | "LANGUAGE"
+                    | "IMAGE_SAFETY"
+                    | "IMAGE_PROHIBITED_CONTENT"
+                    | "IMAGE_RECITATION"
+            ) {
+                Failure::Rejected
+            } else {
+                Failure::InvalidResponse
+            };
+            return Err(failure(
+                kind,
+                format!("Gemini did not complete structured output (finishReason={code})"),
+            ));
+        }
+        Ok(candidate["content"]["parts"]
+            .as_array()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter(|p| p["thought"] != true)
+                    .filter_map(|p| p["text"].as_str())
+                    .collect::<String>()
+            })
+            .unwrap_or_default())
+    } else {
+        let choice = &response["choices"][0];
+        if choice["message"]["refusal"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+        {
+            return Err(failure(
+                Failure::Rejected,
+                "model refused the structured output request",
+            ));
+        }
+        if choice["finish_reason"] == "length" {
+            return Err(failure(
+                Failure::InvalidResponse,
+                "model structured output was truncated (finish_reason=length)",
+            ));
+        }
+        if choice["finish_reason"] == "content_filter" {
+            return Err(failure(
+                Failure::Rejected,
+                "model blocked structured output (finish_reason=content_filter)",
+            ));
+        }
+        Ok(choice["message"]["content"].as_str().unwrap_or("").into())
+    }
+}
+
 #[derive(Clone)]
 pub struct Provider {
     pub endpoint: Endpoint,
@@ -353,7 +465,7 @@ impl Provider {
         }
         let url = self.route(action)?;
         let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-        if !loopback && !get {
+        if !get {
             self.resolve_key().await?;
         }
         if self.key_header().is_none() && !loopback && !get {
@@ -506,32 +618,30 @@ impl Provider {
             content.extend(inputs.iter().map(Input::openai));
             self.json("chat/completions",json!({"model":self.endpoint.model,"messages":[{"role":"user","content":content}],"response_format":{"type":"json_schema","json_schema":{"name":"cerul_output","strict":true,"schema":schema}}})).await?
         };
-        let text = if self.endpoint.kind == "gemini" {
-            response["candidates"][0]["content"]["parts"]
-                .as_array()
-                .map(|parts| {
-                    parts
-                        .iter()
-                        .filter(|p| p["thought"] != true)
-                        .filter_map(|p| p["text"].as_str())
-                        .collect::<String>()
-                })
-                .unwrap_or_default()
-        } else {
-            response["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap_or("")
-                .into()
-        };
-        serde_json::from_str(&text).map_err(|_| {
-            failure(
+        let text = structured_text(&response, self.endpoint.kind == "gemini")?;
+        if text.trim().is_empty() {
+            return Err(failure(
                 Failure::InvalidResponse,
-                "model returned no structured output",
-            )
+                "model returned empty structured output (no non-thought text)",
+            ));
+        }
+        serde_json::from_str(&text).map_err(|error| {
+            failure(Failure::InvalidResponse, format!(
+                "model returned invalid structured JSON ({} bytes, category={:?}, line={}, column={})",
+                text.len(), error.classify(), error.line(), error.column()
+            ))
         })
     }
+
     pub async fn transcribe(&self, audio: Vec<u8>, duration_us: i64) -> Result<Value> {
         ensure!(duration_us > 0, "invalid transcription duration");
+        if self.endpoint.uses_native_transcription() {
+            let response = self.json("generateContent", json!({
+                "contents": [{"role": "user", "parts": [Input::Audio(audio, "audio/wav".into()).gemini()]}],
+                "generationConfig": {"audioTranscriptionConfig": {"mode": "VERBATIM", "wordTimestamp": true}}
+            })).await?;
+            return native_transcript(&response);
+        }
         let response = if self.endpoint.kind == "gemini" {
             let prompt = format!(
                 "Transcribe this {}-second audio clip accurately. Return chronological speech segments with start and end measured in seconds from the beginning of THIS clip. Include silence in the timeline; do not reset time at speech or pauses. Every segment must have end greater than start. If there is no speech, return an empty segments array, not a placeholder segment. Keep spoken text in its original language; lang is an ISO language code. Do not invent speech in silence.",
@@ -587,6 +697,92 @@ impl Provider {
         }
         Ok(json!({"segments":normalized}))
     }
+}
+
+/// Normalize Gemini's native word annotations without asking a language model to invent JSON.
+fn native_transcript(response: &Value) -> Result<Value> {
+    let text = structured_text(response, true)?;
+    let parts = match response["candidates"][0]["content"]["parts"].as_array() {
+        Some(parts) => parts,
+        None if response["candidates"][0]["finishReason"] == "STOP" && text.trim().is_empty() => {
+            return Ok(json!({"segments":[]}));
+        }
+        None => {
+            return Err(failure(
+                Failure::InvalidResponse,
+                "Gemini transcription returned no parts",
+            ));
+        }
+    };
+    let mut segments = Vec::new();
+    for part in parts {
+        if part["thought"] == true {
+            continue;
+        }
+        if let Some(words) = part["audioTranscription"]["words"].as_array() {
+            for word in words {
+                let offset = |field: &str| -> Result<i64> {
+                    let raw = word[field]
+                        .as_str()
+                        .and_then(|s| s.strip_suffix('s'))
+                        .context("invalid native transcription offset")?;
+                    let value: f64 = raw.parse().context("invalid native transcription offset")?;
+                    ensure!(
+                        value.is_finite() && (0. ..1e12).contains(&value),
+                        "invalid native transcription offset"
+                    );
+                    Ok((value * 1_000_000.).round() as i64)
+                };
+                let word_text = word["word"]
+                    .as_str()
+                    .context("native transcription word missing text")?;
+                segments.push(json!({"start_us":offset("startOffset")?, "end_us":offset("endOffset")?, "text":word_text, "lang":null}));
+            }
+        }
+    }
+    ensure!(
+        !segments.is_empty() || text.trim().is_empty(),
+        failure(
+            Failure::Unsupported,
+            "transcription endpoint returned text without word timestamps"
+        )
+    );
+    // Native recognizers can attach punctuation or short words to an instant.
+    // Keep those tokens in a neighboring timed phrase instead of fabricating a duration.
+    let mut phrases: Vec<Value> = Vec::new();
+    for segment in segments {
+        let start = segment["start_us"].as_i64().unwrap();
+        let end = segment["end_us"].as_i64().unwrap();
+        ensure!(
+            end >= start,
+            "native transcription has reversed word timestamps"
+        );
+        if let Some(last) = phrases.last_mut() {
+            let last_start = last["start_us"].as_i64().unwrap();
+            let last_end = last["end_us"].as_i64().unwrap();
+            if end.max(last_end) - start.min(last_start) <= 5_000_000
+                && start - last_end <= 750_000
+                && last_start - end <= 750_000
+            {
+                last["start_us"] = json!(last_start.min(start));
+                last["end_us"] = json!(last_end.max(end));
+                last["text"] = json!(format!(
+                    "{} {}",
+                    last["text"].as_str().unwrap(),
+                    segment["text"].as_str().unwrap()
+                ));
+                continue;
+            }
+        }
+        phrases.push(segment);
+    }
+    ensure!(
+        phrases
+            .iter()
+            .all(|p| p["end_us"].as_i64() > p["start_us"].as_i64()),
+        "native transcription contains an isolated zero-duration token without a nearby timed word"
+    );
+    Ok(json!({"segments":phrases}))
 }
 
 #[cfg(test)]
@@ -671,6 +867,7 @@ pub(crate) mod tests {
                 base_url: base,
                 api_key_env: "TEST_KEY".into(),
                 dims: Some(2),
+                enabled: None,
             },
             None,
             2,
@@ -679,6 +876,67 @@ pub(crate) mod tests {
         )
         .unwrap()
     }
+    #[test]
+    fn native_point_tokens_do_not_bridge_long_silence() {
+        let response = |words| json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"audioTranscription":{"words":words}}]}}]});
+        let words = json!([
+            {"word":"hello","startOffset":"0s","endOffset":"1s"},
+            {"word":"!","startOffset":"50s","endOffset":"50s"}
+        ]);
+        assert!(native_transcript(&response(words.clone())).is_err());
+        let mut words = words.as_array().unwrap().clone();
+        words.push(json!({"word":"next","startOffset":"50.1s","endOffset":"51s"}));
+        let result = native_transcript(&response(json!(words))).unwrap();
+        assert_eq!(result["segments"].as_array().unwrap().len(), 2);
+        assert_eq!(result["segments"][0]["end_us"], 1_000_000);
+        assert_eq!(result["segments"][1]["start_us"], 50_000_000);
+    }
+
+    #[tokio::test]
+    async fn native_asr_preserves_word_offsets_and_does_not_request_json_generation() {
+        let (base, server) = server(vec![(
+            200,
+            json!({"candidates":[{"finishReason":"STOP","content":{"parts":[
+                {"text":"hello", "audioTranscription":{"words":[{"word":"hello","startOffset":"0.125s","endOffset":"0.900s"}]}}
+            ]}}]}),
+        )]);
+        let mut provider = provider(base, "gemini");
+        provider.endpoint.model = "models/gemini-3.5-transcribe".into();
+        let result = provider.transcribe(vec![0; 44], 1_000_000).await.unwrap();
+        assert_eq!(result["segments"][0]["start_us"], 125000);
+        assert_eq!(result["segments"][0]["end_us"], 900000);
+        let joined = native_transcript(&json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"audioTranscription":{"words":[
+            {"word":"hello","startOffset":"0.1s","endOffset":"0.8s"},
+            {"word":"!","startOffset":"0.8s","endOffset":"0.8s"}
+        ]}}]}}]})).unwrap();
+        assert_eq!(joined["segments"][0]["text"], "hello !");
+        assert_eq!(joined["segments"].as_array().unwrap().len(), 1);
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests[0].1["generationConfig"]["audioTranscriptionConfig"]["wordTimestamp"],
+            true
+        );
+        assert!(
+            requests[0].1["generationConfig"]
+                .get("responseJsonSchema")
+                .is_none()
+        );
+        assert_eq!(
+            native_transcript(&json!({"candidates":[{"finishReason":"STOP"}]})).unwrap()["segments"],
+            json!([])
+        );
+        assert!(native_transcript(&json!({})).is_err());
+        assert!(native_transcript(&json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"missing timestamps"}]}}]})).is_err());
+        assert!(native_transcript(&json!({"promptFeedback":{"blockReason":"OTHER"}})).is_err());
+        assert_eq!(
+            native_transcript(
+                &json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":""}]}}]})
+            )
+            .unwrap()["segments"],
+            json!([])
+        );
+    }
+
     #[tokio::test]
     async fn gemini_json_retry_hint_is_observed_and_default_backoff_is_cancellable() {
         let (base, server) = server_with_retry_header(
@@ -767,6 +1025,147 @@ pub(crate) mod tests {
                 .contains("query: query")
         );
     }
+    #[tokio::test]
+    async fn structured_response_failures_preserve_reason_without_exposing_payloads() {
+        let cases = vec![
+            (
+                json!({"promptFeedback":{"blockReason":"OTHER","blockReasonMessage":"private payload"}}),
+                "gemini",
+                Failure::Rejected,
+                "blockReason=OTHER",
+            ),
+            (
+                json!({"promptFeedback":{"blockReason":"private payload"}}),
+                "gemini",
+                Failure::Rejected,
+                "blockReason=UNKNOWN",
+            ),
+            (
+                json!({"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[{"text":"{}"}]}}]}),
+                "gemini",
+                Failure::InvalidResponse,
+                "finishReason=MAX_TOKENS",
+            ),
+            (
+                json!({"candidates":[{"finishReason":"SAFETY"}]}),
+                "gemini",
+                Failure::Rejected,
+                "finishReason=SAFETY",
+            ),
+            (
+                json!({"candidates":[]}),
+                "gemini",
+                Failure::InvalidResponse,
+                "empty structured output",
+            ),
+            (
+                json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"thought":true,"text":"private payload"}]}}]}),
+                "gemini",
+                Failure::InvalidResponse,
+                "empty structured output",
+            ),
+            (
+                json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"private payload"}]}}]}),
+                "gemini",
+                Failure::InvalidResponse,
+                "invalid structured JSON",
+            ),
+            (
+                json!({"choices":[{"message":{"refusal":"private payload"}}]}),
+                "openai",
+                Failure::Rejected,
+                "refused",
+            ),
+            (
+                json!({"choices":[{"finish_reason":"length","message":{"content":"{}"}}]}),
+                "openai",
+                Failure::InvalidResponse,
+                "truncated",
+            ),
+            (
+                json!({"choices":[{"finish_reason":"content_filter"}]}),
+                "openai",
+                Failure::Rejected,
+                "content_filter",
+            ),
+        ];
+        let mut cases = cases;
+        cases.push((
+            json!({"candidates":[{"finishReason":"OTHER","content":{"parts":[{"text":"{}"}]}}]}),
+            "gemini",
+            Failure::InvalidResponse,
+            "finishReason=OTHER",
+        ));
+        cases.push((
+            json!({"promptFeedback":{"blockReason":"MODEL_ARMOR"}}),
+            "gemini",
+            Failure::Rejected,
+            "blockReason=MODEL_ARMOR",
+        ));
+        cases.push((
+            json!({"promptFeedback":{"blockReason":"JAILBREAK"}}),
+            "gemini",
+            Failure::Rejected,
+            "blockReason=JAILBREAK",
+        ));
+        for reason in [
+            "MODEL_ARMOR",
+            "LANGUAGE",
+            "IMAGE_SAFETY",
+            "IMAGE_PROHIBITED_CONTENT",
+            "IMAGE_RECITATION",
+        ] {
+            cases.push((
+                json!({"candidates":[{"finishReason":reason}]}),
+                "gemini",
+                Failure::Rejected,
+                reason,
+            ));
+        }
+        for (body, kind, expected, detail) in cases {
+            let (base, server) = server(vec![(200, body)]);
+            let error = provider(base, kind)
+                .generate("check", &[], json!({"type":"object"}))
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<ProviderError>().unwrap().kind,
+                expected
+            );
+            assert!(error.to_string().contains(detail), "{error}");
+            assert!(!error.to_string().contains("private payload"));
+            assert_eq!(
+                server.join().unwrap().len(),
+                1,
+                "response failures must not be retried"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn gemini_structured_output_joins_text_and_ignores_thoughts() {
+        let (base, server) = server(vec![(
+            200,
+            json!({"promptFeedback":{"blockReason":"BLOCKED_REASON_UNSPECIFIED"},"candidates":[{"finishReason":"STOP","content":{"parts":[
+                {"thought":true,"text":"not JSON"}, {"text":"{\"ok\":"}, {"text":"true}"}
+            ]}}]}),
+        )]);
+        let schema =
+            json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]});
+        assert_eq!(
+            provider(base, "gemini")
+                .generate("check", &[], schema.clone())
+                .await
+                .unwrap(),
+            json!({"ok":true})
+        );
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests[0].1["generationConfig"]["responseJsonSchema"],
+            schema
+        );
+    }
+
     #[tokio::test]
     async fn openai_vision_and_transcription_use_distinct_wire_contracts() {
         let (base, server) = server(vec![
@@ -868,6 +1267,29 @@ pub(crate) mod tests {
 #[cfg(test)]
 mod credential_scope_tests {
     use super::*;
+    #[tokio::test]
+    async fn loopback_requests_resolve_saved_credentials() {
+        let (base, server) = tests::server(vec![(
+            200,
+            serde_json::json!({"embedding":{"values":[1.,0.]}}),
+        )]);
+        let resolver: CredentialResolver =
+            Arc::new(|_| Box::pin(async { Ok(Some("local-fixture-key".into())) }));
+        with_credential_resolver(resolver, async {
+            let mut endpoint = crate::config::Config::default().embedding;
+            endpoint.base_url = base;
+            endpoint.dims = Some(2);
+            let provider =
+                Provider::new(endpoint, None, 1, None, CancellationToken::new()).unwrap();
+            provider
+                .embed(Input::Text("fixture".into()), true)
+                .await
+                .unwrap();
+            assert_eq!(provider.key_header().unwrap(), "local-fixture-key");
+        })
+        .await;
+        assert_eq!(server.join().unwrap().len(), 1);
+    }
     #[tokio::test]
     async fn host_resolution_is_lazy_and_missing_credentials_are_resolved_once() {
         use std::sync::atomic::{AtomicUsize, Ordering};

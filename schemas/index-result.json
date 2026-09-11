@@ -45,6 +45,17 @@
         "streams"
       ]
     },
+    "SpeechStatus": {
+      "type": "string",
+      "enum": [
+        "disabled",
+        "not_configured",
+        "no_audio",
+        "complete",
+        "failed",
+        "planned"
+      ]
+    },
     "StreamResult": {
       "type": "object",
       "properties": {
@@ -56,6 +67,9 @@
         },
         "indexed": {
           "type": "boolean"
+        },
+        "speech": {
+          "$ref": "#/$defs/SpeechStatus"
         },
         "stream": {
           "type": "string"
@@ -69,6 +83,7 @@
       "required": [
         "stream",
         "indexed",
+        "speech",
         "vector_rows",
         "errors"
       ]

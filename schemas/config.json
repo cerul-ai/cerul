@@ -42,6 +42,13 @@
           "format": "uint",
           "minimum": 0
         },
+        "enabled": {
+          "description": "None means speech has not been configured; false is an explicit opt-out.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "kind": {
           "type": "string"
         },

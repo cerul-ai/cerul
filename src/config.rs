@@ -47,6 +47,20 @@ pub struct Endpoint {
     pub base_url: String,
     pub api_key_env: String,
     pub dims: Option<usize>,
+    /// None means speech has not been configured; false is an explicit opt-out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+impl Endpoint {
+    pub fn uses_native_transcription(&self) -> bool {
+        self.kind == "gemini"
+            && self
+                .model
+                .strip_prefix("models/")
+                .unwrap_or(&self.model)
+                .starts_with("gemini-3.5-transcribe")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -73,11 +87,12 @@ impl Default for Config {
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             api_key_env: "GEMINI_API_KEY".into(),
             dims,
+            enabled: None,
         };
         Self {
             embedding: endpoint("gemini-embedding-2", Some(1536)),
             vision: endpoint("gemini-3.8-flash", None),
-            transcription: endpoint("gemini-3.8-flash", None),
+            transcription: endpoint("gemini-3.5-transcribe", None),
             perception: Perception {
                 base_url: "https://api.cerul.ai".into(),
                 api_key_env: "CERUL_API_KEY".into(),
@@ -163,8 +178,17 @@ impl Config {
             }
         }
         for section in ["embedding", "vision", "transcription", "perception"] {
-            for field in ["kind", "model", "base_url", "api_key_env", "dims"] {
-                if section == "perception" && !matches!(field, "base_url" | "api_key_env") {
+            for field in [
+                "kind",
+                "model",
+                "base_url",
+                "api_key_env",
+                "dims",
+                "enabled",
+            ] {
+                if (field == "enabled" && section != "transcription")
+                    || (section == "perception" && !matches!(field, "base_url" | "api_key_env"))
+                {
                     continue;
                 }
                 let name = format!(
@@ -173,7 +197,12 @@ impl Config {
                     field.to_ascii_uppercase()
                 );
                 if let Some(raw) = environment.get(&name) {
-                    let value = if field == "dims" {
+                    let value = if field == "enabled" {
+                        toml::Value::Boolean(
+                            raw.parse()
+                                .with_context(|| format!("{name} must be true or false"))?,
+                        )
+                    } else if field == "dims" {
                         toml::Value::Integer(
                             raw.parse()
                                 .with_context(|| format!("{name} must be an integer"))?,
@@ -267,6 +296,27 @@ pub fn config_paths(home: &Path, cwd: &Path) -> [PathBuf; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn speech_choice_is_distinct_from_missing_configuration() {
+        assert_eq!(Config::load(&[]).unwrap().transcription.enabled, None);
+        for enabled in [true, false] {
+            let config = Config::resolve(
+                &[],
+                &BTreeMap::new(),
+                toml::from_str(&format!("[transcription]\nenabled={enabled}\n")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(config.transcription.enabled, Some(enabled));
+        }
+        assert!(
+            Config::resolve(
+                &[],
+                &BTreeMap::new(),
+                toml::from_str("[embedding]\nmodel='other'\n").unwrap()
+            )
+            .is_ok()
+        );
+    }
     #[test]
     fn precedence_and_provider_defaults_do_not_copy_credentials() {
         let dir = tempfile::tempdir().unwrap();

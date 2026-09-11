@@ -495,17 +495,20 @@ pub async fn check_providers(
         base_url: config.perception.base_url.clone(),
         api_key_env: config.perception.api_key_env.clone(),
         dims: None,
+        enabled: None,
     };
     let mut partial = false;
     let mut endpoints = vec![
         ("embedding", &config.embedding, Capability::Embedding),
         ("vision", &config.vision, Capability::Vision),
-        (
+    ];
+    if config.transcription.enabled == Some(true) {
+        endpoints.push((
             "transcription",
             &config.transcription,
             Capability::Transcription,
-        ),
-    ];
+        ));
+    }
     if perception_configured(config) {
         endpoints.push(("perception", &perception, Capability::Perception));
     }
@@ -586,6 +589,8 @@ mod tests {
         config.embedding.dims = Some(2);
         config.vision.base_url = base.clone();
         config.transcription.base_url = base.clone();
+        config.transcription.enabled = Some(true);
+        config.transcription.model = "gemini-3.8-flash".into();
         config.perception.base_url = base;
         let cancel = tokio_util::sync::CancellationToken::new();
         let mut status = inspect(dir.path(), None).unwrap();

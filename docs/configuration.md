@@ -12,23 +12,33 @@ Configuration priority, from lowest to highest:
 4. `CERUL_<ENDPOINT>_<FIELD>` environment variables.
 5. Repeated `--set KEY=TOML_VALUE` arguments.
 
-The default embedding model is `gemini-embedding-2` with 1536 dimensions; vision
-and transcription default to `gemini-3.8-flash`. These defaults use
-`GEMINI_API_KEY` and the Gemini v1beta endpoint. The [Gemini model reference](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)
-and [embedding guide](https://ai.google.dev/gemini-api/docs/embeddings) describe
-these model IDs. Text queries use the embedding guide's `task: search result | query: {query}`
-instruction. Use `cerul status --providers` to check access with your credentials.
-Transcription timestamps are model estimates; see [transcription](#provider-rate-limits-and-transcription).
-Store only the key's environment variable name in configuration, never the key.
+Multimodal embedding is fixed to `gemini-embedding-2`, 1536 dimensions, at the
+Google Gemini endpoint. A Gemini key is required for new vectors and semantic
+queries. Other embedding providers, models, dimensions, and URLs are rejected
+by the CLI. Offline status, cleanup, and rebuilding cached vectors need no key.
+Vision defaults to `gemini-3.8-flash`.
 
-The CLI can save a validated default Gemini key in `~/.cerul/credentials.json`
-(mode 0600). Stored keys are scoped to endpoint kind, service URL, and key
-variable name. Environment values override saved keys. `cerul auth` shows where
-the key would come from, `cerul auth set` enters and verifies one, and
-`cerul auth remove` deletes the saved copy. The first interactive processing
-command offers the same hidden setup when needed; JSON, quiet, yes, dry-run,
-and non-terminal calls never prompt. See [installation](installation.md) for
-storage, removal, and agent setup. Library callers do not read this file.
+Run `cerul config` to configure optional speech transcription. The same chooser
+appears when interactive indexing finds an audio track and missing ASR settings
+or credentials. Choose Gemini (reuse the Gemini key), Groq, OpenAI, Custom, or
+Disabled. Defaults are saved in `~/.cerul/config.toml`; an explicit Disabled
+choice is remembered. JSON, quiet, yes, dry-run, and redirected invocations never
+prompt. Unconfigured ASR is skipped in those modes. An enabled ASR that fails
+is reported as a partial result, not silently disabled.
+
+The presets are Gemini `gemini-3.5-transcribe`, Groq `whisper-large-v3-turbo`, and
+OpenAI `whisper-1`. Model names can be edited. Custom services need a base URL,
+model, and key, and must implement OpenAI's timestamped transcription contract.
+The setup check uses a silent audio clip; it checks connectivity and the response
+contract, not recognition accuracy. Use a real recording to evaluate accuracy.
+
+Keys are stored separately in `~/.cerul/credentials.json` (mode 0600), scoped to
+protocol, service URL, and environment variable name. Environment values override
+saved keys. Configuration files contain only the environment variable name,
+never the secret. `cerul auth set` and `cerul auth remove` continue to manage the
+Gemini key. Library callers do not read CLI credential storage.
+
+For non-interactive setup, export the selected key variable and configure ASR:
 
 ```toml
 [embedding]
@@ -43,17 +53,26 @@ base_url = "http://localhost:11434/v1"
 model = "qwen3-vl"
 
 [transcription]
+enabled = true
 kind = "openai"
 base_url = "https://api.groq.com/openai/v1"
 model = "whisper-large-v3-turbo"
 api_key_env = "GROQ_API_KEY"
 ```
 
-An OpenAI-compatible endpoint must implement the specific request and response
-features Cerul uses. Vision requires image input and structured JSON output;
-transcription requires timestamped segments. Embedding requires text, image,
-and video input in one matching space: a text-only embeddings endpoint is not a
-fallback. Compatibility is established by capability probes, not by its URL.
+To disable ASR permanently, set `enabled = false` in `[transcription]`. To use
+Gemini, set `kind = "gemini"`, `model = "gemini-3.5-transcribe"`,
+`base_url = "https://generativelanguage.googleapis.com/v1beta"`, and
+`api_key_env = "GEMINI_API_KEY"`. OpenAI uses `kind = "openai"`,
+`base_url = "https://api.openai.com/v1"`, `model = "whisper-1"`, and
+`api_key_env = "OPENAI_API_KEY"`.
+
+OpenAI-compatible ASR uses `/audio/transcriptions` with `verbose_json` and segment
+timestamps. A model returning text without timestamps is unsupported for video
+localization. Gemini's dedicated model uses native word annotations; other Gemini
+models retain the prompted segment-JSON compatibility path. No Responses API or
+cross-provider fallback is used. All results become the same integer-microsecond
+transcript sidecar format.
 
 Endpoint URLs cannot contain embedded credentials, query parameters, or
 fragments. For a command-line string override, include the TOML quotes:
@@ -68,7 +87,7 @@ Ordinary `status`, exact text search, annotation-only filters, index rebuilds,
 and cleanup do not probe providers. Commands probe only endpoints needed for
 pending work. Successful probes are cached for seven days.
 
-`cerul status --providers` explicitly probes embedding, vision, and transcription.
+`cerul status --providers` explicitly probes embedding, vision, and enabled transcription.
 Perception processing is not supported in this version. Its reserved endpoint
 is probed only when explicitly configured; otherwise its capability stays null
 and no request is sent to it. The command may return a partial result when one
@@ -96,10 +115,17 @@ Choose a limit appropriate for your provider account. Cerul honors bounded
 account quotas are available. A partial index retains completed work; repeat
 the same command after quota becomes available to fill the remaining units.
 
-Gemini transcription uses sixty-second audio windows and converts the model's
-clip-relative seconds to episode-relative integer microseconds. These are
-model-estimated speech boundaries; inspect the source video when exact word
-alignment matters.
+Transcription uses sixty-second audio windows and converts clip-relative times
+to episode-relative integer microseconds. Inspect the source when exact alignment
+matters. A failed ASR does not prevent video/OCR embedding publication. Repeat
+`cerul index ./recording.mp4` after fixing ASR to resume missing speech windows;
+completed OCR and compatible embedding checkpoints are reused. Changing the ASR
+model invalidates its transcript and the derived text embeddings.
+
+Skipping ASR omits the separate transcript; the video sent to the multimodal
+embedding service may still contain audio. JSON stream results include `speech`
+(`disabled`, `not_configured`, `no_audio`, `complete`, or `failed`). A partial
+failure returns exit 6 and retains a diagnostic in the stream's index state.
 
 ## Workspace and vector spaces
 
@@ -109,8 +135,7 @@ query template in its identity. Changing any of these requires compatible new
 vectors. `status` lists space IDs and public model metadata. A query cannot
 silently search a different space.
 
-Changing the embedding configuration invalidates embedding artifacts, while
-unchanged transcripts and OCR results remain reusable. Sidecar vectors are
+The CLI currently uses only the fixed Gemini embedding space. Sidecar vectors are
 retained by cache/index cleaning and can rebuild the corresponding index.
 
 ## Process contract
