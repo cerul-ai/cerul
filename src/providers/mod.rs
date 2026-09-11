@@ -928,6 +928,12 @@ pub(crate) mod tests {
             ),
         ];
         let mut cases = cases;
+        cases.push((
+            json!({"candidates":[{"finishReason":"OTHER","content":{"parts":[{"text":"{}"}]}}]}),
+            "gemini",
+            Failure::InvalidResponse,
+            "finishReason=OTHER",
+        ));
         for reason in [
             "LANGUAGE",
             "IMAGE_SAFETY",

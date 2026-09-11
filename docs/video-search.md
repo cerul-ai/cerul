@@ -115,8 +115,10 @@ For action labels in ordinary videos or demonstrations, see the
 ## Diagnose speech failures
 
 If Gemini blocks an audio request, Cerul reports the transcription window and
-`promptFeedback.blockReason` or `finishReason`. `OTHER` is an unspecified
-provider rejection, not evidence of malformed JSON. Blocked responses are not
+`promptFeedback.blockReason` or `finishReason`. In prompt feedback,
+`blockReason=OTHER` is an unspecified provider rejection, not evidence of
+malformed JSON. A candidate's `finishReason=OTHER` instead means an unknown
+completion reason; it does not establish that the request was blocked. Blocked responses are not
 automatically retried, and no successful transcript is published for them.
 A truncated response and an empty or invalid JSON response have separate errors.
 Provider response text, credentials, and free-form rejection messages are not
