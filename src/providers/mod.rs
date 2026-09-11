@@ -110,7 +110,10 @@ fn response_reason(value: &Value) -> &str {
         | "NO_IMAGE"
         | "IMAGE_RECITATION"
         | "MISSING_THOUGHT_SIGNATURE"
-        | "ESCALATION") => reason,
+        | "ESCALATION"
+        | "MODEL_ARMOR"
+        | "JAILBREAK"
+        | "BLOCKED_REASON_UNSPECIFIED") => reason,
         _ => "UNKNOWN",
     }
 }
@@ -118,7 +121,10 @@ fn response_reason(value: &Value) -> &str {
 fn structured_text(response: &Value, gemini: bool) -> Result<String> {
     if gemini {
         let blocked = &response["promptFeedback"]["blockReason"];
-        if blocked.is_string() && blocked != "BLOCK_REASON_UNSPECIFIED" {
+        if blocked.is_string()
+            && blocked != "BLOCK_REASON_UNSPECIFIED"
+            && blocked != "BLOCKED_REASON_UNSPECIFIED"
+        {
             return Err(failure(
                 Failure::Rejected,
                 format!(
@@ -139,6 +145,7 @@ fn structured_text(response: &Value, gemini: bool) -> Result<String> {
                     | "PROHIBITED_CONTENT"
                     | "SPII"
                     | "ESCALATION"
+                    | "MODEL_ARMOR"
                     | "LANGUAGE"
                     | "IMAGE_SAFETY"
                     | "IMAGE_PROHIBITED_CONTENT"
@@ -934,7 +941,20 @@ pub(crate) mod tests {
             Failure::InvalidResponse,
             "finishReason=OTHER",
         ));
+        cases.push((
+            json!({"promptFeedback":{"blockReason":"MODEL_ARMOR"}}),
+            "gemini",
+            Failure::Rejected,
+            "blockReason=MODEL_ARMOR",
+        ));
+        cases.push((
+            json!({"promptFeedback":{"blockReason":"JAILBREAK"}}),
+            "gemini",
+            Failure::Rejected,
+            "blockReason=JAILBREAK",
+        ));
         for reason in [
+            "MODEL_ARMOR",
             "LANGUAGE",
             "IMAGE_SAFETY",
             "IMAGE_PROHIBITED_CONTENT",
@@ -971,7 +991,7 @@ pub(crate) mod tests {
     async fn gemini_structured_output_joins_text_and_ignores_thoughts() {
         let (base, server) = server(vec![(
             200,
-            json!({"candidates":[{"finishReason":"STOP","content":{"parts":[
+            json!({"promptFeedback":{"blockReason":"BLOCKED_REASON_UNSPECIFIED"},"candidates":[{"finishReason":"STOP","content":{"parts":[
                 {"thought":true,"text":"not JSON"}, {"text":"{\"ok\":"}, {"text":"true}"}
             ]}}]}),
         )]);
