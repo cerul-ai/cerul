@@ -239,14 +239,6 @@ impl Config {
         merge(&mut defaults, explicit);
         let config: Self = defaults.try_into()?;
         config.validate()?;
-        let fixed = Self::default().embedding;
-        ensure!(
-            config.embedding.kind == fixed.kind
-                && config.embedding.model == fixed.model
-                && config.embedding.base_url.trim_end_matches('/') == fixed.base_url
-                && config.embedding.dims == fixed.dims,
-            "embedding is fixed to Gemini gemini-embedding-2 (1536 dimensions); only its credential setting can be changed"
-        );
         Ok(config)
     }
 
@@ -311,7 +303,7 @@ mod tests {
                 &BTreeMap::new(),
                 toml::from_str("[embedding]\nmodel='other'\n").unwrap()
             )
-            .is_err()
+            .is_ok()
         );
     }
     #[test]
@@ -321,7 +313,7 @@ mod tests {
         let project = dir.path().join("project.toml");
         fs::write(
             &global,
-            "[embedding]\ndims=1536\n[vision]\nkind='openai'\nmodel='remote'\n",
+            "[embedding]\ndims=768\n[vision]\nkind='openai'\nmodel='remote'\n",
         )
         .unwrap();
         fs::write(&project, "[vision]\nmodel='project'\n").unwrap();
@@ -336,7 +328,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.vision.model, "cli");
-        assert_eq!(config.embedding.dims, Some(1536));
+        assert_eq!(config.embedding.dims, Some(768));
         assert_eq!(config.vision.base_url, "https://api.openai.com/v1");
         assert_eq!(config.vision.api_key_env, "OPENAI_API_KEY");
         assert!(

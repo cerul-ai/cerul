@@ -942,7 +942,16 @@ fn config(cli: &Cli) -> Result<Config> {
     let environment: BTreeMap<_, _> = std::env::vars()
         .filter(|(key, _)| key.starts_with("CERUL_"))
         .collect();
-    Config::resolve(&paths, &environment, toml::Value::Table(overlay))
+    let config = Config::resolve(&paths, &environment, toml::Value::Table(overlay))?;
+    let fixed = Config::default().embedding;
+    anyhow::ensure!(
+        config.embedding.kind == fixed.kind
+            && config.embedding.model == fixed.model
+            && config.embedding.base_url.trim_end_matches('/') == fixed.base_url
+            && config.embedding.dims == fixed.dims,
+        "embedding is fixed to Gemini gemini-embedding-2 (1536 dimensions); only its credential setting can be changed"
+    );
+    Ok(config)
 }
 fn models(config: &Config) -> render::ModelSummary {
     render::ModelSummary {

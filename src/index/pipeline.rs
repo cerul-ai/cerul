@@ -134,6 +134,42 @@ fn existing_annotation(
         Ok(None)
     }
 }
+fn retained_annotation(
+    sidecar: &Path,
+    episode: &Episode,
+    stream: &str,
+    name: &str,
+) -> Result<Option<AnnotationFile>> {
+    let Some(file) = existing_annotation(sidecar, episode, stream, name, false)? else {
+        return Ok(None);
+    };
+    if file.header.name != name
+        || file.header.stream != stream
+        || !stations::has_current_input(episode, &file)?
+    {
+        return Ok(None);
+    }
+    file.validate(episode.duration_us()?, None)?;
+    Ok(Some(file))
+}
+
+fn speech_plan(
+    episode: &Episode,
+    stream: &str,
+    disabled: bool,
+    enabled: Option<bool>,
+) -> Result<SpeechStatus> {
+    Ok(if disabled {
+        SpeechStatus::Disabled
+    } else if enabled.is_none() {
+        SpeechStatus::NotConfigured
+    } else if matches!(episode.video(stream)?, Stream::Video {probe, ..} if !probe.has_audio) {
+        SpeechStatus::NoAudio
+    } else {
+        SpeechStatus::Planned
+    })
+}
+
 fn interrupted(cancel: &CancellationToken) -> Result<()> {
     if cancel.is_cancelled() {
         return Err(ProviderError {
@@ -260,18 +296,25 @@ async fn run_inner(
             let sidecar =
                 discover::sidecar_path(&episode, &registry, options.sidecar_dir.as_deref())?;
             result.push(EpisodeResult {
-                episode_id: episode.episode_id,
+                episode_id: episode.episode_id.clone(),
                 sidecar,
                 streams: selected
                     .into_iter()
-                    .map(|stream| StreamResult {
-                        speech: SpeechStatus::Planned,
-                        stream,
-                        indexed: false,
-                        vector_rows: 0,
-                        errors: Vec::new(),
+                    .map(|stream| {
+                        Ok(StreamResult {
+                            speech: speech_plan(
+                                &episode,
+                                &stream,
+                                explicitly_disabled,
+                                config.transcription.enabled,
+                            )?,
+                            stream,
+                            indexed: false,
+                            vector_rows: 0,
+                            errors: Vec::new(),
+                        })
                     })
-                    .collect(),
+                    .collect::<Result<Vec<_>>>()?,
             });
         }
         return Ok(Report {
@@ -414,7 +457,7 @@ async fn run_inner(
         for stream in selected {
             interrupted(&cancel)?;
             let mut errors = Vec::new();
-            let screen = if options.no_ocr {
+            let mut screen = if options.no_ocr {
                 None
             } else {
                 match stations::screen_text(
@@ -433,7 +476,7 @@ async fn run_inner(
                     }
                 }
             };
-            let transcript = if options.no_audio {
+            let mut transcript = if options.no_audio {
                 None
             } else if let Some(error) = speech_blocked.get(&stream) {
                 errors.push(format!("speech: {error}"));
@@ -458,6 +501,15 @@ async fn run_inner(
                     }
                 }
             };
+            let speech_completed = transcript.is_some();
+            // Failed recomputation leaves the authoritative annotation intact. Reuse it
+            // only when it still belongs to this exact media input and stream.
+            if screen.is_none() && !options.no_ocr {
+                screen = retained_annotation(&sidecar, &episode, &stream, "screen_text")?;
+            }
+            if transcript.is_none() && !options.no_audio {
+                transcript = retained_annotation(&sidecar, &episode, &stream, "transcript")?;
+            }
             if let Some(error) = blocked.get(&stream) {
                 errors.push(error.clone());
             }
@@ -572,17 +624,15 @@ async fn run_inner(
                     }
                 }
             }
-            let speech = if explicitly_disabled {
-                SpeechStatus::Disabled
-            } else if config.transcription.enabled.is_none() {
-                SpeechStatus::NotConfigured
-            } else if matches!(episode.video(&stream)?, Stream::Video {probe, ..} if !probe.has_audio)
-            {
-                SpeechStatus::NoAudio
-            } else if transcript.is_some() {
-                SpeechStatus::Complete
-            } else {
-                SpeechStatus::Failed
+            let speech = match speech_plan(
+                &episode,
+                &stream,
+                explicitly_disabled,
+                config.transcription.enabled,
+            )? {
+                SpeechStatus::Planned if speech_completed => SpeechStatus::Complete,
+                SpeechStatus::Planned => SpeechStatus::Failed,
+                status => status,
             };
             result.streams.push(StreamResult {
                 speech,
@@ -755,6 +805,158 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn failed_recompute_retains_speech_vectors_and_reports_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("audio.mp4");
+        crate::media::run(
+            crate::media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=64x64:rate=2:duration=1",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=r=16000:cl=mono",
+                    "-t",
+                    "1",
+                    "-c:v",
+                    "libx264",
+                    "-c:a",
+                    "aac",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        use serde_json::json;
+        let generated = |value: serde_json::Value| json!({"candidates":[{"content":{"parts":[{"text":value.to_string()}]}}]});
+        let (base, server) = crate::providers::tests::server(vec![
+            (200, generated(json!({"segments":[]}))),
+            (
+                200,
+                generated(
+                    json!({"segments":[{"start":0.1,"end":0.9,"text":"retained speech","lang":"en"}]}),
+                ),
+            ),
+            (200, json!({"promptFeedback":{"blockReason":"OTHER"}})),
+        ]);
+        let (embedding_base, embedding_server) =
+            crate::providers::tests::server(vec![
+                (200, json!({"embedding":{"values":[1.,0.]}}));
+                7
+            ]);
+        let mut config = Config::default();
+        config.embedding.base_url = embedding_base;
+        config.embedding.dims = Some(2);
+        config.transcription.base_url = base;
+        config.transcription.model = "gemini-3.8-flash".into();
+        config.transcription.enabled = Some(true);
+        let workspace = dir.path().join("workspace");
+        let mut options = Options {
+            no_ocr: true,
+            ..Default::default()
+        };
+        // Dry-run must describe the same effective speech choice without requests.
+        options.dry_run = true;
+        for (enabled, no_audio, expected) in [
+            (None, false, "not_configured"),
+            (Some(false), false, "disabled"),
+            (Some(true), true, "disabled"),
+            (Some(true), false, "planned"),
+        ] {
+            config.transcription.enabled = enabled;
+            options.no_audio = no_audio;
+            let result = run(
+                std::slice::from_ref(&source),
+                &workspace,
+                &config,
+                &options,
+                CancellationToken::new(),
+                &mut |_| {},
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(&result.episodes[0].streams[0].speech).unwrap(),
+                expected
+            );
+        }
+        let mut silent_episode = discover::ordinary_episode(&source).unwrap();
+        if let Stream::Video { probe, .. } = &mut silent_episode.streams[0] {
+            probe.has_audio = false;
+        }
+        assert!(matches!(
+            speech_plan(&silent_episode, "primary", false, Some(true)).unwrap(),
+            SpeechStatus::NoAudio
+        ));
+        assert!(!workspace.exists());
+        config.transcription.enabled = Some(true);
+        options.no_audio = false;
+        options.dry_run = false;
+        let first = run(
+            std::slice::from_ref(&source),
+            &workspace,
+            &config,
+            &options,
+            CancellationToken::new(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(!first.partial);
+        assert_eq!(first.episodes[0].streams[0].vector_rows, 2);
+        let sidecar = &first.episodes[0].sidecar;
+        let transcript = fs::read(sidecar.join("transcript.jsonl")).unwrap();
+        options.embedding.recompute = true;
+        let second = run(
+            std::slice::from_ref(&source),
+            &workspace,
+            &config,
+            &options,
+            CancellationToken::new(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(second.partial);
+        assert!(matches!(
+            second.episodes[0].streams[0].speech,
+            SpeechStatus::Failed
+        ));
+        assert_eq!(second.episodes[0].streams[0].vector_rows, 2);
+        assert_eq!(
+            fs::read(sidecar.join("transcript.jsonl")).unwrap(),
+            transcript
+        );
+        let space = config.space_id().unwrap();
+        let rows = super::super::vectors::read(
+            &sidecar.join("embeddings").join(format!("{space}.parquet")),
+            2,
+        )
+        .unwrap();
+        assert!(rows.iter().any(|row| row.text == "retained speech"));
+        assert_eq!(
+            super::super::lance::VectorIndex::open(&workspace, &space, 2, false)
+                .await
+                .unwrap()
+                .count()
+                .await
+                .unwrap(),
+            2
+        );
+        let state: embed::State = serde_json::from_slice(
+            &fs::read(embed::state_path(sidecar, "primary", "primary", &space)).unwrap(),
+        )
+        .unwrap();
+        assert!(state.complete && state.error.is_some());
+        assert_eq!(server.join().unwrap().len(), 3);
+        assert_eq!(embedding_server.join().unwrap().len(), 7);
     }
 
     #[tokio::test]

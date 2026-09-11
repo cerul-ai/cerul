@@ -762,9 +762,9 @@ fn native_transcript(response: &Value) -> Result<Value> {
         if let Some(last) = phrases.last_mut() {
             let last_start = last["start_us"].as_i64().unwrap();
             let last_end = last["end_us"].as_i64().unwrap();
-            if start == end
-                || last_start == last_end
-                || (end - last_start <= 5_000_000 && start - last_end <= 750_000)
+            if end.max(last_end) - start.min(last_start) <= 5_000_000
+                && start - last_end <= 750_000
+                && last_start - end <= 750_000
             {
                 last["start_us"] = json!(last_start.min(start));
                 last["end_us"] = json!(last_end.max(end));
@@ -782,7 +782,7 @@ fn native_transcript(response: &Value) -> Result<Value> {
         phrases
             .iter()
             .all(|p| p["end_us"].as_i64() > p["start_us"].as_i64()),
-        "native transcription has no positive-duration speech interval"
+        "native transcription contains an isolated zero-duration token without a nearby timed word"
     );
     Ok(json!({"segments":phrases}))
 }
@@ -878,6 +878,22 @@ pub(crate) mod tests {
         )
         .unwrap()
     }
+    #[test]
+    fn native_point_tokens_do_not_bridge_long_silence() {
+        let response = |words| json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"audioTranscription":{"words":words}}]}}]});
+        let words = json!([
+            {"word":"hello","startOffset":"0s","endOffset":"1s"},
+            {"word":"!","startOffset":"50s","endOffset":"50s"}
+        ]);
+        assert!(native_transcript(&response(words.clone())).is_err());
+        let mut words = words.as_array().unwrap().clone();
+        words.push(json!({"word":"next","startOffset":"50.1s","endOffset":"51s"}));
+        let result = native_transcript(&response(json!(words))).unwrap();
+        assert_eq!(result["segments"].as_array().unwrap().len(), 2);
+        assert_eq!(result["segments"][0]["end_us"], 1_000_000);
+        assert_eq!(result["segments"][1]["start_us"], 50_000_000);
+    }
+
     #[tokio::test]
     async fn native_asr_preserves_word_offsets_and_does_not_request_json_generation() {
         let (base, server) = server(vec![(

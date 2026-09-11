@@ -286,7 +286,7 @@ pub fn screen_text(
 
 const WINDOW_US: i64 = 60_000_000;
 fn transcript_params(provider: &Provider) -> serde_json::Value {
-    json!({"kind":provider.endpoint.kind,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"window_us":WINDOW_US,"timestamp_protocol":if provider.endpoint.kind == "gemini" && provider.endpoint.model.starts_with("gemini-3.5-transcribe") {"native-word-phrases/1"} else {"seconds/1"}})
+    json!({"kind":provider.endpoint.kind,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"window_us":WINDOW_US,"timestamp_protocol":if provider.endpoint.kind == "gemini" && provider.endpoint.model.starts_with("gemini-3.5-transcribe") {"native-word-phrases/2"} else {"seconds/1"}})
 }
 fn transcript_key(episode: &Episode, stream: &str, provider: &Provider) -> Result<String> {
     // Short audio windows avoid long-context timestamp drift and keep inline
