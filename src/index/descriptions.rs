@@ -170,7 +170,8 @@ pub async fn run(
         complete: false,
         source_refs: BTreeMap::new(),
     };
-    storage::write_json(&path, &state)?;
+    // Keep the published manifest until every replacement row is ready. A
+    // failed recompute must not withdraw a still-current description product.
     let checkpoints = Checkpoints::new(sidecar);
     let mut rows = Vec::new();
     events.emit(Event::Progress {
@@ -285,11 +286,9 @@ mod tests {
         let episode = discover::ordinary_episode(&video).unwrap();
         let workspace = dir.path().join("workspace");
         let sidecar = discover::publish_episode(&workspace, &episode, None).unwrap();
-        let (base, server) =
-            crate::providers::tests::server(vec![
-                (200, json!({"embedding":{"values":[1.,0.]}}));
-                5
-            ]);
+        let mut responses = vec![(200, json!({"embedding":{"values":[1.,0.]}})); 5];
+        responses.push((400, json!({"error":"replacement rejected"})));
+        let (base, server) = crate::providers::tests::server(responses);
         let mut config = Config::default();
         config.embedding.base_url = base;
         config.embedding.dims = Some(2);
@@ -424,8 +423,40 @@ mod tests {
         )
         .await
         .unwrap();
+        let manifest_path = state_path(&sidecar, &episode, "primary", &space);
+        let before_manifest = fs::read(&manifest_path).unwrap();
+        let before_rows = read_current(&sidecar, &episode, "primary", &space, 2)
+            .unwrap()
+            .unwrap()
+            .1;
+        assert!(
+            run(
+                &episode,
+                "primary",
+                &sidecar,
+                &workspace,
+                &config,
+                &provider,
+                &scenes,
+                true,
+                &mut |_| {}
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(fs::read(&manifest_path).unwrap(), before_manifest);
+        assert_eq!(
+            serde_json::to_value(
+                read_current(&sidecar, &episode, "primary", &space, 2)
+                    .unwrap()
+                    .unwrap()
+                    .1
+            )
+            .unwrap(),
+            serde_json::to_value(before_rows).unwrap()
+        );
         let requests = server.join().unwrap();
-        assert_eq!(requests.len(), 5);
+        assert_eq!(requests.len(), 6);
         assert!(
             requests[4]
                 .1

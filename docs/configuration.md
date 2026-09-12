@@ -140,9 +140,14 @@ failure returns exit 6 and retains a diagnostic in the stream's index state.
 
 `--workspace DIR` overrides `CERUL_WORKSPACE`, then the default `~/.cerul`.
 Each embedding space includes provider kind, base URL, model, dimensions, and
-query template in its identity. Changing any of these requires compatible new
+query and applicable document templates in its identity. Changing any of these requires compatible new
 vectors. `status` lists space IDs and public model metadata. A query cannot
 silently search a different space.
+
+Gemini Embedding 2's document prefix is part of the space identity. Legacy
+metadata without a document template keeps its original ID for inspection and
+rebuilding; newly prefixed documents occupy a separate space. Existing vectors
+are retained, and indexing into the new space requires new model embeddings.
 
 The CLI defaults to the Gemini embedding space. Compatible endpoints and dimensions can be configured; different configurations create separate spaces. Sidecar vectors are
 retained by cache/index cleaning and can rebuild the corresponding index.

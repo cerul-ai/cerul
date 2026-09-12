@@ -101,6 +101,31 @@ The follow-up runtime adds JSON-mode per-attempt usage events for future runs;
 it cannot recover the receipts discarded by this pilot. Actual usage must be
 captured before validating the proposal's cost table.
 
+## Offline fusion replay
+
+On 2026-09-13, the new Rust fusion module replayed the same four cached candidate
+exports without an endpoint or new embeddings. Three deliberately exploratory
+recipes were used: the three-track raw-max baseline; identity calibration over
+the four cosine tracks with zero agreement bonus; and grouped RRF over all five
+tracks with equal weights and rank constant 60. Cosine gates were -1 and the
+BM25 gate was 0, effectively admitting all exported rows. These settings expose
+behavior; they are not fitted thresholds or production recommendations.
+
+| Query | Raw max Top-1 | Identity max including descriptions | Grouped RRF, no effective gate |
+| --- | --- | --- | --- |
+| Official dinner query | 50–80 s | 65.16–85.04 s | 50–80 s |
+| Generated figurine query | 125–150 s | 141–150 s | 125–150 s |
+| Generated speech query | 50–80 s | 50–80 s | 50–80 s |
+| Unreviewed negative probe | 0–30 s | 0–30 s | 25–55 s |
+
+The identity candidate can retain a short scene as its own result. Grouped RRF
+still selects the wider dinner window, and all three ungated recipes return a
+result for the negative probe. Rank fusion alone has not solved localization or
+abstention. No aggregate quality metric was generated from these unreviewed
+probes. The replay records source intervals, raw scores, original ranks, actual
+contributors, recipe provenance, and fusion-only timings; production ranking
+and authoritative sidecars are unchanged.
+
 ## Remaining acceptance work
 
 The sample contains one original source, one officially labeled query, two

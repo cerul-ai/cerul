@@ -4,7 +4,7 @@ Status: implementation in progress, with measurement gates. See
 [DESIGN.md](../../DESIGN.md) for implemented behavior; this plan also contains
 proposed changes that must pass evaluation before activation.
 
-Updated: 2026-09-12. This revision records the owner's decisions, corrects
+Updated: 2026-09-13. This revision records the owner's decisions, corrects
 earlier statements that were stronger than the evidence, and fixes the
 implementation order. A subsequent [single-video pilot](../development/retrieval-pilot.md)
 verified the live pipeline and exposed ranking/localization limitations; the
@@ -192,14 +192,18 @@ flowchart LR
     T --> O[Ranked moments with per-track raw scores]
 ```
 
-**Step zero is measurement.** Before any fusion code: index a small set,
+**Step zero is measurement.** Before fitting or selecting fusion parameters: index a small set,
 run twenty to thirty queries, and export the score distribution of each kind
 for relevant and irrelevant hits. The hypothesis is a modality bias, where
 text-to-text similarity runs higher than text-to-video for equally relevant
 evidence, which is well documented for contrastive multimodal encoders. Its
 direction and size for this model are **unmeasured**. The measurement decides
 whether calibration is a constant offset, an affine map, or unnecessary, and
-it is a prerequisite for the calibrated-max candidate below.
+it is a prerequisite for fitting the calibrated-max candidate below. The pure,
+parameterized fusion implementations and offline replay can be built before
+that measurement. This implementation-order adjustment keeps engineering work
+independent of paid corpus preparation; it does not supply calibration constants
+or waive the held-out activation gate.
 
 Candidates, evaluated together on the same held-out set:
 
@@ -319,8 +323,15 @@ The implementation now includes 3072 defaults, shared samples, text hygiene,
 concurrent OCR/ASR, independent candidate budgets, lexical projection, default
 understanding, separate description vectors, and an offline
 [diagnostic exporter and evaluator](../development/retrieval-evaluation.md).
-No paid model benchmark or owner-reviewed held-out labels have been produced in
-this change. Score calibration, description/lexical fusion into default search,
+One authorized live pilot and zero-call candidate replays have been completed;
+representative model benchmarks and owner-reviewed held-out labels are pending.
+Parameterized calibrated-max and grouped-RRF recipes now run through a shared
+Rust module and an offline replay tool, retaining original evidence and checking
+recipe/source provenance. The first candidate uses two conservative groups:
+video/description and speech/screen/lexical, each capped at its strongest vote.
+This also caps distinct speech and screen matches; whether that loses useful
+agreement is an evaluation question, not an established optimum. Score
+calibration fitting, description/lexical fusion into default search,
 the winning recipe, and ANN activation remain gated. Offline contract tests
 cannot establish retrieval quality. Implementing the independent infrastructure
 does not imply those gates passed. A zero-model-call, synthetic 100k-row
@@ -337,8 +348,10 @@ representative-data gate for ANN activation.
 5. Per-track candidate retrieval and the full-text candidate source.
 6. Default visual understanding with independent invalidation; description
    rows stored, not yet retrieved.
-7. Calibration, then the fusion candidates compete on held-out data; the
-   description track enters retrieval with the winner.
+7. Implement parameterized fusion and replay independently of corpus collection.
+   Fit calibration and gates on tuning data after diagnostic measurement; then
+   compare frozen candidates on held-out data. The description track enters
+   default retrieval with the accepted winner.
 8. Measure flat-search and ANN behavior near one hundred thousand rows. Enable
    ANN only when measured latency warrants it and recall remains acceptable.
    Row count is a benchmark checkpoint, not a universal performance limit.

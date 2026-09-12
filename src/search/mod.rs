@@ -1,4 +1,5 @@
 pub mod filter;
+pub mod fusion;
 
 use crate::{
     config::Config,

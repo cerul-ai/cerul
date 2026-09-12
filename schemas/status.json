@@ -257,6 +257,13 @@
           "format": "uint",
           "minimum": 0
         },
+        "document_template": {
+          "description": "Absent in legacy spaces that embedded unprefixed document text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "kind": {
           "type": "string"
         },

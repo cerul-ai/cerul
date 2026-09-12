@@ -1,0 +1,159 @@
+{
+  "$id": "https://cerul.ai/schemas/fusion-recipe/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Recipe",
+  "oneOf": [
+    {
+      "description": "The three-track baseline over identical intervals, before temporal merge.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "raw_max"
+        },
+        "threshold": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "method"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "agreement_bonus": {
+          "type": "number",
+          "format": "double"
+        },
+        "agreement_cap": {
+          "type": "number",
+          "format": "double"
+        },
+        "channels": {
+          "type": "object",
+          "properties": {
+            "description": {
+              "$ref": "#/$defs/Calibration"
+            },
+            "lexical": {
+              "$ref": "#/$defs/Calibration"
+            },
+            "screen": {
+              "$ref": "#/$defs/Calibration"
+            },
+            "speech": {
+              "$ref": "#/$defs/Calibration"
+            },
+            "video": {
+              "$ref": "#/$defs/Calibration"
+            }
+          },
+          "additionalProperties": false
+        },
+        "method": {
+          "type": "string",
+          "const": "calibrated_max"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "channels",
+        "agreement_bonus",
+        "agreement_cap"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "object",
+          "properties": {
+            "description": {
+              "$ref": "#/$defs/RankRule"
+            },
+            "lexical": {
+              "$ref": "#/$defs/RankRule"
+            },
+            "screen": {
+              "$ref": "#/$defs/RankRule"
+            },
+            "speech": {
+              "$ref": "#/$defs/RankRule"
+            },
+            "video": {
+              "$ref": "#/$defs/RankRule"
+            }
+          },
+          "additionalProperties": false
+        },
+        "method": {
+          "type": "string",
+          "const": "grouped_rrf"
+        },
+        "rank_constant": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "channels",
+        "rank_constant"
+      ]
+    }
+  ],
+  "$defs": {
+    "Calibration": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "number",
+          "format": "double"
+        },
+        "raw_min": {
+          "description": "Pre-fusion gate in this track's raw units (cosine or BM25).",
+          "type": "number",
+          "format": "double"
+        },
+        "scale": {
+          "description": "Positive affine map, clamped to [0, 1]. Relevance, not probability.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "raw_min",
+        "scale",
+        "offset"
+      ]
+    },
+    "RankRule": {
+      "type": "object",
+      "properties": {
+        "raw_min": {
+          "type": "number",
+          "format": "double"
+        },
+        "weight": {
+          "description": "Fixed across all candidates of this query; absent tracks add zero.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "raw_min",
+        "weight"
+      ]
+    }
+  }
+}

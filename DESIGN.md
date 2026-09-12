@@ -13,11 +13,11 @@ installation instructions are in the [documentation](docs/README.md).
 | Commands | `index`, `search`, `status`, `open`, `auth`, `annotate`, `remove`. HTTP and MCP serving are not implemented. |
 | Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
 | Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
-| Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, and query instruction template. The same model name at different endpoints is a different space. Queries must match exactly. |
+| Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, query instruction template, and applicable document template. The same model name at different endpoints is a different space. Queries must match exactly. |
 | Endpoints | Embedding defaults to Gemini Embedding 2 at 3072 dimensions. Embedding, vision, and optional transcription support configurable `kind = gemini \| openai` endpoints with user keys. `perception` is reserved and processing is not implemented. Missing perception must not block indexing/search. |
 | Default models | Required Gemini embedding: `gemini-embedding-2` at 3072 dimensions. Vision: `gemini-3.8-flash`. Optional ASR preset: `gemini-3.5-transcribe`. |
 | OCR | Embedded PP-OCRv6 small, approximately 31 MB of weights, CPU inference through `tract-onnx`, enabled by default. This is the only embedded model and the only exception to endpoint-based inference. |
-| Retrieval | One compatible multimodal space with independent video, transcript, and screen-text rows. Per-track candidates use separate budgets, then raw maximum similarity per interval. The embedding endpoint must accept video and images; unsupported endpoints fail without a text-only fallback. Description vectors and a separate lexical cache are available for evaluation; their default fusion remains gated on held-out evidence. Exact strings use `--text` substring matching. Annotation filtering happens before vector search. |
+| Retrieval | One compatible multimodal space with independent video, transcript, and screen-text rows. Per-track candidates use separate budgets, then raw maximum similarity per interval. The embedding endpoint must accept video and images; unsupported endpoints fail without a text-only fallback. Description vectors and a separate lexical cache are available for evaluation. A pure Rust fusion module and offline replay compare explicit calibrated-max and grouped-RRF recipes; default fusion remains gated on held-out evidence. Exact strings use `--text` substring matching. Annotation filtering happens before vector search. |
 | Annotations | Three fixed families: `semantic`, `grounding`, `world`. Subtypes may grow. All derived records are annotations. |
 | Time | Integer microseconds, half-open intervals, episode-relative time derived from PTS. |
 | Cameras | Process the primary camera by default; `--streams all` expands selection. |
@@ -128,7 +128,7 @@ Each subtype is a module: frames → timestamped contact sheet → schema-constr
 | `--rerank` | Reserved; rejected as unsupported. |
 | `--text` | Substring match over transcript and screen text without vectors. |
 
-Query embeddings are cached under workspace `cache/queries/` keyed by embedding space and query, so repeating the exact query in the same space reuses its vector; changing filters or the result limit does not embed the query again. Changing the query text requires a new embedding. An expired capability cache can still trigger a provider probe. Both caches are disposable and freed by `remove --cache`.
+Query embeddings are cached under workspace `cache/queries/` keyed by embedding space and query, so repeating the exact query in the same space reuses its vector; changing filters or the result limit does not embed the query again. Changing the query text requires a new embedding. A valid cached query never triggers a provider probe, even when the capability cache has expired. Both caches are disposable and freed by `remove --cache`.
 
 Results: `hits[]` containing episode, stream, start_us, end_us, optional frame_range, score, matched (video/speech/screen), excerpt, and annotations.
 
@@ -151,7 +151,7 @@ secret values. Provider adapters must preserve these request contracts:
 | Vision | `generateContent` with responseSchema. | `/v1/chat/completions` with image_url and json_schema. |
 | Transcription | Native word timestamps for `gemini-3.5-transcribe`; prompted segments for other Gemini models. | `/v1/audio/transcriptions`, verbose_json, segment timestamps. |
 
-Probe the remote calls actually needed, not command names. Index probes embedding only for pending vectors and transcription only for pending audio. Annotate probes selected vision/perception capabilities. Semantic search can refresh an expired embedding capability probe even when its query vector is cached. Filters alone, exact text, sidecar rebuilds, ordinary status, and cleanup make no probe calls.
+Probe the remote calls actually needed, not command names. Index probes embedding only for pending vectors and transcription only for pending audio. Annotate probes selected vision/perception capabilities. Semantic search probes embedding only on a query-vector cache miss. Cached queries, filters alone, exact text, sidecar rebuilds, ordinary status, and cleanup make no probe calls.
 
 Embedding probes send a sentence, image, and two-second video and check dimensions/modalities. Vision requests `{"ok":true}` from a 64×64 image. Transcription uses one second of silence. Perception reads `/capabilities`. Explicitly unsupported required capabilities fail with code 3 before processing media. Temporary network failures allow local probe/frame/OCR stations to finish, mark remote work incomplete, and return code 6; a later run fills the gaps.
 
@@ -194,7 +194,7 @@ my_dataset/
   index/<space_id>/records.lance
 ~~~
 
-Embedding Parquet rows contain stream, kind, start_us, end_us, vector, and params_hash. The adjacent JSON records kind/base_url/model/dims/query_template for status inspection. Primary annotations remain at the sidecar root; non-primary annotations cannot overwrite them.
+Embedding Parquet rows contain stream, kind, start_us, end_us, vector, and params_hash. The adjacent JSON records kind/base_url/model/dims/query_template and optional document_template for status inspection. Legacy metadata without a document template retains its original space ID; newly prefixed Gemini documents use a new space. Primary annotations remain at the sidecar root; non-primary annotations cannot overwrite them.
 
 Proxy metadata stores the recipe and output hash; missing/corrupt files are rebuilt. Contact proxy metadata additionally preserves original source-relative PTS for each sampled frame. It must not substitute the proxy encoder's frame clock.
 

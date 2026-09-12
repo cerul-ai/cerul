@@ -68,8 +68,9 @@ No default calibration constants or retrieval-quality claims follow from the
 synthetic unit tests.
 
 Use the diagnostic split for inspecting score distributions, tuning videos for
-choosing gates/weights, and held-out videos once for acceptance. Only after that
-measurement should calibrated max and grouped RRF be implemented and compared.
+choosing gates/weights, and held-out videos once for acceptance. Parameterized
+fusion and replay are implemented independently of corpus preparation; fit and
+select their parameters only after measurement.
 Record call counts, actual provider usage/cost, full search P50/P95, modality
 ablations, and 100k-row flat/ANN recall and latency in the experiment report.
 Activation requires an explicit recipe version and reviewed acceptance evidence.
@@ -84,6 +85,77 @@ tokens, not billed dollars or a provider-side frame count. Unsupported adapters
 and interrupted/error responses can lack usage even when charges occur. Keep
 the price schedule and coverage of available usage with any cost estimate.
 Cached diagnostic exports never create synthetic usage receipts.
+
+## Offline fusion replay
+
+The shared Rust module `search::fusion` implements three recipes over the same
+saved candidate lists: the existing three-track raw-max baseline, affine
+calibration plus capped agreement, and grouped weighted RRF. There is no model
+client, automatic calibration fitting, or default-search activation in replay.
+The [recipe schema](../../schemas/fusion-recipe.json) and
+[moment schema](../../schemas/fusion-moment.json) are generated from Rust.
+
+Create a recipe suite with `schema: "retrieval-fusion-recipes/1"`, the exact
+`space_id`, `parameter_split` (`diagnostic` or `tune`), `parameter_episodes`, a
+`source_groups` mapping from episode IDs to original source-video identities,
+and a `recipes` object mapping experiment names to recipe objects. Every
+parameter episode and searched episode must have a source group. Keep clips
+from the same original video together even when their episode IDs differ.
+
+Each recipe has explicit parameters; there are no recommended numeric defaults:
+
+| Method | Required fields | Score meaning |
+| --- | --- | --- |
+| `raw_max` | `threshold` (number or null) | Maximum cosine over video/speech/screen with identical intervals |
+| `calibrated_max` | `channels`, `agreement_bonus`, `agreement_cap` | Per-channel `raw_min`, positive `scale`, and `offset`; affine relevance clamped to [0, 1] |
+| `grouped_rrf` | `channels`, `rank_constant` | Per-channel `raw_min` and positive `weight` up to 1; original rank, before gating |
+
+Only channels present in a recipe are enabled. BM25's gate and calibration are
+separate from cosine's; supplying a cosine gate as BM25's is not a calibration.
+The calibrated candidate takes the strongest group score, adds the lesser of
+the agreement cap and `agreement_bonus` times the weaker group score, and caps
+the result at 1. The RRF candidate sums each group's strongest
+`weight / (rank_constant + original_rank)` contribution. Neither score is a
+probability. Weights are fixed across candidates, including silent sources.
+
+The initial grouping is deliberately conservative: video/description form one
+visual group; speech/screen/lexical form one text group. Duplicate rows,
+generated descriptions, or lexical echoes cannot multiply votes. This caps
+distinct text evidence too, which must be measured when choosing the recipe.
+Description and lexical intervals attach to at most one admitted base anchor,
+by greatest IoU, only when they cover half of both intervals and are no longer
+than the anchor. Otherwise they retain their own interval. Ties use source time
+and stable identity; there is no transitive temporal merging in this experiment.
+
+```sh
+cargo run --locked --example retrieval_fusion -- /tmp/candidates.jsonl /tmp/recipes.json /tmp/fused.jsonl
+python3 scripts/evaluate-retrieval.py /tmp/candidates.jsonl /tmp/labels.jsonl --fusions /tmp/fused.jsonl --k 5 > /tmp/fusion-metrics.json
+```
+
+Replay needs no labels and can inspect already cached diagnostic queries. Its
+output pins the exact input-line hash, the algorithm version, the full recipe
+suite and their combined hash, all
+admitted evidence with original scores/ranks/times, actual contributing votes,
+and fusion-only latency. It validates the entire run before publishing a new
+file and refuses to overwrite earlier output. The evaluator still requires
+reviewed, exhaustive labels and validates replay hashes and source evidence.
+Do not edit or reformat the candidate export after producing a replay.
+
+Diagnostic parameters cannot score tuning or held-out queries. Tuning sources
+cannot overlap held-out source groups, and all three data splits must be
+source-disjoint. These guards check declared provenance; they do not certify
+that judgments are human-reviewed or parameters were selected correctly.
+The cosine `--threshold` affects original cosine tracks only; replay recipes
+carry their own gates. Fused recall requires both a matching returned interval
+and correctly attributed original contributing evidence. Carrying an unrelated
+record cannot turn speech into visual evidence. A good visual match accompanied
+by an incorrect text vote can earn recall while still increasing the incorrect
+evidence count.
+
+The single-video [pilot replay](retrieval-pilot.md#offline-fusion-replay) uses
+explicit exploratory parameters, not fitted or accepted ones. Joint
+concatenation remains an unmeasured ablation: separate saved embeddings cannot
+reconstruct the embedding of concatenated inputs without another model call.
 
 ## Engine-only benchmark
 

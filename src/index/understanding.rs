@@ -514,11 +514,17 @@ pub async fn run(
     };
     let params = json!({"recipe":RECIPE,"time_basis":"source-video_episode-frames/1","input_kind":input_kind,"frame_jpeg_quality":80,"window_us":WINDOW_US,"fps":1,"max_edge":480,"proxy_recipe":media::proxy::RECIPE_VERSION,"prompt_hash":storage::sha256_hex(SCENE_PROMPT),"schema_hash":storage::cache_key(&schemars::schema_for!(SceneResponse))?,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"kind":provider.endpoint.kind});
     let key = super::stations::station_key(episode, stream, "semantic.scene", &params)?;
-    let previous = AnnotationFile::read(&directory.join("semantic.scene.jsonl"))
+    let published = AnnotationFile::read(&directory.join("semantic.scene.jsonl"))
         .ok()
         .filter(|file| {
-            file.header.input_hash == key && file.validate_in_range(coverage, None).is_ok()
+            file.header.name == "semantic.scene"
+                && file.header.stream == stream
+                && super::stations::has_current_input(episode, file).unwrap_or(false)
+                && file.validate_in_range(coverage, None).is_ok()
         });
+    let previous = published
+        .as_ref()
+        .filter(|file| file.header.input_hash == key);
     let windows = media::chunks(coverage.end_us - coverage.start_us, WINDOW_US, 0)?
         .into_iter()
         .map(|r| TimeRange::from_clip(coverage.start_us, r))
@@ -741,6 +747,36 @@ pub async fn run(
             total: windows.len() as u64 + 1,
         });
     }
+    if !failed.is_empty()
+        && let Some(scenes) = published
+    {
+        // Successful target windows already have independent checkpoints. Keep
+        // the current public generation until the replacement has no gaps,
+        // even when endpoint/model/recipe changed. Never reuse changed media.
+        let summary = AnnotationFile::read(&directory.join("semantic.summary.jsonl"))
+            .ok()
+            .filter(|file| {
+                file.header.name == "semantic.summary"
+                    && file.header.stream == stream
+                    && super::stations::has_current_input(episode, file).unwrap_or(false)
+                    && current_dependencies(&directory, file).unwrap_or(false)
+            });
+        return finish_run(
+            episode,
+            stream,
+            sidecar,
+            &key,
+            None,
+            successful,
+            failed,
+            Product {
+                scenes,
+                summary,
+                errors,
+            },
+            events,
+        );
+    }
     records.sort_by_key(|r| (r.start_us, r.end_us, r.id.clone()));
     apply_corrections(&directory, &mut records, &mut errors)?;
     let scenes = file(
@@ -772,6 +808,26 @@ pub async fn run(
     let summary_params = json!({"recipe":RECIPE,"prompt_hash":storage::sha256_hex(OVERVIEW_PROMPT),"schema_hash":storage::cache_key(&schemars::schema_for!(Overview))?,"context_bytes":CONTEXT_BYTES,"model":params,"dependencies":dependencies,"coverage":{"successful":successful,"failed":failed}});
     let summary_key =
         super::stations::station_key(episode, stream, "semantic.summary", &summary_params)?;
+    if context.is_empty() {
+        // A valid empty scene response is successful analysis, not a failed
+        // endpoint. Record coverage without inventing an overview or making a
+        // generation request with no supporting evidence.
+        return finish_run(
+            episode,
+            stream,
+            sidecar,
+            &key,
+            Some(&summary_key),
+            successful,
+            failed,
+            Product {
+                scenes,
+                summary: None,
+                errors,
+            },
+            events,
+        );
+    }
     let result: Result<AnnotationFile> = async {
         // The cached overview regenerates both public files locally, including
         // when a projection or section file was removed independently.
@@ -877,9 +933,41 @@ pub async fn run(
             None
         }
     };
+    finish_run(
+        episode,
+        stream,
+        sidecar,
+        &key,
+        Some(&summary_key),
+        successful,
+        failed,
+        Product {
+            scenes,
+            summary,
+            errors,
+        },
+        events,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_run(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    key: &str,
+    summary_key: Option<&str>,
+    successful: Vec<TimeRange>,
+    failed: Vec<TimeRange>,
+    product: Product,
+    events: &mut dyn EventSink,
+) -> Result<Product> {
+    let directory = super::stations::stream_directory(sidecar, stream, &episode.time.reference);
+    let errors = &product.errors;
+    let windows = successful.len() + failed.len();
     storage::write_json(
         &directory.join("understanding.state.json"),
-        &json!({"input_hash":key,"summary_hash":summary_key,"complete":errors.is_empty(),"successful":successful,"failed":failed,"errors":errors}),
+        &json!({"input_hash":key,"published_input_hash":product.scenes.header.input_hash,"summary_hash":summary_key,"complete":errors.is_empty(),"successful":successful,"failed":failed,"errors":errors}),
     )?;
     record_status(
         episode,
@@ -901,14 +989,10 @@ pub async fn run(
     events.emit(Event::Progress {
         episode: episode.episode_id.clone(),
         station: "understanding".into(),
-        done: windows.len() as u64 + 1,
-        total: windows.len() as u64 + 1,
+        done: windows as u64 + 1,
+        total: windows as u64 + 1,
     });
-    Ok(Product {
-        scenes,
-        summary,
-        errors,
-    })
+    Ok(product)
 }
 
 fn publish(file: &AnnotationFile, directory: &Path, coverage: TimeRange) -> Result<()> {
@@ -1727,5 +1811,215 @@ mod tests {
         assert_eq!(requests.len(), 3);
         assert!(requests[1].1["contents"][0]["parts"][1]["inlineData"]["mimeType"] == "video/mp4");
         assert!(!sidecar.join("semantic.summary.jsonl").exists());
+    }
+
+    fn empty_test_episode(
+        seconds: u32,
+    ) -> (
+        tempfile::TempDir,
+        Episode,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("pattern.mp4");
+        media::run(
+            media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    &format!("testsrc2=size=64x64:rate=2:duration={seconds}"),
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let episode = super::super::discover::ordinary_episode(&source).unwrap();
+        let workspace = dir.path().join("workspace");
+        let sidecar = super::super::discover::publish_episode(&workspace, &episode, None).unwrap();
+        (dir, episode, workspace, sidecar)
+    }
+
+    fn test_provider(base: String) -> Provider {
+        let mut endpoint = crate::config::Config::default().vision;
+        endpoint.base_url = base;
+        Provider::new(
+            endpoint,
+            None,
+            1,
+            None,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .unwrap()
+    }
+    fn response(value: Value) -> (u16, Value) {
+        (
+            200,
+            json!({"candidates":[{"content":{"parts":[{"text":value.to_string()}]}}]}),
+        )
+    }
+    fn summary_response(request: &Value) -> (u16, Value) {
+        let prompt = request["contents"][0]["parts"][0]["text"].as_str().unwrap();
+        let records: Value =
+            serde_json::from_str(prompt.split_once("\nRecords: ").unwrap().1).unwrap();
+        response(
+            json!({"title":"Test pattern","summary":"A synthetic color pattern is visible.","content_type":"static","environment":null,"language":null,
+            "source_refs":[records[0]["source"]],"sections":[],"suggestions":[]}),
+        )
+    }
+
+    #[tokio::test]
+    async fn valid_empty_scenes_succeed_without_requesting_an_overview() {
+        let (_dir, episode, workspace, sidecar) = empty_test_episode(2);
+        let (base, server) = crate::providers::tests::server(vec![
+            response(json!({"ok":true})),
+            response(json!({"scenes":[]})),
+        ]);
+        let provider = test_provider(base);
+        let product = run(
+            &episode,
+            "primary",
+            &sidecar,
+            &workspace,
+            &provider,
+            false,
+            None,
+            None,
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(product.scenes.records.is_empty());
+        assert!(product.summary.is_none());
+        assert!(product.errors.is_empty());
+        assert_eq!(server.join().unwrap().len(), 2);
+        let cached = run(
+            &episode,
+            "primary",
+            &sidecar,
+            &workspace,
+            &provider,
+            false,
+            None,
+            None,
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(cached.errors.is_empty());
+        let status: Value =
+            serde_json::from_slice(&fs::read(sidecar.join("understanding.state.json")).unwrap())
+                .unwrap();
+        assert_eq!(status["complete"], true);
+        assert_eq!(status["successful"].as_array().unwrap().len(), 1);
+        assert!(!sidecar.join("semantic.summary.jsonl").exists());
+    }
+
+    #[tokio::test]
+    async fn partial_new_generation_preserves_published_evidence_and_resumes_pending_windows() {
+        let (_dir, episode, workspace, sidecar) = empty_test_episode(32);
+        let scene = |description: &str| json!({"scenes":[{"start_us":0,"end_us":1_000_000,"description":description,"objects":[],"actions":[],"kind":"static"}]});
+        let original_scene = scene("A color test pattern is visible.");
+        let mut calls = 0;
+        let (base, server) = crate::providers::tests::scripted_server(4, true, move |request| {
+            calls += 1;
+            match calls {
+                1 => response(json!({"ok":true})),
+                2 | 3 => response(original_scene.clone()),
+                _ => summary_response(request),
+            }
+        });
+        let first = run(
+            &episode,
+            "primary",
+            &sidecar,
+            &workspace,
+            &test_provider(base),
+            false,
+            None,
+            None,
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(first.errors.is_empty());
+        assert_eq!(server.join().unwrap().len(), 4);
+        let names = [
+            "semantic.scene.jsonl",
+            "semantic.section.jsonl",
+            "semantic.summary.jsonl",
+        ];
+        let before: Vec<_> = names
+            .iter()
+            .map(|n| fs::read(sidecar.join(n)).unwrap())
+            .collect();
+        let new_scene = scene("The same synthetic pattern has colored squares.");
+        let mut calls = 0;
+        let (base, server) = crate::providers::tests::scripted_server(5, true, move |request| {
+            calls += 1;
+            match calls {
+                1 => response(json!({"ok":true})),
+                2 | 4 => response(new_scene.clone()),
+                3 => (400, json!({"error":"second window unavailable"})),
+                _ => summary_response(request),
+            }
+        });
+        let next = test_provider(base);
+        let interrupted = run(
+            &episode,
+            "primary",
+            &sidecar,
+            &workspace,
+            &next,
+            false,
+            None,
+            None,
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(!interrupted.errors.is_empty());
+        assert_eq!(
+            interrupted.scenes.header.input_hash,
+            first.scenes.header.input_hash
+        );
+        assert!(interrupted.summary.is_some());
+        for (name, original) in names.iter().zip(before) {
+            assert_eq!(fs::read(sidecar.join(name)).unwrap(), original);
+        }
+        assert!(current_dependencies(&sidecar, interrupted.summary.as_ref().unwrap()).unwrap());
+        let finished = run(
+            &episode,
+            "primary",
+            &sidecar,
+            &workspace,
+            &next,
+            false,
+            None,
+            None,
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(finished.errors.is_empty(), "{:?}", finished.errors);
+        assert_ne!(
+            finished.scenes.header.input_hash,
+            first.scenes.header.input_hash
+        );
+        assert_eq!(finished.scenes.records.len(), 2);
+        assert!(
+            finished
+                .scenes
+                .records
+                .iter()
+                .all(|r| r.fields["description"]
+                    == "The same synthetic pattern has colored squares.")
+        );
+        assert_eq!(server.join().unwrap().len(), 5); // First replacement window was not requested again.
+        assert!(sidecar.join("revisions/semantic.scene").is_dir());
     }
 }

@@ -1,0 +1,122 @@
+{
+  "$id": "https://cerul.ai/schemas/fusion-moment/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Moment",
+  "type": "object",
+  "properties": {
+    "end_us": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "episode": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      }
+    },
+    "score": {
+      "type": "number",
+      "format": "double"
+    },
+    "start_us": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "stream": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "episode",
+    "stream",
+    "start_us",
+    "end_us",
+    "score",
+    "evidence"
+  ],
+  "$defs": {
+    "Evidence": {
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "contributes": {
+          "description": "Only group winners contribute. Other admitted evidence remains auditable.",
+          "type": "boolean"
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "rank": {
+          "description": "Original one-based rank, before gating or temporal alignment.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "raw_score": {
+          "type": "number",
+          "format": "double"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "stream": {
+          "type": "string"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "track": {
+          "$ref": "#/$defs/Track"
+        },
+        "value": {
+          "description": "Calibrated relevance or weighted reciprocal rank; raw_score is retained.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "id",
+        "episode",
+        "stream",
+        "start_us",
+        "end_us",
+        "track",
+        "raw_score",
+        "rank",
+        "value",
+        "contributes"
+      ]
+    },
+    "Track": {
+      "type": "string",
+      "enum": [
+        "video",
+        "speech",
+        "screen",
+        "description",
+        "lexical"
+      ]
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import importlib.util
+import copy
 import pathlib
 import unittest
 
@@ -33,6 +34,14 @@ class EvaluationTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             evaluation.evaluate([export], [label])
 
+    def test_unknown_or_misspelled_evidence_kinds_are_rejected(self):
+        for kinds in (["visual"], ["screens"], ["Video"], ["video", "unknown"], "video"):
+            with self.subTest(kinds=kinds):
+                export, label = self.fixture()
+                label["answers"][0]["kinds"] = kinds
+                with self.assertRaisesRegex(ValueError, "unknown answer evidence kind"):
+                    evaluation.evaluate([export], [label])
+
     def test_tuning_and_holdout_cannot_share_answer_videos(self):
         export, label = self.fixture()
         other_export = dict(export, query_id="other", split="tune")
@@ -65,3 +74,90 @@ class EvaluationTest(unittest.TestCase):
         other_export["tracks"]["video"] = export["tracks"]["video"]
         with self.assertRaisesRegex(ValueError, "escaped the labeled corpus"):
             evaluation.evaluate([export, other_export], [label, other_label])
+
+    def fusion_fixture(self):
+        export, label = self.fixture()
+        export["_input_hash"] = "exact-export-hash"
+        for track, rows in export["tracks"].items():
+            for row in rows:
+                row.update(id=track, rank=1, text=None, annotation=None)
+        evidence = [dict(row, track=track, value=row["raw_score"], contributes=True)
+                    for track, rows in export["tracks"].items() for row in rows]
+        moment = dict(episode="clip", stream="primary", start_us=0, end_us=10, score=.03, evidence=evidence)
+        suite = dict(schema="retrieval-fusion-recipes/1", space_id="space", parameter_split="tune",
+                     parameter_episodes=["tuning"], source_groups={"clip": "source", "tuning": "tuning-source"},
+                     recipes={"rrf": {"method": "grouped_rrf"}})
+        replay = dict(schema="retrieval-fusion/1", algorithm_version="fusion/two-groups-half-coverage/1", query_id="q", split="holdout", space_id="space", episodes=["clip"],
+                      model_calls=0, input_hash="exact-export-hash", recipe_hash="recipe-hash", suite=suite,
+                      recipes={"rrf": dict(fusion_ms=.1, moments=[moment])})
+        return export, label, replay
+
+    def test_fused_support_retains_wrong_evidence_and_has_its_own_score_units(self):
+        export, label, replay = self.fusion_fixture()
+        # Cosine's .95 gate must not discard a separately gated RRF score of .03.
+        result = evaluation.evaluate([export], [label], threshold=.95, fusions=[replay])
+        tracks = {r["track"]: r for r in result["metrics"]}
+        self.assertEqual(tracks["fusion:rrf"]["recall"], 1)
+        self.assertEqual(tracks["fusion:rrf"]["wrong_evidence_count"], 1)
+        self.assertEqual(tracks["raw_max"]["recall"], 0)
+        self.assertEqual(result["fusion_latency"]["rrf"]["p95"], .1)
+        # Merely carrying a matching record must not count it as a ranking vote.
+        replay["recipes"]["rrf"]["moments"][0]["evidence"][0]["contributes"] = False
+        result = evaluation.evaluate([export], [label], fusions=[replay])
+        fused = next(r for r in result["metrics"] if r["track"] == "fusion:rrf")
+        self.assertEqual(fused["recall"], 0)
+
+    def test_replays_reject_stale_exports_and_changed_evidence(self):
+        for mutation in ("hash", "interval", "rank", "duplicate", "foreign"):
+            with self.subTest(mutation=mutation):
+                export, label, replay = self.fusion_fixture()
+                moment = replay["recipes"]["rrf"]["moments"][0]
+                if mutation == "hash":
+                    replay["input_hash"] = "old-export"
+                elif mutation == "interval":
+                    moment["evidence"][0]["end_us"] = 11
+                elif mutation == "rank":
+                    moment["evidence"][0]["rank"] = 2
+                elif mutation == "duplicate":
+                    replay["recipes"]["rrf"]["moments"].append(copy.deepcopy(moment))
+                else:
+                    moment["evidence"][0]["id"] = "invented"
+                with self.assertRaises(ValueError):
+                    evaluation.evaluate([export], [label], fusions=[replay])
+
+    def test_original_source_and_diagnostic_parameters_cannot_leak_into_holdout(self):
+        for mutation in ("source", "diagnostic"):
+            export, label, replay = self.fusion_fixture()
+            if mutation == "source":
+                replay["suite"]["source_groups"]["tuning"] = "source"
+            else:
+                replay["suite"]["parameter_split"] = "diagnostic"
+            with self.assertRaises(ValueError):
+                evaluation.evaluate([export], [label], fusions=[replay])
+
+    def test_fusion_no_answer_uses_gated_results_and_still_requires_review(self):
+        export, label, replay = self.fusion_fixture()
+        label["answers"] = []
+        result = evaluation.evaluate([export], [label], fusions=[replay])
+        fused = next(r for r in result["metrics"] if r["track"] == "fusion:rrf")
+        self.assertEqual(fused["no_answer_false_positive"], 1)
+        replay["recipes"]["rrf"]["moments"] = []
+        result = evaluation.evaluate([export], [label], fusions=[replay])
+        fused = next(r for r in result["metrics"] if r["track"] == "fusion:rrf")
+        self.assertEqual(fused["no_answer_false_positive"], 0)
+        label["reviewed"] = False
+        with self.assertRaises(ValueError):
+            evaluation.evaluate([export], [label], fusions=[replay])
+
+    def test_aligned_moment_does_not_invent_finer_evidence_boundaries(self):
+        export, label, replay = self.fusion_fixture()
+        # A long description overlaps the answer but cannot establish a short
+        # action interval just because the returned anchor has those boundaries.
+        original = dict(episode="clip", stream="primary", start_us=0, end_us=90,
+                        id="description", rank=1, text=None, raw_score=.9, annotation=None)
+        export["tracks"]["description"] = [original]
+        moment = replay["recipes"]["rrf"]["moments"][0]
+        moment["evidence"] = [dict(original, track="description", value=.9, contributes=True)]
+        label["answers"][0]["kinds"] = ["description"]
+        with self.assertRaisesRegex(ValueError, "temporal anchor coverage"):
+            evaluation.evaluate([export], [label], fusions=[replay])

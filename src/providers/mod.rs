@@ -562,8 +562,8 @@ impl Provider {
                 return Ok(value);
             }
             if (status.as_u16() == 429 || status.is_server_error()) && attempt < 2 {
-                drop(report);
                 let wait = self.retry_wait(response, attempt).await?;
+                drop(report);
                 self.delay(wait).await?;
                 continue;
             }
@@ -592,13 +592,12 @@ impl Provider {
             .context("embedding dimensions are not configured")?;
         let input = match input {
             Input::Text(text) if query => Input::Text(QUERY_TEMPLATE.replace("{query}", &text)),
-            Input::Text(text)
-                if self.endpoint.kind == "gemini"
-                    && self.endpoint.model.trim_start_matches("models/")
-                        == "gemini-embedding-2" =>
-            {
-                Input::Text(crate::config::DOCUMENT_TEMPLATE.replace("{text}", &text))
-            }
+            Input::Text(text) if self.endpoint.document_template().is_some() => Input::Text(
+                self.endpoint
+                    .document_template()
+                    .unwrap()
+                    .replace("{text}", &text),
+            ),
             other => other,
         };
         let response = if self.endpoint.kind == "gemini" {
@@ -833,6 +832,14 @@ pub(crate) mod tests {
     pub(crate) fn scripted_server(
         count: usize,
         retry_header: bool,
+        response: impl FnMut(&Value) -> (u16, Value) + Send + 'static,
+    ) -> (String, thread::JoinHandle<Vec<(String, Value)>>) {
+        scripted_server_with_body_delay(count, retry_header, Duration::ZERO, response)
+    }
+    fn scripted_server_with_body_delay(
+        count: usize,
+        retry_header: bool,
+        body_delay: Duration,
         mut response: impl FnMut(&Value) -> (u16, Value) + Send + 'static,
     ) -> (String, thread::JoinHandle<Vec<(String, Value)>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -887,7 +894,10 @@ pub(crate) mod tests {
                 } else {
                     ""
                 };
-                write!(socket,"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{retry}Connection: close\r\n\r\n{body}",body.len()).unwrap();
+                write!(socket,"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{retry}Connection: close\r\n\r\n",body.len()).unwrap();
+                socket.flush().unwrap();
+                thread::sleep(body_delay);
+                write!(socket, "{body}").unwrap();
             }
             requests
         });
@@ -973,17 +983,23 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn gemini_json_retry_hint_is_observed_and_default_backoff_is_cancellable() {
-        let (base, server) = server_with_retry_header(
-            vec![
+        let mut responses = vec![
                 (
                     429,
                     json!({"error":{"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"0.1s"}]}}),
                 ),
                 (200, json!({"embedding":{"values":[0.2,0.8]}})),
-            ],
-            false,
-        );
-        let model = provider(base, "gemini");
+            ].into_iter();
+        let (base, server) =
+            scripted_server_with_body_delay(2, false, Duration::from_millis(150), move |_| {
+                responses.next().unwrap()
+            });
+        let mut model = provider(base, "gemini");
+        let durations = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = durations.clone();
+        model.request_observer = Some(Arc::new(move |report| {
+            captured.lock().unwrap().push(report.elapsed_ms)
+        }));
         let start = std::time::Instant::now();
         assert_eq!(
             model
@@ -994,6 +1010,13 @@ pub(crate) mod tests {
         );
         assert!(start.elapsed() >= Duration::from_millis(100));
         assert_eq!(server.join().unwrap().len(), 2);
+        assert!(
+            durations
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|elapsed| *elapsed >= 100)
+        );
 
         let (base, server) =
             server_with_retry_header(vec![(429, json!({"error":{"message":"busy"}}))], false);

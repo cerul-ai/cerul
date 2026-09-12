@@ -3,7 +3,7 @@ use crate::{annotations::AnnotationFile, episode::TimeRange};
 use anyhow::{Context, Result};
 use std::collections::BTreeSet;
 
-pub const RECIPE: &str = "retrieval-text/1";
+pub const RECIPE: &str = "retrieval-text/2";
 // A conservative UTF-8 byte budget leaves room for the provider's document
 // instruction. Split long records without inventing finer timestamp precision.
 pub const MAX_BYTES: usize = 6_000;

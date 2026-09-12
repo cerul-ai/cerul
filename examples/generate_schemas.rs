@@ -43,6 +43,8 @@ fn main() -> Result<()> {
             schema::<cerul::annotate::schema::Window<cerul::annotate::schema::Progress>>(),
         ),
         ("search-result", schema::<cerul::search::Report>()),
+        ("fusion-recipe", schema::<cerul::search::fusion::Recipe>()),
+        ("fusion-moment", schema::<cerul::search::fusion::Moment>()),
         (
             "semantic-scene",
             schema::<cerul::index::understanding::Scene>(),

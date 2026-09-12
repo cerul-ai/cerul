@@ -159,13 +159,13 @@ impl EmbeddingContext<'_> {
         range: TimeRange,
         input: Input,
         excerpt: String,
+        text_part: Option<usize>,
     ) -> Result<VectorRow> {
-        let key = stations::station_key(
-            self.episode,
-            self.stream,
-            "embedding-row",
-            &json!({"space":self.space,"kind":kind,"range":range,"text":excerpt,"text_recipe":if matches!(kind, Kind::Video) {None} else {Some(super::text::RECIPE)},"document_template":if matches!(kind, Kind::Video) {None} else {Some(crate::config::DOCUMENT_TEMPLATE)},"proxy_recipe":if matches!(kind, Kind::Video) { Some(media::proxy::RECIPE_VERSION) } else { None }}),
-        )?;
+        let mut identity = json!({"space":self.space,"kind":kind,"range":range,"text":excerpt,"text_recipe":if matches!(kind, Kind::Video) {None} else {Some(super::text::RECIPE)},"document_template":if matches!(kind, Kind::Video) {None} else {Some(crate::config::DOCUMENT_TEMPLATE)},"proxy_recipe":if matches!(kind, Kind::Video) { Some(media::proxy::RECIPE_VERSION) } else { None }});
+        if let Some(part) = text_part {
+            identity["text_part"] = json!(part);
+        }
+        let key = stations::station_key(self.episode, self.stream, "embedding-row", &identity)?;
         let checkpoints = Checkpoints::new(self.sidecar);
         if !self.options.recompute
             && let Some(mut row) = checkpoints.load::<VectorRow>(&key)?
@@ -183,15 +183,20 @@ impl EmbeddingContext<'_> {
         )
         .await?;
         let vector = self.provider.embed(input, false).await?;
+        let identity = (
+            &self.episode.episode_id,
+            self.stream,
+            kind,
+            range,
+            self.space,
+            &excerpt,
+        );
+        let id = match text_part {
+            Some(part) => storage::cache_key(&(identity, part))?,
+            None => storage::cache_key(&identity)?,
+        };
         let row = VectorRow {
-            id: storage::cache_key(&(
-                &self.episode.episode_id,
-                self.stream,
-                kind,
-                range,
-                self.space,
-                &excerpt,
-            ))?,
+            id,
             episode: self.episode.episode_id.clone(),
             stream: self.stream.into(),
             kind,
@@ -264,6 +269,7 @@ impl EmbeddingContext<'_> {
                 range,
                 Input::Video(fs::read(&clip)?, "video/mp4".into()),
                 String::new(),
+                None,
             )
             .await;
         let video = match first {
@@ -287,6 +293,7 @@ impl EmbeddingContext<'_> {
                         range,
                         Input::Video(fs::read(&clip)?, "video/mp4".into()),
                         String::new(),
+                        None,
                     )
                     .await
                 {
@@ -313,13 +320,17 @@ impl EmbeddingContext<'_> {
         };
         let mut rows = vec![video];
         for (kind, file) in [(Kind::Speech, self.transcript), (Kind::Screen, self.screen)] {
-            for chunk in super::text::chunks(file, range, kind == Kind::Screen)? {
+            for (part, chunk) in super::text::chunks(file, range, kind == Kind::Screen)?
+                .into_iter()
+                .enumerate()
+            {
                 rows.push(
                     self.vector(
                         kind,
                         chunk.range,
                         Input::Text(chunk.text.clone()),
                         chunk.text,
+                        Some(part),
                     )
                     .await?,
                 );
@@ -486,6 +497,92 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn repeated_text_fragments_have_distinct_stable_ids_and_resume_offline() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("pattern.mp4");
+        media::run(
+            media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=64x64:rate=2:duration=2",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let episode = super::super::discover::ordinary_episode(&source).unwrap();
+        let workspace = dir.path().join("workspace");
+        let sidecar = super::super::discover::publish_episode(&workspace, &episode, None).unwrap();
+        let (base, server) =
+            crate::providers::tests::server(vec![
+                (200, json!({"embedding":{"values":[0.5,0.5]}}));
+                6
+            ]);
+        let mut config = Config::default();
+        config.embedding.base_url = base;
+        config.embedding.dims = Some(2);
+        let provider = Provider::new(
+            config.embedding.clone(),
+            None,
+            1,
+            None,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .unwrap();
+        let transcript: AnnotationFile = serde_json::from_value(json!({"header":{
+            "$cerul":"annotation/1", "name":"transcript", "episode":episode.episode_id, "stream":"primary",
+            "model":{"kind":"fixture","name":"synthetic"}, "params":{}, "created":"now", "cerul_version":"test", "input_hash":"fixture", "record_schema":"transcript/1"
+        },"records":[{"id":"utterance", "start_us":0, "end_us":2000000, "text":"a".repeat(super::super::text::MAX_BYTES * 2)}]})).unwrap();
+        let space = config.space_id().unwrap();
+        let context = EmbeddingContext {
+            episode: &episode,
+            stream: "primary",
+            sidecar: &sidecar,
+            workspace: &workspace,
+            provider: &provider,
+            space: &space,
+            options: &Options::default(),
+            transcript: Some(&transcript),
+            screen: None,
+            fingerprint: "repeated-text-test",
+        };
+        let rows = context
+            .unit(TimeRange::new(0, 2_000_000).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(server.join().unwrap().len(), 6);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[1].text, rows[2].text);
+        assert_ne!(rows[1].id, rows[2].id);
+        let path = sidecar.join("fragments.parquet");
+        vectors::write(&path, &rows, 2).unwrap();
+        let index = super::super::lance::VectorIndex::open(&workspace, &space, 2, true)
+            .await
+            .unwrap();
+        index
+            .replace(
+                &episode.episode_id,
+                "primary",
+                &vectors::read(&path, 2).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(index.count().await.unwrap(), 3);
+        let resumed = context
+            .unit(TimeRange::new(0, 2_000_000).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(rows).unwrap(),
+            serde_json::to_value(resumed).unwrap()
+        );
+    }
     #[test]
     fn upstream_annotation_invalidation_withdraws_every_saved_space() {
         let dir = tempfile::tempdir().unwrap();
