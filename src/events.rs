@@ -5,6 +5,11 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
+    /// Per-attempt diagnostics, with unknown usage retained as null.
+    ModelRequest {
+        #[serde(flatten)]
+        report: crate::providers::usage::RequestReport,
+    },
     Progress {
         episode: String,
         station: String,

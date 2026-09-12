@@ -15,6 +15,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 pub mod probes;
+pub mod usage;
 
 tokio::task_local! {
     static CREDENTIALS: std::collections::BTreeMap<String, String>;
@@ -209,6 +210,7 @@ pub struct Provider {
     interval: Duration,
     pub cancel: CancellationToken,
     pub request_notice: Option<RequestNotice>,
+    pub request_observer: Option<usage::RequestObserver>,
 }
 /// Optional host notification immediately before an endpoint request is sent.
 pub type RequestNotice = Arc<dyn Fn(&Endpoint) + Send + Sync>;
@@ -310,6 +312,7 @@ impl Provider {
                 .unwrap_or_default(),
             cancel,
             request_notice: None,
+            request_observer: usage::current_observer(),
         })
     }
     fn key_header(&self) -> Option<&HeaderValue> {
@@ -478,6 +481,7 @@ impl Provider {
         if let Some(notice) = &self.request_notice {
             notice(&self.endpoint);
         }
+        let request_id = usage::next_request_id();
         for attempt in 0..3u32 {
             self.rate_limit().await?;
             let mut request = self
@@ -502,10 +506,18 @@ impl Provider {
                     request.bearer_auth(key)
                 };
             }
+            let mut report = usage::Attempt::new(
+                self.request_observer.clone(),
+                &self.endpoint,
+                action,
+                request_id,
+                attempt + 1,
+            );
             let response = tokio::select! {biased;_ = self.cancel.cancelled()=>return Err(failure(Failure::Cancelled,"operation cancelled")),response=request.send()=>response};
             let response = match response {
                 Ok(response) => response,
                 Err(_) => {
+                    drop(report);
                     if attempt < 2 {
                         self.delay(Duration::from_secs(1 << attempt)).await?;
                         continue;
@@ -517,6 +529,7 @@ impl Provider {
                 }
             };
             let status = response.status();
+            report.status(status.as_u16());
             if status.is_success() {
                 if response
                     .content_length()
@@ -542,10 +555,14 @@ impl Provider {
                     }
                     data.extend_from_slice(&chunk);
                 }
-                return serde_json::from_slice(&data)
-                    .map_err(|_| failure(Failure::InvalidResponse, "model returned invalid JSON"));
+                let value = serde_json::from_slice(&data).map_err(|_| {
+                    failure(Failure::InvalidResponse, "model returned invalid JSON")
+                })?;
+                report.response(&value);
+                return Ok(value);
             }
             if (status.as_u16() == 429 || status.is_server_error()) && attempt < 2 {
+                drop(report);
                 let wait = self.retry_wait(response, attempt).await?;
                 self.delay(wait).await?;
                 continue;
@@ -980,7 +997,12 @@ pub(crate) mod tests {
 
         let (base, server) =
             server_with_retry_header(vec![(429, json!({"error":{"message":"busy"}}))], false);
-        let model = provider(base, "gemini");
+        let mut model = provider(base, "gemini");
+        let reports = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = reports.clone();
+        model.request_observer = Some(Arc::new(move |report| {
+            captured.lock().unwrap().push(report)
+        }));
         let cancel = model.cancel.clone();
         let request =
             tokio::spawn(async move { model.embed(Input::Text("fixture".into()), false).await });
@@ -990,6 +1012,8 @@ pub(crate) mod tests {
             .unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!request.is_finished());
+        // The completed attempt is already reported while retry backoff is pending.
+        assert_eq!(reports.lock().unwrap().len(), 1);
         cancel.cancel();
         let error = tokio::time::timeout(Duration::from_secs(1), request)
             .await
@@ -1000,20 +1024,44 @@ pub(crate) mod tests {
             error.downcast_ref::<ProviderError>().unwrap().kind,
             Failure::Cancelled
         );
+        let reports = reports.lock().unwrap();
+        assert_eq!(reports.len(), 1); // No second request was dispatched.
+        assert_eq!(reports[0].http_status, Some(429));
+        assert!(reports[0].usage.is_none());
     }
     #[tokio::test]
     async fn gemini_inline_media_request_retries_transient_error_and_checks_dimensions() {
         let (base, server) = server(vec![
             (429, json!({})),
-            (200, json!({"embedding":{"values":[0.5,0.5]}})),
-            (200, json!({"embedding":{"values":[0.5]}})),
+            (
+                200,
+                json!({"embedding":{"values":[0.5,0.5]},"usageMetadata":{"promptTokenCount":1980,"promptTokenDetails":[{"modality":"VIDEO","tokenCount":1980}],"private":"do not expose response payloads"}}),
+            ),
+            (
+                200,
+                json!({"embedding":{"values":[0.5]},"usageMetadata":{"promptTokenCount":4}}),
+            ),
         ]);
-        let provider = provider(base, "gemini");
+        let reports = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = reports.clone();
+        let provider = usage::with_request_observer(
+            Some(Arc::new(move |report| {
+                captured.lock().unwrap().push(report)
+            })),
+            async { provider(base, "gemini") },
+        )
+        .await;
+        // The observer follows the provider outside its creation scope and into workers.
+        let worker = provider.clone();
         assert_eq!(
-            provider
-                .embed(Input::Video(vec![1, 2, 3], "video/mp4".into()), false)
-                .await
-                .unwrap(),
+            tokio::spawn(async move {
+                worker
+                    .embed(Input::Video(vec![1, 2, 3], "video/mp4".into()), false)
+                    .await
+            })
+            .await
+            .unwrap()
+            .unwrap(),
             vec![0.5, 0.5]
         );
         let error = provider
@@ -1041,6 +1089,22 @@ pub(crate) mod tests {
                 .unwrap()
                 .contains("query: query")
         );
+        let reports = reports.lock().unwrap();
+        assert_eq!(reports.len(), 3);
+        assert_eq!(reports[0].http_status, Some(429));
+        assert!(reports[0].usage.is_none());
+        assert_eq!(reports[0].request_id, reports[1].request_id);
+        assert_ne!(reports[1].request_id, reports[2].request_id);
+        assert_eq!(
+            reports.iter().map(|r| r.attempt).collect::<Vec<_>>(),
+            vec![1, 2, 1]
+        );
+        assert_eq!(reports[1].usage.as_ref().unwrap().input_tokens, Some(1980));
+        // A 200 response can incur usage even when its embedding fails validation.
+        assert_eq!(reports[2].usage.as_ref().unwrap().input_tokens, Some(4));
+        let serialized = serde_json::to_string(&*reports).unwrap();
+        assert!(!serialized.contains("do not expose"));
+        assert!(!serialized.contains("AQID"));
     }
     #[tokio::test]
     async fn structured_response_failures_preserve_reason_without_exposing_payloads() {

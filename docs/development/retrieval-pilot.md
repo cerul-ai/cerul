@@ -97,7 +97,9 @@ estimate was USD 0.20–0.30; this is not an observed bill. At the
 175 assumed processed video frames cost approximately USD 0.138 for visual
 embedding alone. That calculation assumes one processed frame per proxy second
 and excludes understanding, ASR, text embeddings, retries, and free quotas.
-Usage capture is required before validating the proposal's cost table.
+The follow-up runtime adds JSON-mode per-attempt usage events for future runs;
+it cannot recover the receipts discarded by this pilot. Actual usage must be
+captured before validating the proposal's cost table.
 
 ## Remaining acceptance work
 

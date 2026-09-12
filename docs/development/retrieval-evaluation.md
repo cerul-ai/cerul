@@ -74,6 +74,17 @@ Record call counts, actual provider usage/cost, full search P50/P95, modality
 ablations, and 100k-row flat/ANN recall and latency in the experiment report.
 Activation requires an explicit recipe version and reviewed acceptance evidence.
 
+Capture JSON-mode stderr during authorized model runs to retain `model_request`
+events. Count attempts separately from logical `request_id` values; include
+capability probes, and flag missing `usage` instead of treating it as free work.
+The adapter reads Gemini's [embedding usage](https://ai.google.dev/api/embeddings#EmbeddingUsageMetadata)
+and [generation usage](https://ai.google.dev/api/generate-content#UsageMetadata)
+fields, including their distinct input-modality field names. These are reported
+tokens, not billed dollars or a provider-side frame count. Unsupported adapters
+and interrupted/error responses can lack usage even when charges occur. Keep
+the price schedule and coverage of available usage with any cost estimate.
+Cached diagnostic exports never create synthetic usage receipts.
+
 ## Engine-only benchmark
 
 Run the synthetic index benchmark independently of model evaluation:

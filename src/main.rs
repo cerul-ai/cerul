@@ -1786,9 +1786,17 @@ async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::pr
     });
     let result = cerul::media::with_cancellation(cancel.clone(), async {
         let resolver = credentials::resolver(&cli, cancel.clone());
-        cerul::providers::with_credential_resolver(
-            resolver,
-            execute(&cli, &invocation, &sink, cancel.clone()),
+        let report_sink = sink.clone();
+        let observer = cli.json.then(|| {
+            Arc::new(move |report| report_sink.emit(Event::ModelRequest { report }))
+                as cerul::providers::usage::RequestObserver
+        });
+        cerul::providers::usage::with_request_observer(
+            observer,
+            cerul::providers::with_credential_resolver(
+                resolver,
+                execute(&cli, &invocation, &sink, cancel.clone()),
+            ),
         )
         .await
     })

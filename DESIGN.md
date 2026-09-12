@@ -53,6 +53,12 @@ In JSON mode, stdout contains exactly one final JSON object. Each stderr line is
 {"event":"log","level":"info","msg":"Indexing started"}
 ~~~
 
+JSON-mode `model_request` events capture per-attempt HTTP status, duration,
+retry identity, and provider-reported Gemini token usage, without request or
+response payloads. Missing usage remains unknown. The library exposes an
+opt-in observer; the CLI emits these diagnostics only in JSON mode. See the
+[agent event contract](docs/agent.md#events).
+
 Exit codes: 0 success; 2 arguments/configuration; 3 missing dependency or unsupported capability; 4 execution failure; 5 cancellation; 6 partial success.
 
 ### `index <path>...`

@@ -459,7 +459,7 @@ impl Progress {
             // A checkpoint moves no counter of its own: the progress event for the
             // same window already drew it. It exists so a machine reader can tell
             // durable work from work still only in memory.
-            Event::Checkpoint { .. } => {}
+            Event::Checkpoint { .. } | Event::ModelRequest { .. } => {}
             Event::Published {
                 episode,
                 annotation,

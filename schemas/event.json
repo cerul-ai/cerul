@@ -4,6 +4,77 @@
   "title": "Event",
   "oneOf": [
     {
+      "description": "Per-attempt diagnostics, with unknown usage retained as null.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "attempt": {
+          "description": "One-based attempt number. Cache hits do not produce reports.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "description": "Network/response time, excluding rate-limit waits and retry backoff.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "event": {
+          "type": "string",
+          "const": "model_request"
+        },
+        "http_status": {
+          "description": "None when no HTTP response was received, including cancellation.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "request_id": {
+          "description": "Process-local logical request ID, shared by that request's retries.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "usage": {
+          "description": "Unknown is not zero: a failed or unsupported response may still be billed.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokenUsage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "event",
+        "request_id",
+        "provider",
+        "base_url",
+        "model",
+        "action",
+        "attempt",
+        "elapsed_ms"
+      ]
+    },
+    {
       "type": "object",
       "properties": {
         "done": {
@@ -123,5 +194,97 @@
         "msg"
       ]
     }
-  ]
+  ],
+  "$defs": {
+    "Modality": {
+      "type": "string",
+      "enum": [
+        "text",
+        "image",
+        "video",
+        "audio",
+        "document"
+      ]
+    },
+    "ModalityTokens": {
+      "type": "object",
+      "properties": {
+        "modality": {
+          "$ref": "#/$defs/Modality"
+        },
+        "tokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "modality",
+        "tokens"
+      ]
+    },
+    "TokenUsage": {
+      "type": "object",
+      "properties": {
+        "cached_input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input_tokens_by_modality": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ModalityTokens"
+          }
+        },
+        "output_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "thinking_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "tool_input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total_tokens": {
+          "description": "Provider-reported total; never calculated by adding potentially overlapping fields.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      }
+    }
+  }
 }
