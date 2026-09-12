@@ -455,6 +455,31 @@ fn bounded_context(context: Vec<Value>) -> Result<Vec<Value>> {
     Ok(bounded)
 }
 
+fn scene_range(
+    episode: &Episode,
+    stream: &str,
+    window: TimeRange,
+    input: SourceRange,
+    video: bool,
+    scene: &ObservedScene,
+) -> Result<TimeRange> {
+    if video {
+        // Native video timestamps use the proxy/source clock. A secondary
+        // camera may have both an offset and drift relative to episode time.
+        TimeRange::new(
+            episode.source_to_episode(stream, input.start_us + scene.start_us)?,
+            episode.source_to_episode(stream, input.start_us + scene.end_us)?,
+        )?
+        .intersection(window)
+        .context("scene has no episode coverage")
+    } else {
+        TimeRange::from_clip(
+            window.start_us,
+            TimeRange::new(scene.start_us, scene.end_us)?,
+        )
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     episode: &Episode,
@@ -487,7 +512,7 @@ pub async fn run(
     } else {
         "frames"
     };
-    let params = json!({"recipe":RECIPE,"input_kind":input_kind,"frame_jpeg_quality":80,"window_us":WINDOW_US,"fps":1,"max_edge":480,"proxy_recipe":media::proxy::RECIPE_VERSION,"prompt_hash":storage::sha256_hex(SCENE_PROMPT),"schema_hash":storage::cache_key(&schemars::schema_for!(SceneResponse))?,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"kind":provider.endpoint.kind});
+    let params = json!({"recipe":RECIPE,"time_basis":"source-video_episode-frames/1","input_kind":input_kind,"frame_jpeg_quality":80,"window_us":WINDOW_US,"fps":1,"max_edge":480,"proxy_recipe":media::proxy::RECIPE_VERSION,"prompt_hash":storage::sha256_hex(SCENE_PROMPT),"schema_hash":storage::cache_key(&schemars::schema_for!(SceneResponse))?,"model":provider.endpoint.model,"base_url":provider.endpoint.base_url,"kind":provider.endpoint.kind});
     let key = super::stations::station_key(episode, stream, "semantic.scene", &params)?;
     let previous = AnnotationFile::read(&directory.join("semantic.scene.jsonl"))
         .ok()
@@ -593,24 +618,33 @@ pub async fn run(
                 }
                 (inputs, storage::cache_key(&hashes)?)
             };
+            let input_duration = if input_kind == "video" {
+                input_range.end_us - input_range.start_us
+            } else {
+                window.end_us - window.start_us
+            };
             let value = provider
                 .generate(
                     &format!(
                         "{SCENE_PROMPT}\nClip duration: {} microseconds.",
-                        window.end_us - window.start_us
+                        input_duration
                     ),
                     &inputs,
                     serde_json::to_value(schemars::schema_for!(SceneResponse))?,
                 )
                 .await?;
             let response: SceneResponse = serde_json::from_value(value)?;
-            check_response(&response, window.end_us - window.start_us)?;
+            check_response(&response, input_duration)?;
             let mut seen = BTreeSet::new();
             let mut output = Vec::new();
             for scene in response.scenes {
-                let range = TimeRange::from_clip(
-                    window.start_us,
-                    TimeRange::new(scene.start_us, scene.end_us)?,
+                let range = scene_range(
+                    episode,
+                    stream,
+                    *window,
+                    input_range,
+                    input_kind == "video",
+                    &scene,
                 )?;
                 let id =
                     storage::cache_key(&(&episode.episode_id, stream, "semantic.scene", range))?;
@@ -1162,6 +1196,67 @@ pub fn current_dependencies(directory: &Path, file: &AnnotationFile) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_video_scene_times_apply_secondary_camera_offset_and_drift_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.mp4");
+        media::run(
+            media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=64x64:rate=2:duration=8",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let mut episode = super::super::discover::ordinary_episode(&source).unwrap();
+        let mut secondary = episode.streams[0].clone();
+        if let Stream::Video {
+            id,
+            primary,
+            range_us,
+            ..
+        } = &mut secondary
+        {
+            *id = "secondary".into();
+            *primary = false;
+            *range_us = [5_000_000, 7_000_000];
+        }
+        episode.streams.push(secondary);
+        episode.time.mappings.insert(
+            "secondary".into(),
+            crate::episode::TimeMapping {
+                a: 2.,
+                b_us: 1_000_000,
+                status: crate::episode::MappingStatus::Calibrated,
+            },
+        );
+        episode.validate().unwrap();
+        let window = episode.video_coverage("secondary").unwrap().unwrap();
+        let input = SourceRange::new(5_000_000, 7_000_000).unwrap();
+        let scene = ObservedScene {
+            start_us: 500_000,
+            end_us: 1_000_000,
+            description: "A test pattern.".into(),
+            objects: vec![],
+            actions: vec![],
+            kind: ContentKind::Static,
+        };
+        assert_eq!(
+            scene_range(&episode, "secondary", window, input, true, &scene).unwrap(),
+            TimeRange::new(2_000_000, 3_000_000).unwrap()
+        );
+        assert_eq!(
+            scene_range(&episode, "secondary", window, input, false, &scene).unwrap(),
+            TimeRange::new(1_500_000, 2_000_000).unwrap()
+        );
+    }
     #[test]
     fn oversized_context_keeps_all_unicode_and_original_reference() {
         let content = json!({"text":"视线\\\"\n".repeat(CONTEXT_BYTES)});
