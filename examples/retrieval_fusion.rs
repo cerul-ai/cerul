@@ -67,7 +67,10 @@ fn main() -> Result<()> {
         recipe.validate()?;
     }
     let input = fs::read_to_string(&args[0])?;
-    let suite_hash = storage::cache_key(&(fusion::ALGORITHM, &suite))?;
+    // Keep the exact hash preimage: JSON float spelling and struct/map key order
+    // differ across languages. Readers verify these bytes and their parsed value.
+    let recipe_manifest = serde_json::to_string(&(fusion::ALGORITHM, &suite))?;
+    let suite_hash = storage::sha256_hex(recipe_manifest.as_bytes());
     let mut seen = BTreeSet::new();
     let mut splits: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     splits.insert(
@@ -150,9 +153,9 @@ fn main() -> Result<()> {
             );
         }
         output.push_str(&serde_json::to_string(&json!({
-            "schema":"retrieval-fusion/1", "algorithm_version":fusion::ALGORITHM, "query_id":query_id, "split":split,
+            "schema":"retrieval-fusion/2", "algorithm_version":fusion::ALGORITHM, "query_id":query_id, "split":split,
             "space_id":suite.space_id, "episodes":episodes, "input_hash":storage::sha256_hex(line.as_bytes()),
-            "recipe_hash":suite_hash, "suite":suite, "model_calls":0, "recipes":recipes
+            "recipe_hash":suite_hash, "recipe_manifest":recipe_manifest, "suite":suite, "model_calls":0, "recipes":recipes
         }))?);
         output.push('\n');
     }
@@ -171,13 +174,6 @@ fn main() -> Result<()> {
     }
     let destination = PathBuf::from(&args[2]);
     // Validate the entire run before publishing; never overwrite earlier evidence.
-    let temporary = tempfile::NamedTempFile::new_in(
-        destination
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(std::path::Path::new(".")),
-    )?;
-    fs::write(temporary.path(), output)?;
-    temporary.persist_noclobber(destination)?;
+    storage::atomic_write_new(&destination, output.as_bytes())?;
     Ok(())
 }

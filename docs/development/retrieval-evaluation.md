@@ -31,6 +31,9 @@ stored descriptions, without modifying the production search projection. Each
 track returns at most 100 candidates. Output includes source, stream, original
 interval, raw cosine or BM25, rank, space, row count, query split, and separate
 vector/lexical latency. Cosine and BM25 scores are never directly compared.
+The complete export is written and synced to a sibling temporary file before
+atomic publication without overwriting an existing destination. An interrupted
+write never leaves a partial candidate file at the requested output path.
 Record hardware, build mode, and cache conditions separately. These timings
 exclude query encoding and index construction and are not end-to-end latency.
 
@@ -133,12 +136,18 @@ python3 scripts/evaluate-retrieval.py /tmp/candidates.jsonl /tmp/labels.jsonl --
 ```
 
 Replay needs no labels and can inspect already cached diagnostic queries. Its
-output pins the exact input-line hash, the algorithm version, the full recipe
-suite and their combined hash, all
+`retrieval-fusion/2` output pins the exact input-line hash, the algorithm version,
+the full recipe suite and their combined hash, all
 admitted evidence with original scores/ranks/times, actual contributing votes,
 and fusion-only latency. It validates the entire run before publishing a new
 file and refuses to overwrite earlier output. The evaluator still requires
 reviewed, exhaustive labels and validates replay hashes and source evidence.
+`recipe_manifest` retains the exact UTF-8 JSON serialization of
+`[algorithm_version, suite]`. The evaluator recomputes its SHA-256 and separately
+checks its parsed value against the embedded algorithm and suite, avoiding
+cross-language float-formatting differences. Editing parameters or source
+groups while retaining an old hash is rejected. Regenerate older version-1
+replays from saved candidates; this makes zero model calls.
 Do not edit or reformat the candidate export after producing a replay.
 
 Diagnostic parameters cannot score tuning or held-out queries. Tuning sources

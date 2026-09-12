@@ -878,17 +878,13 @@ pub async fn run(
             sections.windows(2).all(|p| p[0].end_us <= p[1].start_us),
             "generated sections overlap"
         );
-        publish(
-            &file(
-                episode,
-                stream,
-                "semantic.section",
-                provider,
-                summary_params.clone(),
-                sections,
-            )?,
-            &directory,
-            coverage,
+        let mut sections = file(
+            episode,
+            stream,
+            "semantic.section",
+            provider,
+            summary_params.clone(),
+            sections,
         )?;
         let summary = Summary {
             title: generated.title,
@@ -905,7 +901,7 @@ pub async fn run(
             source_refs: generated.source_refs,
             dependencies,
         };
-        let file = file(
+        let mut file = file(
             episode,
             stream,
             "semantic.summary",
@@ -919,6 +915,8 @@ pub async fn run(
                 fields: fields(summary)?,
             }],
         )?;
+        prepare_overview(episode, &mut sections, &mut file, coverage)?;
+        publish(&sections, &directory, coverage)?;
         publish(&file, &directory, coverage)?;
         Ok(file)
     }
@@ -1014,6 +1012,32 @@ fn publish(file: &AnnotationFile, directory: &Path, coverage: TimeRange) -> Resu
         }
     }
     file.publish_in_range(&path, coverage, None)
+}
+
+fn overview_generation(sections: &AnnotationFile, summary: &AnnotationFile) -> Result<String> {
+    storage::cache_key(&("overview-pair/1", &sections.records, &summary.records))
+}
+
+/// Validate both products before writing either. A reader accepts the pair only
+/// when both content-bound generations match, including same-input recomputes.
+fn prepare_overview(
+    episode: &Episode,
+    sections: &mut AnnotationFile,
+    summary: &mut AnnotationFile,
+    coverage: TimeRange,
+) -> Result<()> {
+    let generation = overview_generation(sections, summary)?;
+    for file in [sections, summary] {
+        file.header.params["overview_generation"] = json!(generation);
+        file.header.input_hash = super::stations::station_key(
+            episode,
+            &file.header.stream,
+            &file.header.name,
+            &file.header.params,
+        )?;
+        file.validate_in_range(coverage, None)?;
+    }
+    Ok(())
 }
 
 fn apply_corrections(
@@ -1225,6 +1249,34 @@ pub fn current_dependencies(directory: &Path, file: &AnnotationFile) -> Result<b
         "semantic.section" | "semantic.summary"
     ) {
         return Ok(true);
+    }
+    let Some(generation) = file.header.params["overview_generation"].as_str() else {
+        // Legacy products lack a pair fence. Cached overview output can restore
+        // them locally; do not expose an unverifiable section/summary mixture.
+        return Ok(false);
+    };
+    let peer_name = if file.header.name == "semantic.summary" {
+        "semantic.section"
+    } else {
+        "semantic.summary"
+    };
+    let Ok(peer) = AnnotationFile::read(&directory.join(format!("{peer_name}.jsonl"))) else {
+        return Ok(false);
+    };
+    if peer.header.name != peer_name
+        || peer.header.episode != file.header.episode
+        || peer.header.stream != file.header.stream
+        || peer.header.params != file.header.params
+    {
+        return Ok(false);
+    }
+    let (sections, summary) = if file.header.name == "semantic.summary" {
+        (&peer, file)
+    } else {
+        (file, &peer)
+    };
+    if overview_generation(sections, summary)? != generation {
+        return Ok(false);
     }
     let Some(dependencies) = file
         .header
@@ -1650,6 +1702,45 @@ mod tests {
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].source, "semantic.scene");
         assert!(!suggestions[0].exact);
+        // Simulate a same-input recompute interrupted between the two renames.
+        // Source dependencies still match, but the overview contents changed.
+        let mut next_sections =
+            AnnotationFile::read(&sidecar.join("semantic.section.jsonl")).unwrap();
+        let mut next_summary = summary.clone();
+        next_sections.records[0]
+            .fields
+            .insert("title".into(), json!("Revised section"));
+        next_summary.records[0]
+            .fields
+            .insert("title".into(), json!("Revised overview"));
+        let coverage = episode.video_coverage("primary").unwrap().unwrap();
+        prepare_overview(&episode, &mut next_sections, &mut next_summary, coverage).unwrap();
+        assert_eq!(
+            summary.header.params["dependencies"],
+            next_summary.header.params["dependencies"]
+        );
+        assert_ne!(
+            summary.header.params["overview_generation"],
+            next_summary.header.params["overview_generation"]
+        );
+        publish(&next_sections, &sidecar, coverage).unwrap();
+        assert!(!current_dependencies(&sidecar, &summary).unwrap());
+        assert!(!current_dependencies(&sidecar, &next_sections).unwrap());
+        assert!(
+            super::super::suggestions::collect(&episode, &sidecar, "primary", None, None)
+                .is_empty()
+        );
+        publish(&next_summary, &sidecar, coverage).unwrap();
+        assert!(current_dependencies(&sidecar, &next_sections).unwrap());
+        assert!(current_dependencies(&sidecar, &next_summary).unwrap());
+        assert!(!current_dependencies(&sidecar, &summary).unwrap());
+        // Hash the actual records too; copying a generation ID onto different
+        // content must not make a mismatched pair appear current.
+        next_sections.records[0]
+            .fields
+            .insert("title".into(), json!("Unbound change"));
+        publish(&next_sections, &sidecar, coverage).unwrap();
+        assert!(!current_dependencies(&sidecar, &next_summary).unwrap());
         fs::remove_file(sidecar.join("semantic.section.jsonl")).unwrap();
         // The server is closed. Scene checkpoints and grounded overview caches
         // alone must recreate every published product without credentials.
@@ -1668,6 +1759,11 @@ mod tests {
         .unwrap();
         assert!(second.errors.is_empty(), "{:?}", second.errors);
         assert!(sidecar.join("semantic.section.jsonl").is_file());
+        assert!(current_dependencies(&sidecar, second.summary.as_ref().unwrap()).unwrap());
+        assert_eq!(
+            summary.header.params["overview_generation"],
+            second.summary.as_ref().unwrap().header.params["overview_generation"]
+        );
         assert_eq!(
             storage::cache_key(&first.scenes.records).unwrap(),
             storage::cache_key(&second.scenes.records).unwrap()

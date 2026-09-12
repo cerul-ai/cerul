@@ -166,7 +166,6 @@ async fn main() -> Result<()> {
         output.push('\n');
     }
     let destination = PathBuf::from(&args[3]);
-    ensure!(!destination.exists(), "output already exists");
-    fs::write(destination, output)?;
+    storage::atomic_write_new(&destination, output.as_bytes())?;
     Ok(())
 }

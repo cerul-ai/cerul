@@ -61,8 +61,13 @@ def replay_tracks(exports, replays):
     result = {}
     for replay in replays:
         run = by_id[replay["query_id"]]
-        if replay["schema"] != "retrieval-fusion/1" or replay["algorithm_version"] != "fusion/two-groups-half-coverage/1" or replay["model_calls"] != 0:
+        if replay["schema"] != "retrieval-fusion/2" or replay["algorithm_version"] != "fusion/two-groups-half-coverage/1" or replay["model_calls"] != 0:
             raise ValueError("invalid offline fusion replay")
+        manifest = replay.get("recipe_manifest")
+        if not isinstance(manifest, str) or hashlib.sha256(manifest.encode("utf-8")).hexdigest() != replay["recipe_hash"]:
+            raise ValueError("fusion recipe hash does not match its manifest")
+        if json.loads(manifest) != [replay["algorithm_version"], replay["suite"]]:
+            raise ValueError("fusion recipe manifest does not match the embedded suite")
         if not run.get("_input_hash") or replay["input_hash"] != run["_input_hash"]:
             raise ValueError("fusion replay does not match the exact candidate export")
         if any(replay[key] != run[key] for key in ("space_id", "split", "episodes")) or suite["space_id"] != run["space_id"]:
