@@ -633,6 +633,16 @@ pub fn text_for_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn identical_pixels_still_receive_periodic_recognition() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("static.png");
+        image::GrayImage::from_pixel(128, 128, image::Luma([128]))
+            .save(&path)
+            .unwrap();
+        let samples: Vec<_> = (0..12).map(|i| (i * 1_000_000, path.clone())).collect();
+        assert_eq!(recognition_samples(&samples).unwrap(), vec![0, 5, 10]);
+    }
     #[tokio::test]
     async fn failed_transcription_reports_window_without_publishing_success() {
         let dir = tempfile::tempdir().unwrap();
@@ -905,8 +915,21 @@ mod tests {
 
         // A cached later frame completes before the earlier frame's real OCR.
         // Publication must still use source time, not worker completion order.
+        // Codec versions can make an earlier frame cross the image-change
+        // gate, resetting the periodic floor. Use an actually selected sample.
+        let Stream::Video {
+            sha256, range_us, ..
+        } = episode.video("primary").unwrap()
+        else {
+            unreachable!()
+        };
+        let range = SourceRange::new(range_us[0], range_us[1]).unwrap();
+        let sampled = media::frames::get(&video, sha256, range, range, &sidecar).unwrap();
+        let selected = recognition_samples(&sampled).unwrap();
+        assert!(selected.len() >= 2);
+        let later_us = sampled[*selected.last().unwrap()].0;
         let reordered = dir.path().join("reordered");
-        let later_key = storage::cache_key(&(&file.header.input_hash, 5_000_000i64)).unwrap();
+        let later_key = storage::cache_key(&(&file.header.input_hash, later_us)).unwrap();
         Checkpoints::new(&reordered)
             .save(&later_key, &"Cached second frame")
             .unwrap();
@@ -923,7 +946,7 @@ mod tests {
         assert_eq!(ordered.records.len(), 2);
         assert_eq!(
             (ordered.records[0].start_us, ordered.records[0].end_us),
-            (0, 5_000_000)
+            (0, later_us)
         );
         assert_eq!(
             ordered.records[0].fields["text"],
