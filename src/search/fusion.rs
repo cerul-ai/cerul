@@ -1,5 +1,4 @@
-//! Parameterized, offline fusion candidates. Production search does not select
-//! these recipes until representative, held-out evaluation establishes one.
+//! Shared fusion for default search and reproducible offline comparisons.
 //! No endpoint, index, process arguments, or printing belongs in this module.
 use anyhow::{Result, ensure};
 use schemars::JsonSchema;
@@ -7,6 +6,43 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const ALGORITHM: &str = "fusion/two-groups-half-coverage/1";
+pub const DEFAULT_RECIPE: &str = "hybrid/affine-max-full-query-lexical/1";
+
+/// Initial fixed normalization, not a fitted relevance model. CLI thresholds
+/// gate original cosine values; BM25 has its own full-query coverage gate.
+pub fn default_recipe(threshold: Option<f32>) -> Recipe {
+    let mut channels: BTreeMap<_, _> = [
+        Track::Video,
+        Track::Speech,
+        Track::Screen,
+        Track::Description,
+    ]
+    .into_iter()
+    .map(|track| {
+        (
+            track,
+            Calibration {
+                raw_min: threshold.map(f64::from).unwrap_or(-1.),
+                scale: 0.5,
+                offset: 0.5,
+            },
+        )
+    })
+    .collect();
+    channels.insert(
+        Track::Lexical,
+        Calibration {
+            raw_min: 0.,
+            scale: 0.01,
+            offset: 0.8,
+        },
+    );
+    Recipe::CalibratedMax {
+        channels,
+        agreement_bonus: 0.05,
+        agreement_cap: 0.02,
+    }
+}
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,

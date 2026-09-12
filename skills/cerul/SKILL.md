@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
 generated-by: cerul 0.0.9
-generated-sha256: 4b7c0fb3a57172b220052a2ce6637538ca98bdf3635e4790e66ee4252b9dc7b3
+generated-sha256: a6ff32afc3689dba25208ea9b7d9d547ca84984379aa34a426cc8825c5af3c2b
 ---
 
 # Cerul
@@ -188,7 +188,7 @@ Find moments by description, exact words, or a reference image
   --in <PATH>                 Only search videos under this path
   --pad <DURATION>            Seconds of context added before and after each saved clip (default 2s)
   --filter <KEY=VALUE>        Restrict by annotation field, for example semantic.event.verb=pour
-  --threshold <THRESHOLD>     Minimum similarity score for semantic matches
+  --threshold <THRESHOLD>     Minimum raw cosine for vector matches; full-query lexical matches use a separate gate
   --count                     Count matching intervals instead of listing them
 
 ### cerul status

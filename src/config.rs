@@ -99,6 +99,19 @@ pub struct Config {
     pub vision: Endpoint,
     pub transcription: Endpoint,
     pub perception: Perception,
+    #[serde(default)]
+    pub search: Search,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Search {
+    pub hybrid: bool,
+}
+impl Default for Search {
+    fn default() -> Self {
+        Self { hybrid: true }
+    }
 }
 
 impl Default for Config {
@@ -112,6 +125,7 @@ impl Default for Config {
             enabled: None,
         };
         Self {
+            search: Search::default(),
             embedding: endpoint("gemini-embedding-2", Some(DEFAULT_EMBEDDING_DIMS)),
             vision: endpoint("gemini-3.8-flash", None),
             transcription: endpoint("gemini-3.5-transcribe", None),

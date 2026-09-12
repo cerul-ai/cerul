@@ -10,6 +10,12 @@
     "perception": {
       "$ref": "#/$defs/Perception"
     },
+    "search": {
+      "$ref": "#/$defs/Search",
+      "default": {
+        "hybrid": true
+      }
+    },
     "transcription": {
       "$ref": "#/$defs/Endpoint"
     },
@@ -78,6 +84,18 @@
       "required": [
         "base_url",
         "api_key_env"
+      ]
+    },
+    "Search": {
+      "type": "object",
+      "properties": {
+        "hybrid": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "hybrid"
       ]
     }
   }

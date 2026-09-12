@@ -132,10 +132,49 @@ The sample contains one original source, one officially labeled query, two
 self-generated suggestions, and one unreviewed negative probe. It provides
 neither the required twenty-to-thirty representative queries nor disjoint
 tuning and held-out sets. Per-track calibration, fusion competition, description
-and lexical activation, and production ANN remain gated by that evaluation.
+and lexical quality, and production ANN still need broader evaluation. The owner
+subsequently requested default hybrid activation after lightweight acceptance;
+that decision supersedes the earlier activation gate, without turning this pilot
+into a representative benchmark.
 
 Generated scene boundaries sometimes have sub-second precision despite 1 FPS
 input. Integer-microsecond storage does not establish microsecond localization
 accuracy. Boundary uncertainty and sampling-aware validation still need to be
 addressed; the original model estimates and submitted sample timestamps were
 preserved for inspection.
+
+## Default activation: lightweight acceptance (2026-09-13)
+
+The owner requested connecting hybrid retrieval to ordinary search immediately,
+using simple effect acceptance rather than waiting for a larger benchmark.
+`hybrid/affine-max-full-query-lexical/1` is now the default. The constants are
+fixed engineering choices, not fitted calibration or a claimed benchmark winner.
+`search.hybrid = false` retains the previous baseline.
+
+Replaying the four existing diagnostic exports through the production recipe
+made **zero model calls** and preserved the original embedding-space identity:
+
+| Cached query | Previous raw-max top interval | Default top interval and evidence |
+| --- | --- | --- |
+| Family eating dinner | 50–80 s | 65.16–85.04 s, visual description |
+| Blue and gold elephant figurine | 125–150 s | 141–150 s, visual description |
+| Exact Hindi spoken phrase | 50–80 s | 61.2–66.1 s, original transcript full-text match |
+| Unreviewed rocket negative probe | 0–30 s | Still returns a candidate without a threshold; empty with raw cosine threshold 0.6 and the full-query lexical gate |
+
+This is candidate-fusion replay, not a new end-to-end model run. It neither
+relabels old vectors into a new space nor supplies representative quality metrics.
+The official dinner interval is 66–86 seconds; the generated suggestions and
+negative probe retain their original diagnostic status.
+
+Reproduce the comparison from a private diagnostic export:
+
+```sh
+cargo run --locked --example retrieval_default < /tmp/candidates.jsonl > /tmp/default-comparison.jsonl
+```
+
+Focused behavioral tests additionally exercise the real default search entry:
+description-only retrieval without ASR, cached query reuse, zero-call projection
+rebuild, invalidation after scene changes, lexical identifier recovery, kind
+prefilters, and the legacy configuration switch. Original cosine and BM25 units
+remain separate in JSON evidence. These local checks do not replace release
+platform, real-inference, or large-corpus acceptance.

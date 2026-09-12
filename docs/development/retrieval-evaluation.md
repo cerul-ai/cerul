@@ -1,9 +1,11 @@
 # Retrieval evaluation
 
-The first experiment measures per-track score distributions before choosing a
-fusion formula. The shipped baseline retains raw maximum cosine across video,
-speech, and screen-text candidates. Description vectors and lexical candidates
-are exported independently; neither is silently mixed into this baseline.
+Default search now uses the fixed affine-max recipe with description and gated
+lexical candidates. The owner requested lightweight acceptance and immediate
+activation; representative held-out evaluation below is follow-up quality work.
+The reproducible raw-max baseline still excludes description and lexical tracks,
+and is available through `search.hybrid = false`. See [configuration](../configuration.md)
+for the default recipe and its raw-score threshold semantics.
 
 Use a dedicated workspace with synthetic or licensed media. Create diagnostic,
 tuning, and held-out video groups. Cover visible-only, spoken-only, identifiers,
@@ -39,7 +41,7 @@ exclude query encoding and index construction and are not end-to-end latency.
 
 The [initial live pilot](retrieval-pilot.md) records one public video and four
 diagnostic queries. It checks pipeline behavior; it does not satisfy the
-representative or held-out acceptance gates below.
+representative or held-out quality evaluation below.
 
 Review all relevant intervals for every query, then create labels:
 
@@ -66,7 +68,7 @@ threshold of 0.5, best temporal IoU, duplicate rate, incorrect evidence counts,
 no-answer false positives, relevant/irrelevant score percentiles, and latency
 P50/P95. Duplicate answers cannot earn repeated nDCG gains. The raw-max diagnostic
 groups identical intervals; it does not simulate production temporal merging.
-`--threshold` applies only to cosine channels; BM25 requires its own future gate.
+`--threshold` applies only to cosine channels; the production BM25 route requires full-query token coverage.
 No default calibration constants or retrieval-quality claims follow from the
 synthetic unit tests.
 
@@ -76,7 +78,8 @@ fusion and replay are implemented independently of corpus preparation; fit and
 select their parameters only after measurement.
 Record call counts, actual provider usage/cost, full search P50/P95, modality
 ablations, and 100k-row flat/ANN recall and latency in the experiment report.
-Activation requires an explicit recipe version and reviewed acceptance evidence.
+Future fitted recipes require explicit versions and reviewed evaluation evidence;
+the initial fixed default uses the lightweight acceptance requested by the owner.
 
 Capture JSON-mode stderr during authorized model runs to retain `model_request`
 events. Count attempts separately from logical `request_id` values; include
@@ -105,7 +108,8 @@ and a `recipes` object mapping experiment names to recipe objects. Every
 parameter episode and searched episode must have a source group. Keep clips
 from the same original video together even when their episode IDs differ.
 
-Each recipe has explicit parameters; there are no recommended numeric defaults:
+Replay recipes have explicit parameters. The production defaults are documented
+in configuration; exploratory examples below do not override them:
 
 | Method | Required fields | Score meaning |
 | --- | --- | --- |

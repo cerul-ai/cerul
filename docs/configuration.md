@@ -190,3 +190,31 @@ content identity. If the adjacent sidecar belongs to the previous content, the
 new sidecar uses `<media>.<sha256>.cerul`; the previous annotations are preserved
 on disk and are not included in the current registry. Shared LeRobot video
 shards continue to keep one registry entry and sidecar per episode.
+
+## Default hybrid search
+
+```toml
+[search]
+hybrid = true
+```
+
+Normal `cerul search "query"` combines independent video, speech, screen, and
+visual-description vectors with full-text candidates over original OCR/ASR.
+No additional query embedding or generation call is made for each track.
+Missing descriptions or speech simply leave those tracks absent. Image queries
+use vector tracks only. Sidecars remain authoritative; both additional search
+projections rebuild offline and discard stale description generations.
+
+The initial recipe `hybrid/affine-max-full-query-lexical/1` maps cosine to
+`0.5 * cosine + 0.5` and BM25 to `0.8 + 0.01 * BM25`, clamping to [0, 1].
+Only full-query token matches enter the lexical route (case-insensitive;
+CJK phrases can match within unsegmented text). Video/description and
+speech/screen/lexical each contribute their strongest vote, with a maximum 0.02
+agreement bonus. This fixed normalization is not fitted calibration or confidence.
+`--threshold` continues to gate raw cosine; it does not gate BM25 or the final
+fused score. `--text` remains case-sensitive substring search.
+
+Set `hybrid = false`, or pass `--set search.hybrid=false`, to restore three-track
+raw-max ranking. Existing vectors are reused in either mode. JSON retains raw
+vector scores in `evidence_scores`, and all admitted evidence, raw units, ranks,
+original intervals, normalized values and contributing flags in `fusion_evidence`.

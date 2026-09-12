@@ -1,8 +1,9 @@
 # Hybrid video retrieval proposal
 
-Status: implementation in progress, with measurement gates. See
-[DESIGN.md](../../DESIGN.md) for implemented behavior; this plan also contains
-proposed changes that must pass evaluation before activation.
+Status: default hybrid retrieval is connected. See [DESIGN.md](../../DESIGN.md)
+for implemented behavior. On 2026-09-13 the owner explicitly requested activation
+after lightweight acceptance, replacing the earlier held-out activation gate.
+Broader evaluation remains follow-up work, not a blocker for this change.
 
 Updated: 2026-09-13. This revision records the owner's decisions, corrects
 earlier statements that were stronger than the evidence, and fixes the
@@ -23,7 +24,7 @@ These are settled and are not re-opened by the evaluation below.
 | Proxy sampling | 1 FPS, longest edge 480 px, no audio | Requires bumping the proxy recipe version so existing video checkpoints are invalidated. |
 | Video understanding | Runs by default, resumable, with an explicit opt-out | Cost is bounded and small relative to embedding (see below). |
 | Evidence tracks | `video`, `speech`, `screen`, and a new `description` track | One compatible space; independent rows per track; never one concatenated input. |
-| Fusion | Decided by held-out evaluation, not by this document | Candidates and their order are fixed below. |
+| Fusion | Default fixed affine max with capped agreement | Version `hybrid/affine-max-full-query-lexical/1`; raw-max rollback remains available. Constants are initial engineering choices, not fitted optima. |
 | Three-surface unification | Out of scope for this proposal | Two constraints are recorded at the end so the CLI does not close doors. |
 
 ## Baseline before this implementation
@@ -163,12 +164,9 @@ evaluation variable, not a decision.
    must not rerun visual generation or re-embed unchanged video. The current
    row-level cache already provides this for existing tracks; the description
    track must follow the same pattern.
-9. **Description vectors are saved independently but enter default retrieval
-   only when an evaluated fusion recipe passes acceptance.** Calibration is
-   required only if the winning recipe uses it. Raw text-to-text scores may
-   differ from text-to-video scores; their direction and magnitude are not yet
-   measured for the configured model. Do not present that hypothesis as proof
-   that descriptions always outrank video.
+9. Description vectors enter default retrieval independently from the base tracks.
+   Full-query OCR/ASR matches also participate. Preserve original evidence and
+   score units; do not concatenate modalities or claim fitted calibration.
 10. Rebuild the vector and record indexes from sidecars without model calls.
 
 Stable logical annotation IDs identify source/stream/window/type. A separate
@@ -184,15 +182,15 @@ flowchart LR
     F[Scope and annotation predicates] --> R[Per-track candidates: video, speech, screen, description]
     L[Lexical candidates: FTS over original text] --> R
     E --> R
-    R --> C[Per-track score calibration]
+    R --> C[Fixed per-track normalization]
     C --> A[Align by source and time; one vote per track per anchor]
-    A --> S[Fusion: calibrated max + capped agreement bonus, or grouped RRF]
-    S --> G[Relevance gate]
-    G --> T[Conservative temporal merge]
+    A --> S[Default max + capped independent agreement]
+    S --> G[Raw cosine threshold and full-query lexical gate]
+    G --> T[Keep strongest overlapping moment]
     T --> O[Ranked moments with per-track raw scores]
 ```
 
-**Step zero is measurement.** Before fitting or selecting fusion parameters: index a small set,
+**For future fitted calibration, step zero is measurement.** Before fitting parameters: index a small set,
 run twenty to thirty queries, and export the score distribution of each kind
 for relevant and irrelevant hits. The hypothesis is a modality bias, where
 text-to-text similarity runs higher than text-to-video for equally relevant
@@ -203,9 +201,11 @@ it is a prerequisite for fitting the calibrated-max candidate below. The pure,
 parameterized fusion implementations and offline replay can be built before
 that measurement. This implementation-order adjustment keeps engineering work
 independent of paid corpus preparation; it does not supply calibration constants
-or waive the held-out activation gate.
+or establish optimal constants. The owner subsequently authorized an initial
+fixed recipe after lightweight acceptance; held-out comparisons remain future
+quality evaluation.
 
-Candidates, evaluated together on the same held-out set:
+Candidates for future comparison on the same held-out set:
 
 | Candidate | What it must show |
 | --- | --- |
@@ -330,11 +330,11 @@ Rust module and an offline replay tool, retaining original evidence and checking
 recipe/source provenance. The first candidate uses two conservative groups:
 video/description and speech/screen/lexical, each capped at its strongest vote.
 This also caps distinct speech and screen matches; whether that loses useful
-agreement is an evaluation question, not an established optimum. Score
-calibration fitting, description/lexical fusion into default search,
-the winning recipe, and ANN activation remain gated. Offline contract tests
-cannot establish retrieval quality. Implementing the independent infrastructure
-does not imply those gates passed. A zero-model-call, synthetic 100k-row
+agreement is an evaluation question, not an established optimum. Default search
+now uses the fixed affine-max recipe, gated full-text candidates, and description
+projection. Lightweight cached-pilot replay and behavioral checks cover activation;
+this is not a representative quality benchmark. Calibration fitting and ANN
+activation remain future work. A zero-model-call, synthetic 100k-row
 [engine benchmark](../development/retrieval-evaluation.md#engine-only-benchmark)
 records flat/IVF_FLAT latency and exact-neighbor recall; it does not satisfy the
 representative-data gate for ANN activation.
@@ -347,11 +347,11 @@ representative-data gate for ANN activation.
 4. Evaluation harness and labeled set.
 5. Per-track candidate retrieval and the full-text candidate source.
 6. Default visual understanding with independent invalidation; description
-   rows stored, not yet retrieved.
+   rows stored and retrieved by default.
 7. Implement parameterized fusion and replay independently of corpus collection.
    Fit calibration and gates on tuning data after diagnostic measurement; then
-   compare frozen candidates on held-out data. The description track enters
-   default retrieval with the accepted winner.
+   compare frozen candidates on held-out data. This can replace the initial
+   default recipe if measurements support an improvement.
 8. Measure flat-search and ANN behavior near one hundred thousand rows. Enable
    ANN only when measured latency warrants it and recall remains acceptable.
    Row count is a benchmark checkpoint, not a universal performance limit.

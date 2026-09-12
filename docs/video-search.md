@@ -189,9 +189,12 @@ or exact action boundaries.
 
 `cerul status ./demo.mp4 --json` also reports per-stream understanding status,
 including a deliberate skip, incomplete work, and observed/failed windows.
-Descriptions have separate cached vectors for evaluation; default search still
-uses video, speech, and screen text. The [evaluation guide](development/retrieval-evaluation.md)
-explains the gate before description and lexical scores enter default ranking.
+Default search uses video, speech, screen text, and separately cached description
+vectors, plus full-query matches from original OCR/ASR. Each track keeps its own
+evidence and time range. Missing tracks are skipped. Use `--json` to inspect
+`fusion_recipe` and `fusion_evidence`; scores are relevance values, not probabilities.
+Set `[search] hybrid = false` to compare the previous three-track baseline.
+See [configuration](configuration.md) for score and threshold semantics.
 
 Without ASR, visual scenes and suggestions still work. Adding or correcting ASR
 invalidates the dependent overview; compatible visual generation is reused.

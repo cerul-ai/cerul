@@ -1,5 +1,4 @@
-//! Independently published description vectors. Default retrieval is gated by
-//! an evaluated fusion recipe; these files do not replace the base index.
+//! Independently published description vectors and their rebuildable search projection.
 use super::{
     stations,
     understanding::{self, SourceRef},
@@ -50,13 +49,12 @@ fn product_path(sidecar: &Path, state: &State) -> Result<PathBuf> {
         .join(format!("{}.parquet", state.input_hash)))
 }
 /// Read a complete generation only while its original scene records still match.
-pub fn read_current(
+fn current_state(
     sidecar: &Path,
     episode: &Episode,
     stream: &str,
     space: &str,
-    dims: usize,
-) -> Result<Option<(State, Vec<VectorRow>)>> {
+) -> Result<Option<State>> {
     let path = state_path(sidecar, episode, stream, space);
     if !path.is_file() {
         return Ok(None);
@@ -75,11 +73,31 @@ pub fn read_current(
         return Ok(None);
     }
     let scenes = AnnotationFile::read(&scene_path)?;
-    if !stations::has_current_input(episode, &scenes)?
+    if scenes.header.name != "semantic.scene"
+        || scenes.header.stream != stream
+        || !stations::has_current_input(episode, &scenes)?
         || storage::cache_key(&scenes.records)? != state.scene_revision
     {
         return Ok(None);
     }
+    if !product_path(sidecar, &state)?.is_file() {
+        return Ok(None);
+    }
+    Ok(Some(state))
+}
+
+pub fn read_current(
+    sidecar: &Path,
+    episode: &Episode,
+    stream: &str,
+    space: &str,
+    dims: usize,
+) -> Result<Option<(State, Vec<VectorRow>)>> {
+    let Some(state) = current_state(sidecar, episode, stream, space)? else {
+        return Ok(None);
+    };
+    let directory = stations::stream_directory(sidecar, stream, &episode.time.reference);
+    let scenes = AnnotationFile::read(&directory.join("semantic.scene.jsonl"))?;
     let rows = vectors::read(&product_path(sidecar, &state)?, dims)?;
     ensure!(
         rows.len() == state.source_refs.len(),
@@ -117,6 +135,74 @@ pub fn read_current(
         );
     }
     Ok(Some((state, rows)))
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct Projection {
+    table_version: u64,
+    streams: BTreeMap<String, (String, String, String)>,
+}
+
+/// Maintain a separate table in the same embedding space. Unchanged searches
+/// validate small manifests/scenes but do not reread description Parquet files.
+pub async fn projection(
+    workspace: &Path,
+    space: &str,
+    dims: usize,
+) -> Result<super::lance::VectorIndex> {
+    let index = super::lance::VectorIndex::open_descriptions(workspace, space, dims).await?;
+    let path = workspace
+        .join("index")
+        .join(space)
+        .join("description-projection.json");
+    let cached: Projection = fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let intact = cached.table_version == index.version().await?;
+    let mut next = Projection::default();
+    if !intact {
+        index.clear().await?;
+    }
+    for entry in super::discover::read_registry(workspace)? {
+        let episode: Episode =
+            serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json"))?)?;
+        for stream in &episode.streams {
+            if !matches!(stream, crate::episode::Stream::Video { .. }) {
+                continue;
+            }
+            let Some(state) = current_state(&entry.sidecar, &episode, stream.id(), space)? else {
+                continue;
+            };
+            let key = storage::cache_key(&(&episode.episode_id, stream.id()))?;
+            let fingerprint = storage::cache_key(&state)?;
+            let identity = (
+                episode.episode_id.clone(),
+                stream.id().to_owned(),
+                fingerprint,
+            );
+            if !intact || cached.streams.get(&key) != Some(&identity) {
+                let (_, rows) = read_current(&entry.sidecar, &episode, stream.id(), space, dims)?
+                    .context("description generation changed during projection")?;
+                index
+                    .replace(&episode.episode_id, stream.id(), &rows)
+                    .await?;
+            }
+            next.streams.insert(key, identity);
+        }
+    }
+    if intact {
+        for (key, (episode, stream, _)) in &cached.streams {
+            if !next.streams.contains_key(key) {
+                index.replace(episode, stream, &[]).await?;
+            }
+        }
+    }
+    next.table_version = index.version().await?;
+    if !intact || next.streams != cached.streams {
+        storage::write_json(&path, &next)?;
+    }
+    Ok(index)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -374,6 +460,66 @@ mod tests {
                 .join(format!("{space}.parquet"))
                 .exists()
         );
+        // Normal search consumes description-only sidecars without ASR or an endpoint call.
+        let query = "red screen";
+        let query_path = workspace.join("cache/queries").join(format!(
+            "{}.json",
+            storage::cache_key(&(&space, query)).unwrap()
+        ));
+        storage::write_json(&query_path, &vec![1_f32, 0.]).unwrap();
+        let options = crate::search::Options {
+            query: Some(query.into()),
+            ..Default::default()
+        };
+        let report = crate::search::run(
+            &workspace,
+            &config,
+            &options,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.hits[0].matched, Some(Kind::Description));
+        assert_eq!(report.hits[0].excerpt, "A red screen.");
+        assert_eq!(
+            report.hits[0].fusion_recipe.as_deref(),
+            Some(crate::search::fusion::DEFAULT_RECIPE)
+        );
+        let projected = projection(&workspace, &space, 2).await.unwrap();
+        let version = projected.version().await.unwrap();
+        assert_eq!(
+            projection(&workspace, &space, 2)
+                .await
+                .unwrap()
+                .version()
+                .await
+                .unwrap(),
+            version
+        );
+        drop(projected);
+        fs::remove_dir_all(workspace.join("index")).unwrap();
+        let rebuilt = crate::search::run(
+            &workspace,
+            &config,
+            &options,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rebuilt.hits[0].excerpt, report.hits[0].excerpt);
+        assert!(
+            crate::search::run(
+                &workspace,
+                &config,
+                &crate::search::Options {
+                    filters: vec!["kind=video".into()],
+                    ..options
+                },
+                tokio_util::sync::CancellationToken::new()
+            )
+            .await
+            .is_err()
+        );
         scenes.records[0]
             .fields
             .insert("objects".into(), json!(["screen"]));
@@ -384,6 +530,15 @@ mod tests {
             read_current(&sidecar, &episode, "primary", &space, 2)
                 .unwrap()
                 .is_none()
+        );
+        assert_eq!(
+            projection(&workspace, &space, 2)
+                .await
+                .unwrap()
+                .count()
+                .await
+                .unwrap(),
+            0
         );
         run(
             &episode,

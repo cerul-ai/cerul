@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     episode::{Episode, Stream, TimeRange},
     index::{
-        discover, lance,
+        descriptions, discover, lance, lexical,
         records::{self, Row},
         vectors::Kind,
     },
@@ -141,6 +141,10 @@ pub struct Hit {
     pub score: Option<f32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_scores: Vec<EvidenceScore>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fusion_evidence: Vec<fusion::Evidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fusion_recipe: Option<String>,
     pub matched: Option<Kind>,
     pub excerpt: String,
     pub annotations: Vec<Row>,
@@ -206,6 +210,8 @@ fn hit(episode: &str, stream: &str, range: TimeRange, rows: &[Row]) -> Hit {
         frame_range: None,
         score: None,
         evidence_scores: Vec::new(),
+        fusion_evidence: Vec::new(),
+        fusion_recipe: None,
         matched: None,
         excerpt: String::new(),
         annotations: annotations(rows, episode, stream, range),
@@ -218,9 +224,30 @@ fn hit(episode: &str, stream: &str, range: TimeRange, rows: &[Row]) -> Hit {
 /// the small overlap between neighbouring index windows must not chain a whole
 /// video into one hit.
 fn mostly_same(previous: &Hit, next: &Hit) -> bool {
-    let overlap = previous.end_us.min(next.end_us) - next.start_us;
+    let overlap = previous.end_us.min(next.end_us) - previous.start_us.max(next.start_us);
     let shortest = (previous.end_us - previous.start_us).min(next.end_us - next.start_us);
     shortest <= 0 || overlap * 2 >= shortest
+}
+/// Keep the best localized interval instead of widening it to a weaker window.
+fn ranked_dedup(mut hits: Vec<Hit>) -> Vec<Hit> {
+    hits.sort_by(|a, b| {
+        b.score
+            .unwrap_or_default()
+            .total_cmp(&a.score.unwrap_or_default())
+            .then_with(|| {
+                (&a.episode, &a.stream, a.start_us, a.end_us)
+                    .cmp(&(&b.episode, &b.stream, b.start_us, b.end_us))
+            })
+    });
+    let mut selected: Vec<Hit> = Vec::new();
+    for found in hits {
+        if !selected.iter().any(|old| {
+            old.episode == found.episode && old.stream == found.stream && mostly_same(old, &found)
+        }) {
+            selected.push(found);
+        }
+    }
+    selected
 }
 /// One still frame at the start of a hit, cached under the workspace so repeated
 /// searches reuse it and `clean --cache` removes it.
@@ -354,13 +381,30 @@ async fn run_inner(
         episode.validate()?;
         episodes.insert(episode.episode_id.clone(), episode);
     }
+    let hybrid = vector && config.search.hybrid;
+    let description_index = if hybrid {
+        Some(
+            descriptions::projection(
+                workspace,
+                &space,
+                config
+                    .embedding
+                    .dims
+                    .context("embedding dimensions missing")?,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     let vector_index = if vector {
         let dims = config
             .embedding
             .dims
             .context("embedding dimensions missing")?;
-        let kinds: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen]
+        let kinds: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen, Kind::Description]
             .into_iter()
+            .filter(|kind| hybrid || *kind != Kind::Description)
             .filter(|kind| kind_allowed(&filters, *kind))
             .collect();
         let mut selected = Vec::new();
@@ -405,7 +449,11 @@ async fn run_inner(
                 .collect::<Vec<_>>()
                 .join(",")
         );
-        if index.count_matching(&predicate).await? == 0 {
+        let description_count = match &description_index {
+            Some(index) => index.count_matching(&predicate).await?,
+            None => 0,
+        };
+        if index.count_matching(&predicate).await? + description_count == 0 {
             return Err(unavailable(
                 "no usable saved vectors in the selected scope match the configured embedding space; run index with this model",
             ));
@@ -461,8 +509,9 @@ async fn run_inner(
         let index = vector_index
             .as_ref()
             .expect("vector search opened its projection");
-        let allowed: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen]
+        let allowed: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen, Kind::Description]
             .into_iter()
+            .filter(|kind| hybrid || *kind != Kind::Description)
             .filter(|kind| kind_allowed(&filters, *kind))
             .collect();
         if !allowed.is_empty() {
@@ -481,7 +530,11 @@ async fn run_inner(
                     .collect::<Vec<_>>()
                     .join(",")
             );
-            if index.count().await? > 0 {
+            let description_count = match &description_index {
+                Some(index) => index.count().await?,
+                None => 0,
+            };
+            if index.count().await? + description_count > 0 {
                 let mut provider =
                     Provider::from_env(config.embedding.clone(), 1, None, cancel.clone())?;
                 provider.request_notice = options.request_notice.clone();
@@ -524,26 +577,85 @@ async fn run_inner(
                         vector
                     }
                 };
-                let total = index.count().await?;
+                let lexical_index = if hybrid
+                    && options
+                        .query
+                        .as_deref()
+                        .is_some_and(|query| lexical::covers_query(query, query))
+                    && allowed
+                        .iter()
+                        .any(|kind| matches!(kind, Kind::Speech | Kind::Screen))
+                {
+                    Some(lexical::LexicalIndex::prepare(workspace, &files).await?)
+                } else {
+                    None
+                };
+                let total = index.count().await?
+                    + description_count
+                    + if lexical_index.is_some() {
+                        rows.len()
+                    } else {
+                        0
+                    };
                 let mut budget = options.limit.saturating_mul(3).max(32).min(total);
                 loop {
                     cancelled(&cancel)?;
-                    let tracks = index
+                    let mut tracks = index
                         .search_tracks(&query, &predicate, &allowed, budget)
                         .await?;
-                    let exhausted =
-                        tracks.iter().all(|rows| rows.len() < budget) || budget == total;
-                    let below_threshold = options.threshold.is_some_and(|threshold| {
-                        tracks
-                            .iter()
-                            .all(|rows| rows.last().is_none_or(|(_, score)| *score < threshold))
-                    });
+                    if let Some(index) = &description_index
+                        && allowed.contains(&Kind::Description)
+                    {
+                        tracks.extend(
+                            index
+                                .search_tracks(&query, &predicate, &[Kind::Description], budget)
+                                .await?,
+                        );
+                    }
+                    let lexical_rows = match &lexical_index {
+                        Some(index) => {
+                            index
+                                .search(options.query.as_deref().unwrap(), Some(&predicate), budget)
+                                .await?
+                        }
+                        None => Vec::new(),
+                    };
+                    let exhausted = (tracks.iter().all(|rows| rows.len() < budget)
+                        && lexical_rows.len() < budget)
+                        || budget == total;
+                    let below_threshold = !hybrid
+                        && options.threshold.is_some_and(|threshold| {
+                            tracks
+                                .iter()
+                                .all(|rows| rows.last().is_none_or(|(_, score)| *score < threshold))
+                        });
                     let candidates = tracks
                         .into_iter()
                         .flat_map(|track| track.into_iter().enumerate());
                     hits.clear();
                     let mut unique = BTreeSet::new();
+                    let mut fusion_candidates = Vec::new();
                     for (rank, (row, score)) in candidates {
+                        if hybrid {
+                            fusion_candidates.push(fusion::Candidate {
+                                id: row.id,
+                                episode: row.episode,
+                                stream: row.stream,
+                                start_us: row.start_us,
+                                end_us: row.end_us,
+                                track: match row.kind {
+                                    Kind::Video => fusion::Track::Video,
+                                    Kind::Speech => fusion::Track::Speech,
+                                    Kind::Screen => fusion::Track::Screen,
+                                    Kind::Description => fusion::Track::Description,
+                                },
+                                raw_score: f64::from(score),
+                                rank: rank + 1,
+                                text: Some(row.text),
+                                annotation: None,
+                            });
+                            continue;
+                        }
                         if options.threshold.is_some_and(|threshold| score < threshold) {
                             continue;
                         }
@@ -574,7 +686,87 @@ async fn run_inner(
                             }
                         }
                     }
-                    if unique.len() >= options.limit || exhausted || below_threshold {
+                    if hybrid {
+                        for (rank, (row, score)) in lexical_rows.into_iter().enumerate() {
+                            let text = row
+                                .record
+                                .fields
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            if !lexical::covers_query(options.query.as_deref().unwrap(), text) {
+                                continue;
+                            }
+                            fusion_candidates.push(fusion::Candidate {
+                                id: row.record.id,
+                                episode: row.episode,
+                                stream: row.stream,
+                                start_us: row.record.start_us,
+                                end_us: row.record.end_us,
+                                track: fusion::Track::Lexical,
+                                raw_score: f64::from(score),
+                                rank: rank + 1,
+                                text: Some(text.into()),
+                                annotation: Some(row.annotation),
+                            });
+                        }
+                        for moment in fusion::fuse(
+                            &fusion_candidates,
+                            &fusion::default_recipe(options.threshold),
+                        )? {
+                            for scope in &scopes[&(moment.episode.clone(), moment.stream.clone())] {
+                                if let Some(range) = scope
+                                    .range
+                                    .intersection(TimeRange::new(moment.start_us, moment.end_us)?)
+                                {
+                                    let mut found =
+                                        hit(&moment.episode, &moment.stream, range, &rows);
+                                    found.score = Some(moment.score as f32);
+                                    for evidence in &moment.evidence {
+                                        let candidate = &evidence.candidate;
+                                        let kind = match candidate.track {
+                                            fusion::Track::Video => Kind::Video,
+                                            fusion::Track::Speech => Kind::Speech,
+                                            fusion::Track::Screen => Kind::Screen,
+                                            fusion::Track::Description => Kind::Description,
+                                            fusion::Track::Lexical => {
+                                                if candidate.annotation.as_deref()
+                                                    == Some("transcript")
+                                                {
+                                                    Kind::Speech
+                                                } else {
+                                                    Kind::Screen
+                                                }
+                                            }
+                                        };
+                                        if found.matched.is_none() && evidence.contributes {
+                                            found.matched = Some(kind);
+                                            found.excerpt =
+                                                candidate.text.clone().unwrap_or_default();
+                                        }
+                                        if candidate.track != fusion::Track::Lexical {
+                                            found.evidence_scores.push(EvidenceScore {
+                                                vector_id: candidate.id.clone(),
+                                                kind,
+                                                start_us: candidate.start_us,
+                                                end_us: candidate.end_us,
+                                                raw_score: candidate.raw_score as f32,
+                                                rank: candidate.rank,
+                                            });
+                                        }
+                                    }
+                                    found.fusion_evidence = moment.evidence.clone();
+                                    found.fusion_recipe = Some(fusion::DEFAULT_RECIPE.into());
+                                    hits.push(found);
+                                }
+                            }
+                        }
+                        hits = ranked_dedup(hits);
+                    }
+                    if (if hybrid { hits.len() } else { unique.len() }) >= options.limit
+                        || exhausted
+                        || below_threshold
+                    {
                         break;
                     }
                     budget = budget.saturating_mul(2).min(total);
@@ -646,7 +838,7 @@ async fn run_inner(
             dry_run: false,
         });
     }
-    if vector {
+    if vector && !hybrid {
         let mut intervals: BTreeMap<(String, String, i64, i64), Hit> = BTreeMap::new();
         for mut found in hits {
             let key = (
@@ -674,7 +866,11 @@ async fn run_inner(
         // Choose the top unique intervals before joining their adjacent windows.
         hits.truncate(options.limit);
     }
-    let mut hits = merge_hits(hits, vector);
+    let mut hits = if hybrid {
+        ranked_dedup(hits)
+    } else {
+        merge_hits(hits, vector)
+    };
     hits.truncate(options.limit);
     for found in &mut hits {
         if let Some(Stream::Video { path, .. }) = episodes
@@ -875,6 +1071,63 @@ mod tests {
         assert_eq!(report.hits[0].start_us, 26_000_000);
         assert_eq!(report.hits[0].end_us, 27_000_000);
         assert_eq!(report.hits[0].excerpt, "unit 13");
+        // Full-query lexical evidence can recover an identifier despite a cosine gate.
+        let lexical_query = "ECONNREFUSED";
+        storage::write_json(
+            &workspace.join("cache/queries").join(format!(
+                "{}.json",
+                storage::cache_key(&(&space, lexical_query)).unwrap()
+            )),
+            &vec![1_f32, 0.],
+        )
+        .unwrap();
+        let lexical_options = Options {
+            query: Some(lexical_query.into()),
+            threshold: Some(1.1),
+            limit: 1,
+            ..Default::default()
+        };
+        let exact = run(
+            &workspace,
+            &config,
+            &lexical_options,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(exact.hits[0].excerpt, lexical_query);
+        assert_eq!(exact.hits[0].start_us, 26_000_000);
+        assert!(exact.hits[0].evidence_scores.is_empty());
+        assert_eq!(
+            exact.hits[0].fusion_evidence[0].candidate.track,
+            fusion::Track::Lexical
+        );
+        let scoped = run(
+            &workspace,
+            &config,
+            &Options {
+                filters: vec!["kind=video".into()],
+                ..lexical_options.clone()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(scoped.hits.is_empty());
+        let mut legacy = config.clone();
+        legacy.search.hybrid = false;
+        assert!(
+            run(
+                &workspace,
+                &legacy,
+                &lexical_options,
+                CancellationToken::new()
+            )
+            .await
+            .unwrap()
+            .hits
+            .is_empty()
+        );
         // A changed query must receive its own embedding, not reuse the old one.
         let rewritten = run(
             &workspace,

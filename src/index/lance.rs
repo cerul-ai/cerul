@@ -33,6 +33,22 @@ pub fn literal(value: &str) -> String {
 
 impl VectorIndex {
     pub async fn open(workspace: &Path, space: &str, dims: usize, create: bool) -> Result<Self> {
+        Self::open_table(workspace, space, dims, create, "chunks").await
+    }
+    pub(super) async fn open_descriptions(
+        workspace: &Path,
+        space: &str,
+        dims: usize,
+    ) -> Result<Self> {
+        Self::open_table(workspace, space, dims, true, "descriptions").await
+    }
+    async fn open_table(
+        workspace: &Path,
+        space: &str,
+        dims: usize,
+        create: bool,
+        name: &str,
+    ) -> Result<Self> {
         ensure!(
             space.len() == 64 && space.bytes().all(|b| b.is_ascii_hexdigit()),
             "invalid embedding space ID"
@@ -55,13 +71,13 @@ impl VectorIndex {
             .execute()
             .await?
             .iter()
-            .any(|name| name == "chunks")
+            .any(|existing| existing == name)
         {
-            connection.open_table("chunks").execute().await?
+            connection.open_table(name).execute().await?
         } else {
             ensure!(create, "embedding index is missing; rebuild it with index");
             connection
-                .create_empty_table("chunks", vectors::batch(&[], dims)?.schema())
+                .create_empty_table(name, vectors::batch(&[], dims)?.schema())
                 .execute()
                 .await?
         };
@@ -110,6 +126,13 @@ impl VectorIndex {
     }
     pub async fn count(&self) -> Result<usize> {
         Ok(self.table.count_rows(None).await?)
+    }
+    pub(super) async fn version(&self) -> Result<u64> {
+        Ok(self.table.version().await?)
+    }
+    pub(super) async fn clear(&self) -> Result<()> {
+        self.table.delete("true").await?;
+        Ok(())
     }
     pub async fn count_matching(&self, predicate: &str) -> Result<usize> {
         Ok(self.table.count_rows(Some(predicate.into())).await?)

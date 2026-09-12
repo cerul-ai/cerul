@@ -286,7 +286,7 @@ struct SearchArgs {
     /// Restrict by annotation field, for example semantic.event.verb=pour.
     #[arg(long = "filter", value_name = "KEY=VALUE", help_heading = ADVANCED)]
     filters: Vec<String>,
-    /// Minimum similarity score for semantic matches.
+    /// Minimum raw cosine for vector matches; full-query lexical matches use a separate gate.
     #[arg(long, help_heading = ADVANCED)]
     threshold: Option<f32>,
     /// Count matching intervals instead of listing them.

@@ -20,6 +20,23 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::Path, sync::Arc};
 
 pub const RECIPE: &str = "lexical/simple-cjk-bigrams-no-stem-no-stopwords/1";
+
+/// FTS supplies candidates, but a shared/common word alone cannot earn a
+/// default lexical vote. CJK phrases may occur within an unsegmented sentence.
+pub fn covers_query(query: &str, text: &str) -> bool {
+    let query = query.to_lowercase();
+    let text = text.to_lowercase();
+    let tokens: Vec<_> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let words: std::collections::BTreeSet<_> = text.split(|c: char| !c.is_alphanumeric()).collect();
+    !tokens.is_empty() && tokens.iter().all(|token| {
+        if token.chars().any(|c| matches!(c as u32, 0x3400..=0x9fff | 0x20000..=0x3134f | 0x3040..=0x30ff | 0xac00..=0xd7af)) {
+            text.contains(token)
+        } else { words.contains(token) }
+    })
+}
 #[derive(Serialize, Deserialize)]
 struct State {
     fingerprint: String,
@@ -238,6 +255,17 @@ mod tests {
             "header":{"$cerul":"annotation/1","name":annotation,"episode":episode,"stream":"primary","model":{"kind":"fixture","name":"local"},"params":{},"created":"now","cerul_version":"test","input_hash":"source","record_schema":format!("{annotation}/1")},
             "records":[{"id":"same-local-id","start_us":1_000_000,"end_us":2_000_000,"text":text}]
         })).unwrap()
+    }
+    #[test]
+    fn full_query_gate_rejects_common_word_only_and_preserves_identifiers() {
+        assert!(!covers_query(
+            "A rocket launches from a snowy mountain",
+            "a family"
+        ));
+        assert!(!covers_query("car", "scar"));
+        assert!(covers_query("ERROR_A", "reported error_a today"));
+        assert!(covers_query("红色杯子", "桌上有红色杯子"));
+        assert!(!covers_query("...", "anything"));
     }
     #[tokio::test]
     async fn lexical_cache_is_incremental_scoped_and_preserves_original_text() {

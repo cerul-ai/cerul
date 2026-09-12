@@ -43,12 +43,11 @@ interactions, and state changes, including embodied and egocentric recordings.
 
 ![Proposed Cerul architecture: multimodal indexing and search, with an independent egocentric annotation pipeline](docs/assets/cerul-architecture.png)
 
-*Proposed architecture with AI-generated illustrative frames. Per-track top-k
-retrieval is implemented; rank fusion remains subject to evaluation. Current
-search retains the highest score per matching interval before temporal merging;
-annotation filters run before retrieval, and overlapping annotations accompany
-results. Dataset writeback currently supports opt-in LeRobot subtasks. See
-[DESIGN.md](DESIGN.md) for the implementation baseline.*
+*Architecture with AI-generated illustrative frames. Default search combines
+independent video, speech, screen-text, and description candidates with gated
+full-text matches using max fusion and capped agreement. Original evidence and
+timestamps remain inspectable. Dataset writeback supports opt-in LeRobot
+subtasks. See [DESIGN.md](DESIGN.md) for implemented behavior.*
 
 ## Getting started
 

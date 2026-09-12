@@ -2216,6 +2216,8 @@ mod tests {
     fn hit() -> Hit {
         Hit {
             evidence_scores: Vec::new(),
+            fusion_evidence: Vec::new(),
+            fusion_recipe: None,
             episode: "b52ef6450d471af5/0".into(),
             stream: "primary".into(),
             start_us: 12_000_000,

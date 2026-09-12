@@ -44,9 +44,11 @@ An available Gemini key enables speech unless explicitly disabled. See
 
 ![Cerul indexing, search, and embodied annotation architecture](docs/assets/cerul-architecture.png)
 
-*AI-generated illustrative frames. Per-track retrieval is implemented; rank
-fusion remains gated on evaluation. Default ranking uses maximum cosine per
-interval. Dataset writeback supports opt-in LeRobot subtasks.*
+*Architecture with AI-generated illustrative frames. Default search combines
+independent video, speech, screen-text, and description candidates with gated
+full-text matches using max fusion and capped agreement. Original evidence and
+timestamps remain inspectable. Dataset writeback supports opt-in LeRobot
+subtasks. See [DESIGN.md](DESIGN.md) for implemented behavior.*
 
 Cerul 是一個搜尋影片、匯出片段的命令列工具。安裝包已包含所需的媒體工具和 OCR 模型。
 
