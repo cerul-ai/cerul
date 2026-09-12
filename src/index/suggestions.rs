@@ -130,6 +130,9 @@ pub(super) fn collect(
                 input_hash: source.header.input_hash.clone(),
             });
         }
+        // A current overview already chose zero to three useful examples.
+        // Extractive fallbacks are for missing overviews, not padding the list.
+        return suggestions;
     }
     for file in [semantic.as_ref(), transcript, screen]
         .into_iter()

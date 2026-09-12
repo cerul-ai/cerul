@@ -6,8 +6,10 @@ proposed changes that must pass evaluation before activation.
 
 Updated: 2026-09-12. This revision records the owner's decisions, corrects
 earlier statements that were stronger than the evidence, and fixes the
-implementation order. No live model benchmark or paid request was performed.
-Prices are public list prices, not measured bills.
+implementation order. A subsequent [single-video pilot](../development/retrieval-pilot.md)
+verified the live pipeline and exposed ranking/localization limitations; the
+representative retrieval benchmark remains pending. Prices are public list
+prices, not measured bills.
 
 ## Decisions
 

@@ -34,6 +34,10 @@ vector/lexical latency. Cosine and BM25 scores are never directly compared.
 Record hardware, build mode, and cache conditions separately. These timings
 exclude query encoding and index construction and are not end-to-end latency.
 
+The [initial live pilot](retrieval-pilot.md) records one public video and four
+diagnostic queries. It checks pipeline behavior; it does not satisfy the
+representative or held-out acceptance gates below.
+
 Review all relevant intervals for every query, then create labels:
 
 ```json
