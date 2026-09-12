@@ -321,7 +321,10 @@ No paid model benchmark or owner-reviewed held-out labels have been produced in
 this change. Score calibration, description/lexical fusion into default search,
 the winning recipe, and ANN activation remain gated. Offline contract tests
 cannot establish retrieval quality. Implementing the independent infrastructure
-does not imply those gates passed.
+does not imply those gates passed. A zero-model-call, synthetic 100k-row
+[engine benchmark](../development/retrieval-evaluation.md#engine-only-benchmark)
+records flat/IVF_FLAT latency and exact-neighbor recall; it does not satisfy the
+representative-data gate for ANN activation.
 
 1. Switch the default space to 3072 dimensions and unlock the fixed value.
 2. Step-zero measurement of per-kind score distributions.

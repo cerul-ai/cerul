@@ -32,21 +32,33 @@ def evaluate(exports, labels, k=5, threshold=None):
         raise ValueError("evaluate one embedding space at a time")
     split_episodes = defaultdict(set)
     for label in labels:
-        if not label.get("reviewed") or not label.get("exhaustive"):
+        if label.get("reviewed") is not True or label.get("exhaustive") is not True:
             raise ValueError("labels must be reviewed and exhaustive")
+        if label["split"] not in ("diagnostic", "tune", "holdout"):
+            raise ValueError("invalid split")
+        scope = label.get("scope")
+        if not isinstance(scope, list) or not scope or not all(isinstance(x, str) and x for x in scope):
+            raise ValueError("every label needs an explicit corpus scope, including no-answer queries")
+        split_episodes[label["split"]].update(scope)
         for answer in label["answers"]:
+            if answer["episode"] not in scope:
+                raise ValueError("answer outside labeled scope")
             if answer["start_us"] < 0 or answer["end_us"] <= answer["start_us"] or not answer["kinds"]:
                 raise ValueError("invalid answer interval or evidence kinds")
-            split_episodes[label["split"]].add(answer["episode"])
-    if split_episodes["tune"] & split_episodes["holdout"]:
-        raise ValueError("tuning and holdout answers share videos")
+    for left, right in (("diagnostic", "tune"), ("diagnostic", "holdout"), ("tune", "holdout")):
+        if split_episodes[left] & split_episodes[right]:
+            raise ValueError("diagnostic, tuning, and holdout scopes must not share videos")
     metrics = defaultdict(lambda: defaultdict(list))
     distributions = defaultdict(lambda: defaultdict(list))
     for run in exports:
         label = by_id[run["query_id"]]
+        if set(run.get("episodes", [])) != set(label["scope"]):
+            raise ValueError("retrieved and labeled corpus scopes differ")
         if label["split"] != run["split"]:
             raise ValueError("split mismatch")
         tracks = dict(run["tracks"])
+        if any(row["episode"] not in label["scope"] for rows in tracks.values() for row in rows):
+            raise ValueError("retrieval escaped the labeled corpus")
         # Uncalibrated max is a diagnostic baseline over unique intervals.
         # No description or BM25 score is mixed into this cosine baseline.
         unique = {}

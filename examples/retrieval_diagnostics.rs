@@ -19,6 +19,8 @@ struct Query {
     id: String,
     query: String,
     split: String,
+    #[serde(default)]
+    episodes: Option<Vec<String>>,
 }
 
 #[tokio::main]
@@ -72,10 +74,12 @@ async fn main() -> Result<()> {
     // Isolate experimental description and lexical projections from production.
     let temporary = tempfile::tempdir()?;
     let index = lance::VectorIndex::open(temporary.path(), &space, dims, true).await?;
+    let mut available_episodes = std::collections::BTreeSet::new();
     for entry in discover::read_registry(&workspace)? {
         let episode: Episode =
             serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json"))?)?;
         episode.validate()?;
+        available_episodes.insert(episode.episode_id.clone());
         let base = entry
             .sidecar
             .join("embeddings")
@@ -120,8 +124,25 @@ async fn main() -> Result<()> {
     let kinds = [Kind::Video, Kind::Speech, Kind::Screen, Kind::Description];
     let mut output = String::new();
     for (query, vector) in queries.iter().zip(&query_vectors) {
+        let episodes = query
+            .episodes
+            .clone()
+            .unwrap_or_else(|| available_episodes.iter().cloned().collect());
+        ensure!(
+            !episodes.is_empty() && episodes.iter().all(|id| available_episodes.contains(id)),
+            "query {} has an empty or unknown corpus scope",
+            query.id
+        );
+        let predicate = format!(
+            "episode IN ({})",
+            episodes
+                .iter()
+                .map(|id| lance::literal(id))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
         let started = Instant::now();
-        let lists = index.search_tracks(vector, "true", &kinds, 100).await?;
+        let lists = index.search_tracks(vector, &predicate, &kinds, 100).await?;
         let vector_ms = started.elapsed().as_secs_f64() * 1000.;
         let mut tracks = BTreeMap::new();
         for (kind, rows) in kinds.iter().zip(lists) {
@@ -131,7 +152,7 @@ async fn main() -> Result<()> {
             })).collect::<Vec<_>>());
         }
         let started = Instant::now();
-        let lexical_rows = lexical.search(&query.query, None, 100).await?;
+        let lexical_rows = lexical.search(&query.query, Some(&predicate), 100).await?;
         let lexical_ms = started.elapsed().as_secs_f64() * 1000.;
         tracks.insert("lexical", lexical_rows.into_iter().enumerate().map(|(rank, (row, score))| json!({
             "id":row.record.id,"episode":row.episode,"stream":row.stream,"start_us":row.record.start_us,"end_us":row.record.end_us,
@@ -139,7 +160,7 @@ async fn main() -> Result<()> {
         })).collect());
         output.push_str(&serde_json::to_string(&json!({
             "schema":"retrieval-diagnostics/1","query_id":query.id,"query":query.query,"split":query.split,
-            "space_id":space,"dims":dims,"vector_rows":count,"candidate_limit":100,
+            "space_id":space,"dims":dims,"vector_rows":count,"candidate_limit":100,"episodes":episodes,
             "vector_ms":vector_ms,"lexical_ms":lexical_ms,"model_calls":0,"tracks":tracks
         }))?);
         output.push('\n');
