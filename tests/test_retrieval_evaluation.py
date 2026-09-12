@@ -88,7 +88,9 @@ class EvaluationTest(unittest.TestCase):
         moment = dict(episode="clip", stream="primary", start_us=0, end_us=10, score=.03, evidence=evidence)
         suite = dict(schema="retrieval-fusion-recipes/1", space_id="space", parameter_split="tune",
                      parameter_episodes=["tuning"], source_groups={"clip": "source", "tuning": "tuning-source"},
-                     recipes={"rrf": {"method": "grouped_rrf"}})
+                     recipes={"rrf": {"method": "grouped_rrf", "rank_constant": 60.0,
+                                      "channels": {track: {"raw_min": 0.0, "weight": 1.0}
+                                                   for track in ("video", "speech")}}})
         replay = dict(schema="retrieval-fusion/2", algorithm_version="fusion/two-groups-half-coverage/1", query_id="q", split="holdout", space_id="space", episodes=["clip"],
                       model_calls=0, input_hash="exact-export-hash", suite=suite,
                       recipes={"rrf": dict(fusion_ms=.1, moments=[moment])})
@@ -100,11 +102,13 @@ class EvaluationTest(unittest.TestCase):
         replay["recipe_hash"] = hashlib.sha256(replay["recipe_manifest"].encode("utf-8")).hexdigest()
 
     def test_replays_verify_manifest_bytes_and_embedded_parameters(self):
-        for mutation in ("weight", "source", "hash", "manifest", "missing", "legacy"):
+        for mutation in ("weight", "scalar_type", "source", "hash", "manifest", "missing", "legacy"):
             with self.subTest(mutation=mutation):
                 export, label, replay = self.fusion_fixture()
                 if mutation == "weight":
                     replay["suite"]["recipes"]["rrf"]["rank_constant"] = 99
+                elif mutation == "scalar_type":
+                    replay["suite"]["recipes"]["rrf"]["channels"]["video"]["weight"] = True
                 elif mutation == "source":
                     replay["suite"]["source_groups"]["clip"] = "different-source"
                 elif mutation == "hash":

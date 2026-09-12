@@ -66,7 +66,11 @@ def replay_tracks(exports, replays):
         manifest = replay.get("recipe_manifest")
         if not isinstance(manifest, str) or hashlib.sha256(manifest.encode("utf-8")).hexdigest() != replay["recipe_hash"]:
             raise ValueError("fusion recipe hash does not match its manifest")
-        if json.loads(manifest) != [replay["algorithm_version"], replay["suite"]]:
+        # Python value equality treats True == 1. Compare normalized JSON so a
+        # boolean cannot silently replace a numeric recipe parameter.
+        actual = json.dumps(json.loads(manifest), sort_keys=True, allow_nan=False)
+        expected = json.dumps([replay["algorithm_version"], replay["suite"]], sort_keys=True, allow_nan=False)
+        if actual != expected:
             raise ValueError("fusion recipe manifest does not match the embedded suite")
         if not run.get("_input_hash") or replay["input_hash"] != run["_input_hash"]:
             raise ValueError("fusion replay does not match the exact candidate export")
