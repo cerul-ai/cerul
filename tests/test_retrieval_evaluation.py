@@ -83,9 +83,9 @@ class EvaluationTest(unittest.TestCase):
         for track, rows in export["tracks"].items():
             for row in rows:
                 row.update(id=track, rank=1, text=None, annotation=None)
-        evidence = [dict(row, track=track, value=row["raw_score"], contributes=True)
+        evidence = [dict(row, track=track, value=1 / 61, contributes=True)
                     for track, rows in export["tracks"].items() for row in rows]
-        moment = dict(episode="clip", stream="primary", start_us=0, end_us=10, score=.03, evidence=evidence)
+        moment = dict(episode="clip", stream="primary", start_us=0, end_us=10, score=2 / 61, evidence=evidence)
         suite = dict(schema="retrieval-fusion-recipes/1", space_id="space", parameter_split="tune",
                      parameter_episodes=["tuning"], source_groups={"clip": "source", "tuning": "tuning-source"},
                      recipes={"rrf": {"method": "grouped_rrf", "rank_constant": 60.0,
@@ -124,7 +124,11 @@ class EvaluationTest(unittest.TestCase):
 
     def test_manifest_hash_preserves_original_json_spelling(self):
         export, label, replay = self.fusion_fixture()
-        replay["suite"]["recipes"]["rrf"]["weight"] = 1e-7
+        replay["suite"]["recipes"]["rrf"]["rank_constant"] = 1e-7
+        moment = replay["recipes"]["rrf"]["moments"][0]
+        for e in moment["evidence"]:
+            e["value"] = 1 / (1 + 1e-7)
+        moment["score"] = 2 / (1 + 1e-7)
         replay["suite"]["source_groups"]["clip"] = "视频"
         self.freeze_recipe(replay)
         # Rust and Python may spell this same float differently. Hash the
@@ -142,11 +146,40 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(tracks["fusion:rrf"]["wrong_evidence_count"], 1)
         self.assertEqual(tracks["raw_max"]["recall"], 0)
         self.assertEqual(result["fusion_latency"]["rrf"]["p95"], .1)
-        # Merely carrying a matching record must not count it as a ranking vote.
-        replay["recipes"]["rrf"]["moments"][0]["evidence"][0]["contributes"] = False
+        # A legitimate raw-max recipe carries the visual record without using
+        # it as a vote. Changing a vote alone is rejected by recomputation.
+        replay["suite"]["recipes"]["rrf"] = dict(method="raw_max", threshold=None)
+        moment = replay["recipes"]["rrf"]["moments"][0]
+        moment["evidence"].reverse()
+        for e in moment["evidence"]:
+            e["value"] = e["raw_score"]
+            e["contributes"] = e["track"] == "speech"
+        moment["score"] = .9
+        self.freeze_recipe(replay)
         result = evaluation.evaluate([export], [label], fusions=[replay])
         fused = next(r for r in result["metrics"] if r["track"] == "fusion:rrf")
         self.assertEqual(fused["recall"], 0)
+
+    def test_recomputed_outputs_reject_changed_scores_votes_or_missing_results(self):
+        for mutation in ("score", "value", "vote", "missing"):
+            with self.subTest(mutation=mutation):
+                export, label, replay = self.fusion_fixture()
+                moment = replay["recipes"]["rrf"]["moments"][0]
+                if mutation == "score":
+                    moment["score"] = .5
+                elif mutation == "value":
+                    moment["evidence"][0]["value"] = .5
+                elif mutation == "vote":
+                    moment["evidence"][0]["contributes"] = False
+                else:
+                    replay["recipes"]["rrf"]["moments"] = []
+                with self.assertRaisesRegex(ValueError, "does not match recomputed"):
+                    evaluation.evaluate([export], [label], fusions=[replay])
+
+    def test_missing_fusion_replayer_fails_closed(self):
+        export, label, replay = self.fusion_fixture()
+        with self.assertRaisesRegex(ValueError, "requires the built retrieval_fusion"):
+            evaluation.evaluate([export], [label], fusions=[replay], fusion_replayer="/does-not-exist/retrieval_fusion")
 
     def test_replays_reject_stale_exports_and_changed_evidence(self):
         for mutation in ("hash", "interval", "rank", "duplicate", "foreign"):
@@ -184,6 +217,9 @@ class EvaluationTest(unittest.TestCase):
         fused = next(r for r in result["metrics"] if r["track"] == "fusion:rrf")
         self.assertEqual(fused["no_answer_false_positive"], 1)
         replay["recipes"]["rrf"]["moments"] = []
+        for channel in replay["suite"]["recipes"]["rrf"]["channels"].values():
+            channel["raw_min"] = .95
+        self.freeze_recipe(replay)
         result = evaluation.evaluate([export], [label], fusions=[replay])
         fused = next(r for r in result["metrics"] if r["track"] == "fusion:rrf")
         self.assertEqual(fused["no_answer_false_positive"], 0)

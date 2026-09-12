@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
+    fs, io,
     path::PathBuf,
     time::Instant,
 };
@@ -26,11 +26,60 @@ struct Suite {
     recipes: BTreeMap<String, Recipe>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Verification {
+    algorithm_version: String,
+    recipes: BTreeMap<String, Recipe>,
+    queries: Vec<VerificationQuery>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VerificationQuery {
+    id: String,
+    candidates: Vec<Candidate>,
+    moments: BTreeMap<String, Value>,
+}
+
+fn verify(input: Verification) -> Result<()> {
+    ensure!(
+        input.algorithm_version == fusion::ALGORITHM,
+        "unsupported fusion algorithm"
+    );
+    ensure!(
+        !input.queries.is_empty() && !input.recipes.is_empty(),
+        "empty verification input"
+    );
+    let mut ids = BTreeSet::new();
+    for query in input.queries {
+        ensure!(
+            !query.id.is_empty() && ids.insert(query.id),
+            "invalid verification query ID"
+        );
+        ensure!(
+            query.moments.keys().eq(input.recipes.keys()),
+            "verification recipe set differs"
+        );
+        for (name, recipe) in &input.recipes {
+            let expected = serde_json::to_value(fusion::fuse(&query.candidates, recipe)?)?;
+            ensure!(
+                query.moments[name] == expected,
+                "fusion output does not match recomputed recipe {name}"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 1 && args[0] == "--verify" {
+        return verify(serde_json::from_reader(io::stdin().lock())?);
+    }
     ensure!(
         args.len() == 3,
-        "usage: retrieval_fusion CANDIDATES.jsonl RECIPES.json OUTPUT.jsonl"
+        "usage: retrieval_fusion CANDIDATES.jsonl RECIPES.json OUTPUT.jsonl, or --verify with JSON on stdin"
     );
     let suite: Suite = serde_json::from_slice(&fs::read(&args[1])?)?;
     ensure!(

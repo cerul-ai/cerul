@@ -148,6 +148,13 @@ checks its parsed value against the embedded algorithm and suite, avoiding
 cross-language float-formatting differences. Editing parameters or source
 groups while retaining an old hash is rejected. Regenerate older version-1
 replays from saved candidates; this makes zero model calls.
+Before scoring, the evaluator also invokes the built `retrieval_fusion --verify`
+example to recompute every result through the same Rust engine. Scores, evidence
+values, contributing votes, complete result lists, and ordering must match.
+The default executable is `target/debug/examples/retrieval_fusion`; build it
+with `cargo build --locked --example retrieval_fusion`, or select another build
+with `--fusion-replayer`. Missing or failed verification stops evaluation. This
+verification uses saved candidates only and makes no model calls.
 Do not edit or reformat the candidate export after producing a replay.
 
 Diagnostic parameters cannot score tuning or held-out queries. Tuning sources

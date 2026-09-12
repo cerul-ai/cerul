@@ -411,7 +411,9 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
             if understanding_path.is_file() {
                 let mut state: crate::index::understanding::RunStatus =
                     serde_json::from_slice(&fs::read(understanding_path)?)?;
-                if state.source_hash != crate::storage::cache_key(&(stream, &episode.time))? {
+                if state.source_hash
+                    != crate::index::understanding::source_hash(&episode, stream.id())?
+                {
                     state.status = "stale".into();
                 }
                 understanding.insert(stream.id().into(), state);
@@ -588,6 +590,52 @@ pub async fn check_providers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn understanding_status_preserves_writer_identity_and_detects_changed_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.mp4");
+        crate::media::run(
+            crate::media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=64x64:rate=1:duration=1",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let mut episode = crate::index::discover::ordinary_episode(&source).unwrap();
+        let workspace = dir.path().join("workspace");
+        let sidecar = crate::index::discover::publish_episode(&workspace, &episode, None).unwrap();
+        let stream = &episode.streams[0];
+        // The previous reader hashed a full Stream reference, not its string ID.
+        // The shared helper preserves that exact on-disk identity.
+        assert_eq!(
+            crate::storage::cache_key(&(stream, &episode.time)).unwrap(),
+            crate::index::understanding::source_hash(&episode, stream.id()).unwrap()
+        );
+        for status in ["complete", "incomplete", "skipped"] {
+            crate::index::understanding::mark_status(&episode, "primary", &sidecar, status)
+                .unwrap();
+            assert_eq!(
+                inspect(&workspace, None).unwrap().episodes[0].understanding["primary"].status,
+                status
+            );
+        }
+        if let crate::episode::Stream::Video { sha256, .. } = &mut episode.streams[0] {
+            *sha256 = "f".repeat(64);
+        }
+        crate::storage::write_json(&sidecar.join("episode.json"), &episode).unwrap();
+        assert_eq!(
+            inspect(&workspace, None).unwrap().episodes[0].understanding["primary"].status,
+            "stale"
+        );
+    }
     #[tokio::test]
     async fn explicit_provider_checks_cover_all_endpoints_cache_and_isolate_failure() {
         use serde_json::json;

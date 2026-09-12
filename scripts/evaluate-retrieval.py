@@ -4,7 +4,9 @@ import argparse
 import hashlib
 import json
 import math
+import pathlib
 import statistics
+import subprocess
 from collections import defaultdict
 
 
@@ -39,7 +41,26 @@ def supporting_answers(row, track, answers):
     return supported, int(bool(temporal and not supported))
 
 
-def replay_tracks(exports, replays):
+def verify_fusion_outputs(exports, replays, suite, executable=None):
+    """Recompute through the shared Rust engine; never trust stored votes/scores."""
+    by_id = {run["query_id"]: run for run in exports}
+    queries = []
+    for replay in replays:
+        candidates = [dict(row, track=track) for track, rows in by_id[replay["query_id"]]["tracks"].items() for row in rows]
+        queries.append(dict(id=replay["query_id"], candidates=candidates,
+                            moments={name: data["moments"] for name, data in replay["recipes"].items()}))
+    request = dict(algorithm_version=replays[0]["algorithm_version"], recipes=suite["recipes"], queries=queries)
+    executable = executable or pathlib.Path(__file__).resolve().parents[1] / "target/debug/examples/retrieval_fusion"
+    try:
+        result = subprocess.run([str(executable), "--verify"], input=json.dumps(request, allow_nan=False),
+                                text=True, capture_output=True, timeout=120, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError("fusion verification requires the built retrieval_fusion example; use --fusion-replayer to select it") from error
+    if result.returncode:
+        raise ValueError("fusion recomputation failed: " + result.stderr.strip()[:2000])
+
+
+def replay_tracks(exports, replays, fusion_replayer=None):
     """Verify replay identity and original evidence before consuming fused scores."""
     if replays is None:
         return {}, None
@@ -124,10 +145,11 @@ def replay_tracks(exports, replays):
     for left, right in (("diagnostic", "tune"), ("diagnostic", "holdout"), ("tune", "holdout")):
         if split_sources[left] & split_sources[right]:
             raise ValueError("original source videos cannot cross evaluation splits")
+    verify_fusion_outputs(exports, replays, suite, fusion_replayer)
     return result, suite
 
 
-def evaluate(exports, labels, k=5, threshold=None, fusions=None):
+def evaluate(exports, labels, k=5, threshold=None, fusions=None, fusion_replayer=None):
     if k <= 0 or (threshold is not None and not math.isfinite(threshold)):
         raise ValueError("invalid limit or threshold")
     by_id = {label["query_id"]: label for label in labels}
@@ -157,7 +179,7 @@ def evaluate(exports, labels, k=5, threshold=None, fusions=None):
     for left, right in (("diagnostic", "tune"), ("diagnostic", "holdout"), ("tune", "holdout")):
         if split_episodes[left] & split_episodes[right]:
             raise ValueError("diagnostic, tuning, and holdout scopes must not share videos")
-    fused_tracks, suite = replay_tracks(exports, fusions)
+    fused_tracks, suite = replay_tracks(exports, fusions, fusion_replayer)
     metrics = defaultdict(lambda: defaultdict(list))
     distributions = defaultdict(lambda: defaultdict(list))
     for run in exports:
@@ -232,6 +254,7 @@ def main():
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--threshold", type=float)
     parser.add_argument("--fusions", help="frozen recipe replay from the retrieval_fusion example")
+    parser.add_argument("--fusion-replayer", help="built retrieval_fusion executable used to verify frozen outputs")
     args = parser.parse_args()
     def read(path, hashes=False):
         with open(path) as source:
@@ -244,7 +267,7 @@ def main():
                     rows.append(row)
             return rows
     print(json.dumps(evaluate(read(args.exports, hashes=True), read(args.labels), args.k, args.threshold,
-                              read(args.fusions) if args.fusions else None), indent=2))
+                              read(args.fusions) if args.fusions else None, args.fusion_replayer), indent=2))
 
 
 if __name__ == "__main__":

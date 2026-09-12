@@ -163,6 +163,10 @@ pub struct RunStatus {
     pub failed: Vec<TimeRange>,
     pub errors: Vec<String>,
 }
+
+pub(crate) fn source_hash(episode: &Episode, stream: &str) -> Result<String> {
+    storage::cache_key(&(episode.video(stream)?, &episode.time))
+}
 pub fn record_status(
     episode: &Episode,
     stream: &str,
@@ -182,7 +186,7 @@ pub fn mark_status(episode: &Episode, stream: &str, sidecar: &Path, status: &str
         sidecar,
         RunStatus {
             status: status.into(),
-            source_hash: storage::cache_key(&(episode.video(stream)?, &episode.time))?,
+            source_hash: source_hash(episode, stream)?,
             successful: Vec::new(),
             failed: Vec::new(),
             errors: Vec::new(),
@@ -978,7 +982,7 @@ fn finish_run(
                 "incomplete"
             }
             .into(),
-            source_hash: storage::cache_key(&(episode.video(stream)?, &episode.time))?,
+            source_hash: source_hash(episode, stream)?,
             successful,
             failed,
             errors: errors.clone(),
@@ -1695,6 +1699,11 @@ mod tests {
         .unwrap();
         assert!(first.errors.is_empty(), "{:?}", first.errors);
         assert_eq!(server.join().unwrap().len(), 3);
+        assert_eq!(
+            crate::status::inspect(&workspace, None).unwrap().episodes[0].understanding["primary"]
+                .status,
+            "complete"
+        );
         let summary = first.summary.unwrap();
         assert!(current_dependencies(&sidecar, &summary).unwrap());
         let suggestions =
