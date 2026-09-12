@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const RECIPE: &str = "index-frames/1";
+pub const RECIPE: &str = "index-frames/2";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct Recipe {
     version: String,

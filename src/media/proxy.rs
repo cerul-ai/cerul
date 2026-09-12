@@ -1,6 +1,6 @@
 //! Disposable, validated proxies keyed by source content, interval, and encoding recipe.
 use super::extract::SourceRange;
-pub const RECIPE_VERSION: &str = "proxy/3";
+pub const RECIPE_VERSION: &str = "proxy/4";
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
