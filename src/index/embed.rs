@@ -98,7 +98,7 @@ pub fn fingerprint(
         episode,
         stream,
         "embed",
-        &json!({"proxy_recipe":media::proxy::RECIPE_VERSION,"space":space,"chunk_us":options.chunk_us,"overlap_us":options.overlap_us,"skip_still":options.skip_still,"transcript":transcript.map(|f|&f.records),"screen":screen.map(|f|&f.records)}),
+        &json!({"proxy_recipe":media::proxy::RECIPE_VERSION,"text_recipe":super::text::RECIPE,"document_template":crate::config::DOCUMENT_TEMPLATE,"space":space,"chunk_us":options.chunk_us,"overlap_us":options.overlap_us,"skip_still":options.skip_still,"transcript":transcript.map(|f|&f.records),"screen":screen.map(|f|&f.records)}),
     )
 }
 fn cancelled(provider: &Provider) -> Result<()> {
@@ -164,7 +164,7 @@ impl EmbeddingContext<'_> {
             self.episode,
             self.stream,
             "embedding-row",
-            &json!({"space":self.space,"kind":kind,"range":range,"text":excerpt,"proxy_recipe":if matches!(kind, Kind::Video) { Some(media::proxy::RECIPE_VERSION) } else { None }}),
+            &json!({"space":self.space,"kind":kind,"range":range,"text":excerpt,"text_recipe":if matches!(kind, Kind::Video) {None} else {Some(super::text::RECIPE)},"document_template":if matches!(kind, Kind::Video) {None} else {Some(crate::config::DOCUMENT_TEMPLATE)},"proxy_recipe":if matches!(kind, Kind::Video) { Some(media::proxy::RECIPE_VERSION) } else { None }}),
         )?;
         let checkpoints = Checkpoints::new(self.sidecar);
         if !self.options.recompute
@@ -190,6 +190,7 @@ impl EmbeddingContext<'_> {
                 kind,
                 range,
                 self.space,
+                &excerpt,
             ))?,
             episode: self.episode.episode_id.clone(),
             stream: self.stream.into(),
@@ -245,10 +246,11 @@ impl EmbeddingContext<'_> {
                 .source_to_episode(self.stream, end)?
                 .min(self.episode.duration_us()?),
         )?;
-        let clip = media::proxy::get(
+        let clip = media::proxy::get_with_samples(
             &source,
             sha256,
             SourceRange::new(start, end)?,
+            SourceRange::new(range_us[0], range_us[1])?,
             self.workspace,
             24,
         )?;
@@ -271,10 +273,11 @@ impl EmbeddingContext<'_> {
                     .downcast_ref::<ProviderError>()
                     .is_some_and(|e| e.kind == Failure::TooLarge) =>
             {
-                let clip = media::proxy::get(
+                let clip = media::proxy::get_with_samples(
                     &source,
                     sha256,
                     SourceRange::new(start, end)?,
+                    SourceRange::new(range_us[0], range_us[1])?,
                     self.workspace,
                     45,
                 )?;
@@ -310,11 +313,15 @@ impl EmbeddingContext<'_> {
         };
         let mut rows = vec![video];
         for (kind, file) in [(Kind::Speech, self.transcript), (Kind::Screen, self.screen)] {
-            let text = stations::text_for_range(file, range)?;
-            if !text.is_empty() {
+            for chunk in super::text::chunks(file, range, kind == Kind::Screen)? {
                 rows.push(
-                    self.vector(kind, range, Input::Text(text.clone()), text)
-                        .await?,
+                    self.vector(
+                        kind,
+                        chunk.range,
+                        Input::Text(chunk.text.clone()),
+                        chunk.text,
+                    )
+                    .await?,
                 );
             }
         }
@@ -401,6 +408,12 @@ pub async fn run(
         })
         .buffer_unordered(provider.concurrency());
     let mut done = 0;
+    events.emit(Event::Progress {
+        episode: episode.episode_id.clone(),
+        station: "embed".into(),
+        done: 0,
+        total: ranges.len() as u64,
+    });
     while let Some((range, result)) = pending.next().await {
         match result {
             Ok(unit) => rows.extend(unit),

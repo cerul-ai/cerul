@@ -1,0 +1,113 @@
+{
+  "$id": "https://cerul.ai/schemas/semantic-scene/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Scene",
+  "type": "object",
+  "properties": {
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "correction": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "description": {
+      "type": "string"
+    },
+    "evidence": {
+      "$ref": "#/$defs/VisualEvidence"
+    },
+    "kind": {
+      "$ref": "#/$defs/ContentKind"
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "revision": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "description",
+    "objects",
+    "actions",
+    "kind",
+    "evidence",
+    "revision"
+  ],
+  "$defs": {
+    "ContentKind": {
+      "type": "string",
+      "enum": [
+        "talk",
+        "slides",
+        "screen",
+        "demo",
+        "broll",
+        "static"
+      ]
+    },
+    "VisualEvidence": {
+      "type": "object",
+      "properties": {
+        "input_end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "input_kind": {
+          "type": "string"
+        },
+        "input_sha256": {
+          "type": "string"
+        },
+        "input_start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "max_edge": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "media_sha256": {
+          "type": "string"
+        },
+        "recipe": {
+          "type": "string"
+        },
+        "sample_us": {
+          "description": "Source observations submitted in the input, in episode microseconds.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "sampling_fps": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "input_kind",
+        "input_start_us",
+        "input_end_us",
+        "sampling_fps",
+        "sample_us",
+        "max_edge",
+        "media_sha256",
+        "input_sha256",
+        "recipe"
+      ]
+    }
+  }
+}

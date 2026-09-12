@@ -39,6 +39,8 @@ pub struct EpisodeStatus {
     pub annotations: Vec<String>,
     pub embedding_spaces: Vec<String>,
     pub embeddings: Vec<EmbeddingStatus>,
+    #[serde(default)]
+    pub understanding: BTreeMap<String, crate::index::understanding::RunStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -85,6 +87,8 @@ pub struct TimelineEntry {
     /// The record's own fields written as one line. The record itself stays
     /// authoritative; this is a reading aid, not a new data format.
     pub summary: String,
+    /// Content revision used by source references and manual correction bases.
+    pub revision: String,
     pub record: crate::annotations::Record,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -128,6 +132,9 @@ pub fn summarize_record(annotation: &str, record: &crate::annotations::Record) -
         .strip_prefix("semantic.")
         .unwrap_or(annotation);
     match item {
+        "scene" => text("description"),
+        "section" => text("title"),
+        "summary" => format!("{} — {}", text("title"), text("summary")),
         "task" | "subtask" => text("text"),
         "event" => {
             let objects = record
@@ -251,6 +258,7 @@ pub fn timeline(
                 // exists in that form; showing its records would mislead.
                 if file.header.stream != stream.id()
                     || !crate::index::stations::has_current_input(&episode, &file)?
+                    || !crate::index::understanding::current_dependencies(&directory, &file)?
                 {
                     continue;
                 }
@@ -271,6 +279,7 @@ pub fn timeline(
                 }
                 for record in file.records {
                     entries.push(TimelineEntry {
+                        revision: crate::index::understanding::revision(&record)?,
                         episode: episode.episode_id.clone(),
                         stream: stream.id().to_owned(),
                         annotation: name.clone(),
@@ -351,6 +360,7 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
                 let file = AnnotationFile::read(&directory.join(format!("{name}.jsonl")))?;
                 if file.header.stream != stream.id()
                     || !crate::index::stations::has_current_input(&episode, &file)?
+                    || !crate::index::understanding::current_dependencies(&directory, &file)?
                 {
                     continue;
                 }
@@ -387,6 +397,7 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
             }
         }
         let mut embeddings = Vec::new();
+        let mut understanding = BTreeMap::new();
         for stream in &episode.streams {
             if !matches!(stream, crate::episode::Stream::Video { .. }) {
                 continue;
@@ -396,6 +407,15 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
                 stream.id(),
                 &episode.time.reference,
             );
+            let understanding_path = directory.join("understanding.status.json");
+            if understanding_path.is_file() {
+                let mut state: crate::index::understanding::RunStatus =
+                    serde_json::from_slice(&fs::read(understanding_path)?)?;
+                if state.source_hash != crate::storage::cache_key(&(stream, &episode.time))? {
+                    state.status = "stale".into();
+                }
+                understanding.insert(stream.id().into(), state);
+            }
             for name in file_names(&directory, ".json")? {
                 let Some(space_id) = name.strip_prefix("index.") else {
                     continue;
@@ -428,6 +448,7 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
             annotations,
             embedding_spaces,
             embeddings,
+            understanding,
         });
     }
     let mut spaces = Vec::new();

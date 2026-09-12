@@ -1,0 +1,59 @@
+{
+  "$id": "https://cerul.ai/schemas/description-index/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "State",
+  "type": "object",
+  "properties": {
+    "complete": {
+      "type": "boolean"
+    },
+    "input_hash": {
+      "type": "string"
+    },
+    "scene_revision": {
+      "type": "string"
+    },
+    "schema": {
+      "type": "string"
+    },
+    "source_refs": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/SourceRef"
+      }
+    },
+    "space_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "space_id",
+    "input_hash",
+    "scene_revision",
+    "complete",
+    "source_refs"
+  ],
+  "$defs": {
+    "SourceRef": {
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "type": "string"
+        },
+        "record_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "annotation",
+        "record_id",
+        "revision"
+      ]
+    }
+  }
+}

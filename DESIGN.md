@@ -14,10 +14,10 @@ installation instructions are in the [documentation](docs/README.md).
 | Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
 | Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
 | Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, and query instruction template. The same model name at different endpoints is a different space. Queries must match exactly. |
-| Endpoints | The CLI fixes embedding to Gemini Embedding 2. Vision and optional transcription support `kind = gemini \| openai` with user keys. `perception` is reserved and processing is not implemented. Missing perception must not block indexing/search. |
-| Default models | Required Gemini embedding: `gemini-embedding-2` at 1536 dimensions. Vision: `gemini-3.8-flash`. Optional ASR preset: `gemini-3.5-transcribe`. |
+| Endpoints | Embedding defaults to Gemini Embedding 2 at 3072 dimensions. Embedding, vision, and optional transcription support configurable `kind = gemini \| openai` endpoints with user keys. `perception` is reserved and processing is not implemented. Missing perception must not block indexing/search. |
+| Default models | Required Gemini embedding: `gemini-embedding-2` at 3072 dimensions. Vision: `gemini-3.8-flash`. Optional ASR preset: `gemini-3.5-transcribe`. |
 | OCR | Embedded PP-OCRv6 small, approximately 31 MB of weights, CPU inference through `tract-onnx`, enabled by default. This is the only embedded model and the only exception to endpoint-based inference. |
-| Retrieval | One multimodal space. Each 30-second unit has up to three independently embedded rows: video, transcript, screen text. The embedding endpoint must accept video and images; unsupported endpoints fail, without a text-only fallback. No BM25 or fusion. Exact strings use `--text` substring matching. Annotation filtering happens before vector search. |
+| Retrieval | One compatible multimodal space with independent video, transcript, and screen-text rows. Per-track candidates use separate budgets, then raw maximum similarity per interval. The embedding endpoint must accept video and images; unsupported endpoints fail without a text-only fallback. Description vectors and a separate lexical cache are available for evaluation; their default fusion remains gated on held-out evidence. Exact strings use `--text` substring matching. Annotation filtering happens before vector search. |
 | Annotations | Three fixed families: `semantic`, `grounding`, `world`. Subtypes may grow. All derived records are annotations. |
 | Time | Integer microseconds, half-open intervals, episode-relative time derived from PTS. |
 | Cameras | Process the primary camera by default; `--streams all` expands selection. |
@@ -141,7 +141,7 @@ secret values. Provider adapters must preserve these request contracts:
 
 | Capability | Gemini | OpenAI-compatible |
 | --- | --- | --- |
-| Embedding | `embedContent`, outputDimensionality=1536. Text query instruction: `task: search result \| query: {query}`. | `/v1/embeddings` with text, image, and video support. Reject text-only endpoints. |
+| Embedding | `embedContent`, outputDimensionality=3072. Text query instruction: `task: search result \| query: {query}`. | `/v1/embeddings` with text, image, and video support. Reject text-only endpoints. |
 | Vision | `generateContent` with responseSchema. | `/v1/chat/completions` with image_url and json_schema. |
 | Transcription | Native word timestamps for `gemini-3.5-transcribe`; prompted segments for other Gemini models. | `/v1/audio/transcriptions`, verbose_json, segment timestamps. |
 
@@ -226,7 +226,7 @@ An annotation JSONL file starts with a header containing $cerul=annotation/1, na
 
 **Index unit:** a 30-second video-stream interval in episode time, with up to three rows of kind video, speech, or screen. Write vectors to sidecars before indexing.
 
-Chunks columns: id, episode, stream, kind, start_us, end_us, vector[1536] for the default space, text, still, space_id, params_hash. Records columns: episode, stream, annotation, id, start_us, end_us, fields. Both tables are rebuildable from sidecars.
+Chunks columns: id, episode, stream, kind, start_us, end_us, vector[3072] for the default space, text, still, space_id, params_hash. Records columns: episode, stream, annotation, id, start_us, end_us, fields. Both tables are rebuildable from sidecars.
 
 Default `cerul.verbs.v1` vocabulary: reach, grasp, regrasp, lift, carry, place, release, push, pull, open, close, insert, rotate, pour, wipe.
 
@@ -235,9 +235,12 @@ Default `cerul.verbs.v1` vocabulary: reach, grasp, regrasp, lift, carry, place, 
 ### Index stations
 
 - **Transcript:** sixty-second audio windows, with a shorter final window; records contain start_us, end_us, text, lang.
-- **Screen text:** PP-OCRv6 detection at 0.5 fps on source-resolution frames, with a 1080-pixel maximum long edge. Recognition runs only on detected boxes. Rust implements DBNet postprocessing and CTC decoding; repeated consecutive text is merged. Do not use a 480p proxy for OCR.
-- **Frames and proxies:** 0.5 fps source keyframes (maximum 1080-pixel long edge) are temporary and removed after use. Cache 480p H.264 proxies for embeddings and contact sheets. Embedding uses 2 fps. Contact sheets default to 2 fps but honor --fps, sampling source frames before encoding and preserving their original PTS separately.
-- **Embedding:** up to three independent calls per unit. Measure the actual encoded body against the endpoint limit; reduce bitrate then split, failing explicitly if still oversized. Persist vectors before Lance. Log failures and retry only missing units.
+- **Screen text:** PP-OCRv6 detection on shared 1 fps source samples, with a 1080-pixel maximum long edge. A conservative image-change gate skips nearly identical frames, with recognition at least every five seconds. Recognition runs only on detected boxes. Rust implements DBNet postprocessing and CTC decoding; repeated consecutive text is merged. Do not use a 480p proxy for OCR.
+- **Frames and proxies:** Indexing caches content-addressed 1 fps source samples (maximum 1080-pixel long edge), shared by OCR, embedding proxies, and understanding. Cache 480p, 1 fps H.264 proxies with no audio. Original source timestamps are retained in the sample manifest. Contact sheets default to 2 fps but honor --fps, sampling source frames before encoding and preserving their original PTS separately.
+- **Scheduling:** OCR and ASR run concurrently; base embeddings wait for both. A failed remote station retains completed local evidence.
+- **Embedding:** one video row and bounded text rows per unit. Deduplicate whitespace-equivalent OCR lines only in derived retrieval text; preserve case, punctuation, and raw sidecars. Split oversized text without inventing finer timestamps. Gemini Embedding 2 text documents use `title: none | text: {text}`. Measure the actual encoded body against the endpoint limit; reduce bitrate then split, failing explicitly if still oversized. Persist vectors before Lance. Log failures and retry only missing units.
+- **Understanding:** default-on 30-second silent windows produce typed scenes, then a bounded hierarchical overview produces sections, title, coverage, and at most three grounded suggestions. Gemini uses video; compatible image-only vision endpoints receive timestamped JPEG frames. Actual sample times are retained. `--no-understanding` or `vision.enabled = false` records an explicit skip. Missing or failed vision does not discard searchable base vectors. Scene IDs identify source/stream/interval; generation revisions are separate. Corrections are a separate revision layer, never overwritten by generation.
+- **Derived storage:** scene, section, and summary records use `annotation/1`; dependent references pin record revisions. Description vectors are separately published under `embeddings/descriptions/<space>/<generation>.parquet` with per-stream `description.<space>.json` manifests. They preserve each scene's original interval and do not enter default retrieval yet. Workspace `lexical/` is a rebuildable FTS cache of original OCR/ASR with a tokenizer recipe independent of embedding space. Both diagnostic projections rebuild without model calls.
 - **Cache identity:** episode_id, stream, stream_sha256, range_us, time mapping, station, space_id or model, params_hash, station version. Identity distinguishes datasets; content hashes detect replacement; ranges distinguish episodes sharing a shard.
 
 ### Semantic annotation
@@ -256,7 +259,7 @@ Prefer --out. Stage a complete dataset, perform native field/timeline validation
 
 ### Search
 
-Parse filters into episode/stream half-open time intervals, then apply them as Lance prefilters to intersecting chunks before vector ranking. Group the same interval by highest score and retain matched provenance. Exact-text hits merge when adjacent; ranked vector hits merge only when their windows mostly coincide, so the small overlap between neighbouring index windows never chains a whole video into one hit. Reranking is not implemented.
+Parse filters into episode/stream half-open time intervals, then apply them as Lance prefilters to intersecting chunks before vector ranking. Each present base track receives its own candidate budget. Group the same interval by highest score and retain raw per-track scores, ranks, IDs, and original intervals in JSON. These are cosine scores, not confidence probabilities. Exact-text hits merge when adjacent; ranked vector hits merge only when their windows mostly coincide, so the small overlap between neighbouring index windows never chains a whole video into one hit. Reranking is not implemented. Search reuses saved Lance projections and reads authoritative annotation files once; it does not rescan Parquet or rebuild an annotation projection on every query. A valid query cache hit makes no capability probe or embedding call.
 
 Repeated filters are AND. Conditions on one annotation must match the same record. Different annotations join by temporal intersection. Episode/stream/kind constrain scope. A chunk is eligible when its interval intersects the event interval; the hit time is that intersection.
 
@@ -290,9 +293,27 @@ provider, or fourth annotation family creates a concrete need.
 ## Optional speech configuration
 
 `cerul config` selects Gemini, Groq, OpenAI, a custom OpenAI-compatible ASR, or
-Disabled. Interactive indexing offers this when audio is present and ASR settings
-or credentials are missing, not solely on first launch. Disabled is persisted;
-unconfigured speech is skipped without prompts in machine mode. Credentials are
+Disabled. The CLI resolves unspecified ASR to enabled when its configured key is
+available (Gemini by default), without a model or credential chooser during index.
+Explicit endpoints and Disabled are preserved. Compatible cached transcripts remain
+usable without credentials; new unconfigured speech is skipped in machine mode. Credentials are
 private and separate from model configuration. ASR failure retains searchable
 video/OCR vectors, records a diagnostic, and returns partial success. Repeating
 index resumes missing speech windows without recomputing completed OCR.
+
+## CLI index presentation
+
+Selecting Index and a source in the interactive guide starts work directly;
+`--dry-run` remains an explicit flag. The library emits initial and incremental
+station progress; only the binary renders bars and stage estimates. Estimates
+exclude an initial cached position and remain indeterminate without sufficient
+measured work. Completion output keeps full paths in copyable commands and JSON,
+while shortening display names.
+
+Index reports may include up to three source-referenced suggestions per episode.
+They use the current generated summary when available and extractive evidence
+otherwise; collecting saved suggestions makes no model calls. Missing speech,
+disabled ASR, no audio, successful empty transcription, and failures remain
+distinguishable. The [hybrid retrieval plan](docs/design/hybrid-video-search.md)
+records the remaining evaluation gates; calibrated fusion, description retrieval,
+and automatic ANN selection are not yet default behavior.

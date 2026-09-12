@@ -42,7 +42,7 @@ impl Filter {
         ensure!(!raw.is_empty(), "filter value is empty");
         ensure!(
             matches!(key, "episode" | "stream" | "kind")
-                || matches!(key.split('.').collect::<Vec<_>>().as_slice(),["semantic",item,field] if crate::annotations::SEMANTIC_ITEMS.contains(item)&&!field.is_empty()),
+                || matches!(key.split('.').collect::<Vec<_>>().as_slice(),["semantic",item,field] if (crate::annotations::SEMANTIC_ITEMS.contains(item)||crate::index::understanding::ITEMS.contains(item))&&!field.is_empty()),
             "unknown filter key"
         );
         if let Some((annotation, field)) = key.rsplit_once('.') {
@@ -54,6 +54,15 @@ impl Filter {
                 "semantic.state" => &["object", "attribute", "before", "after"],
                 "semantic.flag" => &["kind", "note"],
                 "semantic.progress" => &["value", "done"],
+                "semantic.scene" => &["description", "objects", "actions", "kind"],
+                "semantic.section" => &["title"],
+                "semantic.summary" => &[
+                    "title",
+                    "summary",
+                    "content_type",
+                    "environment",
+                    "language",
+                ],
                 _ => &[],
             };
             ensure!(fields.contains(&field), "unknown annotation filter field");

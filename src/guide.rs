@@ -239,7 +239,7 @@ fn pick_input(palette: &Palette, title: &str) -> io::Result<Option<String>> {
 /// Turns answers into the command that runs them, shown before it runs so the
 /// next run can be typed instead of answered. `typed` is everything the person
 /// already wrote, so a global flag they chose appears in the command too.
-fn confirm(palette: &Palette, typed: &[String], extra: &[String]) -> io::Result<Option<bool>> {
+fn show_command(palette: &Palette, typed: &[String], extra: &[String]) -> io::Result<()> {
     let term = Term::stderr();
     let argv: Vec<String> = std::iter::once("cerul".to_owned())
         .chain(typed.iter().cloned())
@@ -247,6 +247,11 @@ fn confirm(palette: &Palette, typed: &[String], extra: &[String]) -> io::Result<
         .collect();
     term.write_line("")?;
     term.write_line(&format!("  {}", palette.cmd(&render::shell_command(&argv))))?;
+    Ok(())
+}
+
+fn confirm(palette: &Palette, typed: &[String], extra: &[String]) -> io::Result<Option<bool>> {
+    show_command(palette, typed, extra)?;
     let choices = [
         Choice::new("Start", "", Some(false)),
         Choice::new(
@@ -441,10 +446,8 @@ fn annotate(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
 
 fn index(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
     let path = pick_input(palette, "Index · which video or folder?").ok()??;
-    let mut extra = vec![path];
-    if confirm(palette, typed, &extra).ok()?? {
-        extra.push("--dry-run".into());
-    }
+    let extra = vec![path];
+    show_command(palette, typed, &extra).ok()?;
     Some(extra)
 }
 

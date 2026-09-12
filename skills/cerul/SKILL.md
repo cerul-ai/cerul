@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
 generated-by: cerul 0.0.9
-generated-sha256: 8c660268f2e72f9f3234723fa9ae5cfaafaea012901e247cab0b461065de6b17
+generated-sha256: 4b7c0fb3a57172b220052a2ce6637538ca98bdf3635e4790e66ee4252b9dc7b3
 ---
 
 # Cerul
@@ -82,6 +82,25 @@ Result numbers are global, so `cerul open 1` plays the first moment in the user'
 video player and `cerul open 3` plays the third. `score` is a ranking similarity, not a probability that the
 moment is the right one; do not present it as a confidence or an accuracy.
 
+Indexing also runs visual understanding by default. It saves visible scene
+descriptions, coarse sections, and a grounded overview with up to three search
+suggestions. This uses the configured vision endpoint in addition to embedding
+and any enabled ASR. `--no-understanding` explicitly skips that work. Missing ASR
+does not prevent visual descriptions; failed understanding can leave base search
+usable while returning partial success. Do not treat suggested queries as
+verified retrieval results.
+
+```sh
+cerul --json status ./video.mp4 --timeline --type summary
+cerul --json status ./video.mp4 --timeline --type scene
+```
+
+Visual descriptions, spoken words, and screen text have distinct provenance.
+Use scene evidence for what is visible, transcript evidence for what was said,
+and OCR for visible words. Sparse visual samples cannot establish exact motion
+boundaries, success, intent, or camera trajectories. Scene descriptions do not
+replace the task and action annotations below.
+
 **Annotate actions.** No indexing step is needed.
 
 ```sh
@@ -135,7 +154,7 @@ These options work on every command:
   --yes                       Skip confirmations and never prompt; fail instead of asking for a key
   --quiet                     Only print errors
   --recompute                 Redo work even when a valid result already exists
-  --set <KEY=TOML_VALUE>      Override a configuration field, for example embedding.dims=1536
+  --set <KEY=TOML_VALUE>      Override a configuration field, for example embedding.dims=3072
   -v                          More diagnostic output (repeatable)
 
 ### cerul index
@@ -145,6 +164,7 @@ Index videos so they can be searched (screen text, speech, visual search)
   <PATHS>...                  Videos, directories, or LeRobot datasets
   --no-audio                  Skip speech transcription
   --no-ocr                    Skip screen text recognition
+  --no-understanding          Skip visual descriptions, sections, and the episode overview
   --chunk <DURATION>          Length of each searchable window, for example 30s (default 30s)
   --overlap <DURATION>        Overlap between windows (default 5s)
   --skip-still                Skip windows where the picture does not change

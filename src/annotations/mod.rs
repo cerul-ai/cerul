@@ -115,7 +115,8 @@ impl AnnotationFile {
             matches!(h.name.as_str(), "transcript" | "screen_text")
                 || h.name
                     .strip_prefix("semantic.")
-                    .is_some_and(|name| SEMANTIC_ITEMS.contains(&name)),
+                    .is_some_and(|name| SEMANTIC_ITEMS.contains(&name)
+                        || crate::index::understanding::ITEMS.contains(&name)),
             "unsupported annotation name"
         );
         ensure!(
@@ -227,6 +228,9 @@ impl AnnotationFile {
                             "done must be boolean"
                         );
                     }
+                }
+                name @ ("semantic.scene" | "semantic.section" | "semantic.summary") => {
+                    crate::index::understanding::validate_record(name, record)?
                 }
                 _ => bail!("unsupported annotation"),
             }

@@ -14,7 +14,7 @@ include = [
     "/packaging/licenses/*.txt", "/scripts/build-*.sh", "/scripts/test-*.py", "/scripts/check-docs.py", "/scripts/package-media-source.sh", "/schemas/*.json", "/prompts/*.md", "/skills/cerul/SKILL.md", "/docs/assets/*.png",
     "/models/det.onnx", "/models/rec.onnx", "/models/characters.txt",
     "/models/LICENSE", "/models/README.md",
-    "/tests/*.rs", "/tests/*.py",
+    "/tests/*.rs", "/tests/*.py", "/scripts/evaluate-retrieval.py",
     "/tests/fixtures/README.md", "/tests/fixtures/ocr-text.png",
 ]
 

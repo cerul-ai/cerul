@@ -96,6 +96,38 @@ fn existing(
     }
     Ok(None)
 }
+/// Select recognitions against the last recognized pixels, with a periodic
+/// floor. The gate is an optimization, never a claim of exact text boundaries.
+fn recognition_samples(frames: &[(i64, PathBuf)]) -> Result<Vec<usize>> {
+    let mut chosen = Vec::new();
+    let mut previous: Option<(i64, image::GrayImage)> = None;
+    for (index, (time, path)) in frames.iter().enumerate() {
+        media::check_cancellation()?;
+        let gray = image::open(path)?
+            .resize_exact(128, 128, image::imageops::FilterType::Triangle)
+            .to_luma8();
+        let recognize = previous.as_ref().is_none_or(|(last_time, pixels)| {
+            if time - last_time >= 5_000_000 {
+                return true;
+            }
+            let differences = gray
+                .as_raw()
+                .iter()
+                .zip(pixels.as_raw())
+                .map(|(a, b)| a.abs_diff(*b));
+            let (sum, maximum) = differences.fold((0u64, 0u8), |(sum, max), d| {
+                (sum + u64::from(d), max.max(d))
+            });
+            maximum > 8 || sum > 4096
+        });
+        if recognize {
+            chosen.push(index);
+            previous = Some((*time, gray));
+        }
+    }
+    Ok(chosen)
+}
+
 pub fn screen_text(
     episode: &Episode,
     stream: &str,
@@ -105,9 +137,25 @@ pub fn screen_text(
     events: &mut dyn EventSink,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<AnnotationFile> {
+    screen_text_with_workspace(
+        episode, stream, sidecar, sidecar, recompute, jobs, events, cancel,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn screen_text_with_workspace(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    recompute: bool,
+    jobs: usize,
+    events: &mut dyn EventSink,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<AnnotationFile> {
     ensure!(jobs > 0, "OCR jobs must be positive");
     media::with_sync_cancellation(cancel.clone(), media::check_cancellation)?;
-    let params = json!({"fps":0.5,"max_edge":1080,"postprocess_version":2,"min_text_confidence":crate::ocr::MIN_TEXT_CONFIDENCE,"model":"PP-OCRv6-small","det":"d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e","rec":"5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"});
+    let params = json!({"fps":1,"max_edge":1080,"postprocess_version":3,"sampling_recipe":media::frames::RECIPE,"gate":"gray128-mae0.25-max8/1","recognition_floor_us":5_000_000,"min_text_confidence":crate::ocr::MIN_TEXT_CONFIDENCE,"model":"PP-OCRv6-small","det":"d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e","rec":"5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"});
     let key = station_key(episode, stream, "screen_text", &params)?;
     let duration = episode.duration_us()?;
     let directory = stream_directory(sidecar, stream, &episode.time.reference);
@@ -118,21 +166,28 @@ pub fn screen_text(
     let Stream::Video {
         path: source,
         range_us,
+        sha256,
         ..
     } = episode.video(stream)?
     else {
         unreachable!()
     };
     let source = episode.source.root.join(source);
-    let temporary = tempfile::tempdir()?;
-    let frames = media::extract::keyframes(
-        &source,
-        SourceRange::new(range_us[0], range_us[1])?,
-        temporary.path(),
-        0.5,
-    )?;
+    let source_range = SourceRange::new(range_us[0], range_us[1])?;
+    let all_frames = media::frames::get(&source, sha256, source_range, source_range, workspace)?;
+    let representatives = recognition_samples(&all_frames)?;
+    let frames: Vec<_> = representatives
+        .iter()
+        .map(|&index| all_frames[index].clone())
+        .collect();
     let checkpoints = Checkpoints::new(sidecar);
     let total = frames.len() as u64;
+    events.emit(Event::Progress {
+        episode: episode.episode_id.clone(),
+        station: "screen_text".into(),
+        done: 0,
+        total,
+    });
     let next = std::sync::atomic::AtomicUsize::new(0);
     let workers_cancel = cancel.child_token();
     let worker_count = jobs
@@ -217,6 +272,19 @@ pub fn screen_text(
             .map(|text| text.context("OCR frame was not processed"))
             .collect()
     })?;
+    let mut recognized = 0;
+    let texts: Vec<_> = (0..all_frames.len())
+        .map(|index| {
+            while representatives
+                .get(recognized + 1)
+                .is_some_and(|next| *next <= index)
+            {
+                recognized += 1;
+            }
+            texts[recognized].clone()
+        })
+        .collect();
+    let frames = all_frames;
     let mut records: Vec<Record> = Vec::new();
     for (index, ((relative, _), text)) in frames.iter().zip(texts).enumerate() {
         let start = episode
@@ -394,6 +462,12 @@ pub async fn transcript(
         let source = episode.source.root.join(source);
         let checkpoints = Checkpoints::new(sidecar);
         let windows = media::chunks(range_us[1] - range_us[0], WINDOW_US, 0)?;
+        events.emit(Event::Progress {
+            episode: episode.episode_id.clone(),
+            station: "transcript".into(),
+            done: 0,
+            total: windows.len() as u64,
+        });
         for (index, window) in windows.iter().enumerate() {
             let checkpoint = match &generation {
                 Some(generation) => storage::cache_key(&(&key, window, generation))?,
@@ -770,7 +844,7 @@ mod tests {
                 .args(["-v", "error", "-loop", "1", "-i"])
                 .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ocr-text.png"))
                 .args([
-                    "-t", "4", "-r", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-t", "6", "-r", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p",
                 ])
                 .arg(&video),
         )
@@ -792,7 +866,7 @@ mod tests {
         .unwrap();
         assert_eq!(file.records.len(), 1);
         assert_eq!(file.records[0].start_us, 0);
-        assert_eq!(file.records[0].end_us, 4_000_000);
+        assert_eq!(file.records[0].end_us, 6_000_000);
         assert_eq!(
             file.records[0].fields["text"]
                 .as_str()
@@ -832,7 +906,7 @@ mod tests {
         // A cached later frame completes before the earlier frame's real OCR.
         // Publication must still use source time, not worker completion order.
         let reordered = dir.path().join("reordered");
-        let later_key = storage::cache_key(&(&file.header.input_hash, 2_000_000i64)).unwrap();
+        let later_key = storage::cache_key(&(&file.header.input_hash, 5_000_000i64)).unwrap();
         Checkpoints::new(&reordered)
             .save(&later_key, &"Cached second frame")
             .unwrap();
@@ -849,7 +923,7 @@ mod tests {
         assert_eq!(ordered.records.len(), 2);
         assert_eq!(
             (ordered.records[0].start_us, ordered.records[0].end_us),
-            (0, 2_000_000)
+            (0, 5_000_000)
         );
         assert_eq!(
             ordered.records[0].fields["text"],
@@ -865,7 +939,11 @@ mod tests {
             &interrupted,
             false,
             2,
-            &mut |_| stopped.cancel(),
+            &mut |event| {
+                if matches!(event, Event::Progress { done, .. } if done > 0) {
+                    stopped.cancel();
+                }
+            },
             &stopped,
         )
         .unwrap_err();

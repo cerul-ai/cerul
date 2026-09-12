@@ -165,6 +165,7 @@ def check(package_list=None):
             ) and name not in {
                 "docs/assets/cerul-logo-dark.png",
                 "docs/assets/cerul-logo-light.png",
+                "docs/assets/cerul-architecture.png",
                 "tests/fixtures/ocr-text.png",
                 "models/det.onnx",
                 "models/rec.onnx",

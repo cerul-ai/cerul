@@ -1,0 +1,71 @@
+{
+  "$id": "https://cerul.ai/schemas/scene-response/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SceneResponse",
+  "type": "object",
+  "properties": {
+    "scenes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ObservedScene"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "scenes"
+  ],
+  "$defs": {
+    "ContentKind": {
+      "type": "string",
+      "enum": [
+        "talk",
+        "slides",
+        "screen",
+        "demo",
+        "broll",
+        "static"
+      ]
+    },
+    "ObservedScene": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "type": "string"
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "kind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start_us",
+        "end_us",
+        "description",
+        "objects",
+        "actions",
+        "kind"
+      ]
+    }
+  }
+}

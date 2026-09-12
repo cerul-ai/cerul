@@ -1,0 +1,43 @@
+{
+  "$id": "https://cerul.ai/schemas/semantic-section/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Section",
+  "type": "object",
+  "properties": {
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceRef"
+      }
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "title",
+    "source_refs"
+  ],
+  "$defs": {
+    "SourceRef": {
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "type": "string"
+        },
+        "record_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "annotation",
+        "record_id",
+        "revision"
+      ]
+    }
+  }
+}

@@ -575,6 +575,13 @@ impl Provider {
             .context("embedding dimensions are not configured")?;
         let input = match input {
             Input::Text(text) if query => Input::Text(QUERY_TEMPLATE.replace("{query}", &text)),
+            Input::Text(text)
+                if self.endpoint.kind == "gemini"
+                    && self.endpoint.model.trim_start_matches("models/")
+                        == "gemini-embedding-2" =>
+            {
+                Input::Text(crate::config::DOCUMENT_TEMPLATE.replace("{text}", &text))
+            }
             other => other,
         };
         let response = if self.endpoint.kind == "gemini" {
@@ -802,12 +809,21 @@ pub(crate) mod tests {
         responses: Vec<(u16, Value)>,
         retry_header: bool,
     ) -> (String, thread::JoinHandle<Vec<(String, Value)>>) {
+        let count = responses.len();
+        let mut responses = responses.into_iter();
+        scripted_server(count, retry_header, move |_| responses.next().unwrap())
+    }
+    pub(crate) fn scripted_server(
+        count: usize,
+        retry_header: bool,
+        mut response: impl FnMut(&Value) -> (u16, Value) + Send + 'static,
+    ) -> (String, thread::JoinHandle<Vec<(String, Value)>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
         let handle = thread::spawn(move || {
             let mut requests = Vec::new();
-            for (status, body) in responses {
+            for _ in 0..count {
                 let start = std::time::Instant::now();
                 let mut socket = loop {
                     match listener.accept() {
@@ -847,6 +863,7 @@ pub(crate) mod tests {
                     serde_json::from_slice(&bytes)
                         .unwrap_or(Value::String(String::from_utf8_lossy(&bytes).into_owned())),
                 ));
+                let (status, body) = response(&requests.last().unwrap().1);
                 let body = body.to_string();
                 let retry = if retry_header {
                     "Retry-After: 0\r\n"

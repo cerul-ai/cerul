@@ -8,6 +8,8 @@ use std::{
 };
 
 pub const QUERY_TEMPLATE: &str = "task: search result | query: {query}";
+pub const DOCUMENT_TEMPLATE: &str = "title: none | text: {text}";
+pub const DEFAULT_EMBEDDING_DIMS: usize = 3072;
 
 /// Public vector-space identity. Credentials and key environment names are excluded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -47,7 +49,7 @@ pub struct Endpoint {
     pub base_url: String,
     pub api_key_env: String,
     pub dims: Option<usize>,
-    /// None means speech has not been configured; false is an explicit opt-out.
+    /// False is an explicit opt-out. Unset speech is automatic; vision defaults on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
 }
@@ -90,7 +92,7 @@ impl Default for Config {
             enabled: None,
         };
         Self {
-            embedding: endpoint("gemini-embedding-2", Some(1536)),
+            embedding: endpoint("gemini-embedding-2", Some(DEFAULT_EMBEDDING_DIMS)),
             vision: endpoint("gemini-3.8-flash", None),
             transcription: endpoint("gemini-3.5-transcribe", None),
             perception: Perception {
@@ -186,7 +188,7 @@ impl Config {
                 "dims",
                 "enabled",
             ] {
-                if (field == "enabled" && section != "transcription")
+                if (field == "enabled" && !matches!(section, "transcription" | "vision"))
                     || (section == "perception" && !matches!(field, "base_url" | "api_key_env"))
                 {
                     continue;
@@ -351,7 +353,11 @@ mod tests {
     #[test]
     fn space_is_endpoint_specific_but_not_key_specific() {
         let mut config = Config::default();
+        assert_eq!(config.embedding.dims, Some(3072));
         let original = config.space_id().unwrap();
+        config.embedding.dims = Some(1536);
+        assert_ne!(original, config.space_id().unwrap());
+        config.embedding.dims = Some(3072);
         config.embedding.api_key_env = "OTHER_KEY".into();
         assert_eq!(original, config.space_id().unwrap());
         config.embedding.base_url = "https://another.example/v1".into();

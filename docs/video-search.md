@@ -20,8 +20,10 @@ cerul index ./demo.mp4
 cerul status ./demo.mp4
 ```
 
-The default pipeline runs screen OCR, transcribes an audio track when present,
-and embeds video, speech, and screen text. Each completed artifact is stored in
+The default pipeline runs screen OCR and available ASR concurrently, embeds
+video, speech, and screen text, then produces visual scene descriptions and a
+grounded overview. OCR, embedding proxies, and understanding reuse timestamped
+samples; each consumer selects its own resolution. Each completed artifact is stored in
 `demo.mp4.cerul/`; the workspace holds disposable indexes and proxy caches.
 Media directories that cannot be written use workspace sidecars instead.
 
@@ -50,8 +52,7 @@ Frames are cached under workspace `cache/previews/`, query embeddings under
 `cache/queries/`, and both are freed by `cerul remove --cache`. Repeating the
 same query in the same embedding space reuses its cached vector, including
 when you change filters or the result limit. Changing the query text requires
-a new embedding request. Expired capability checks may still contact the
-provider. Visual hits cover a whole index window; re-index with a shorter
+a new embedding request. A valid cached query does not probe the provider. Visual hits cover a whole index window; re-index with a shorter
 `--chunk` when you need finer moments.
 
 ## Add semantic annotations
@@ -116,8 +117,9 @@ For action labels in ordinary videos or demonstrations, see the
 
 Use `cerul config` to choose Gemini, Groq, OpenAI, or a custom transcription
 service. Choose Disabled to keep video embeddings and local OCR without a separate
-transcript. The chooser appears when indexing audio with missing ASR settings;
-non-interactive runs skip unconfigured ASR. See [configuration](configuration.md).
+transcript. With a Gemini key already available, the CLI automatically uses
+Gemini transcription without another chooser. Explicit settings are preserved;
+non-interactive runs never prompt. See [configuration](configuration.md).
 
 ## Diagnose speech failures
 
@@ -144,3 +146,62 @@ Cerul does not automatically save a complete request/response log. Retrying can
 make new billable model calls. If speech is not needed, `cerul index ./video.mp4
 --no-audio` explicitly skips transcription; visual indexing still uses the
 configured embedding endpoint.
+
+## Index progress and search examples
+
+After choosing Index and a path in the interactive guide, processing starts
+immediately. Explicit `--dry-run` remains available for inspecting planned work.
+Live terminal output shows the current stage, a progress bar, and an estimated
+remaining time for that stage after enough work has completed. Preparation and
+single-request stages show an indeterminate estimate rather than a fabricated ETA.
+Redirected output uses plain lines; `--json` keeps structured progress events.
+
+The completion message uses a generated title when available and shortens long
+file names otherwise. It never renames your files. Each episode stores zero to
+three generated suggestions with source record IDs and revisions. Visual
+suggestions cite scene records; speech and screen suggestions cite their own
+tracks. Commands preserve workspace/model overrides and scope to that video.
+The examples show supported content; they do not guarantee a retrieval rank.
+
+If understanding is unavailable or explicitly skipped, Cerul uses extractive
+examples from current annotations, speech, or OCR. Extractive OCR examples use
+`--text`. With no usable evidence, it shows one generic visual-search command.
+A partial result keeps completed work and prints the original command to retry.
+
+## Inspect video understanding
+
+```sh
+cerul status ./demo.mp4 --timeline --type summary
+cerul status ./demo.mp4 --timeline --type scene
+cerul status ./demo.mp4 --timeline --type section
+cerul status ./demo.mp4 --timeline --type summary --json
+```
+
+The sidecar stores `semantic.scene.jsonl`, `semantic.section.jsonl`, and
+`semantic.summary.jsonl` using the existing `annotation/1` envelope. Scenes
+contain visible descriptions, objects, actions, a content kind, and input sample
+times. Lighting and camera movement may appear in the description when visible;
+these are observations, not metric camera trajectories. Sections are coarse
+navigation. The summary contains a short title, overview, coverage, dependencies,
+and up to three grounded search suggestions. Original OCR and transcript text
+remain in their own files. Sparse samples do not establish continuous observation
+or exact action boundaries.
+
+`cerul status ./demo.mp4 --json` also reports per-stream understanding status,
+including a deliberate skip, incomplete work, and observed/failed windows.
+Descriptions have separate cached vectors for evaluation; default search still
+uses video, speech, and screen text. The [evaluation guide](development/retrieval-evaluation.md)
+explains the gate before description and lexical scores enter default ranking.
+
+Without ASR, visual scenes and suggestions still work. Adding or correcting ASR
+invalidates the dependent overview; compatible visual generation is reused.
+A failed refresh preserves valid previous evidence for unchanged inputs. Source
+revisions are retained under the sidecar's `revisions/` directory.
+
+Manual scene edits belong in `corrections/semantic.scene.json`, using the
+[generated correction schema](../schemas/scene-corrections.json). Each edit pins
+the original record ID and its `base_revision` (the timeline entry's `revision`
+from `status --timeline --type scene --json`). Re-indexing applies the edits without
+changing their IDs or intervals. Generation never writes this correction file.
+When a new generation conflicts or re-segments the scene, Cerul reports that the
+edit needs rebasing and withholds the disputed replacement.

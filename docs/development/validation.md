@@ -15,6 +15,7 @@ cargo test --locked
 cargo run --locked --example generate_schemas -- --check
 python3 scripts/check-docs.py
 python3 -m unittest discover -s tests -p "test_documentation.py"
+python3 -m unittest discover -s tests -p "test_retrieval_evaluation.py"
 CERUL_TEST_BINARY="$PWD/target/debug/cerul" python3 -m unittest discover -s tests -p "test_setup.py"
 cargo package --list --locked > /tmp/cerul-package-files.txt
 python3 scripts/check-docs.py --package-list /tmp/cerul-package-files.txt
@@ -136,9 +137,10 @@ and result for each check. Review them before the [release process](releases.md)
 
 - [ ] Repeating unchanged processing reuses completed outputs without model
   calls. Changing only the embedding model recomputes only embeddings.
-- [ ] Repeating the same search text reuses its query vector. Record capability
-  cache age separately: an expired probe can still call the endpoint. Distinguish
-  processing, query embeddings, and capability probes when counting calls.
+- [ ] Repeating the same search text reuses its query vector without a capability
+  probe, including when the probe cache has expired. A query cache miss may
+  probe the endpoint. Distinguish processing, query embeddings, and capability
+  probes when counting calls.
 - [ ] Delete workspace indexes and rebuild from sidecar vectors with zero model
   calls. Interrupt indexing with Ctrl-C; resumption fills gaps, preserves
   completed units, and leaves no incomplete final artifacts.

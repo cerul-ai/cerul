@@ -69,7 +69,7 @@ pub fn video_quality(
     input(&mut command, source, source_range)?;
     command.args(["-map", "0:v:0"]);
     if proxy {
-        command.args(["-an", "-vf", "scale='min(480,iw)':'min(480,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=2"]);
+        command.args(["-an", "-vf", "scale='min(480,iw)':'min(480,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=1:round=up"]);
     } else {
         command.args(["-map", "0:a:0?", "-c:a", "aac"]);
     }

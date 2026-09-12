@@ -120,6 +120,13 @@
         },
         "sidecar": {
           "type": "string"
+        },
+        "understanding": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/RunStatus"
+          },
+          "default": {}
         }
       },
       "required": [
@@ -202,6 +209,42 @@
         "base_url"
       ]
     },
+    "RunStatus": {
+      "type": "object",
+      "properties": {
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "failed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimeRange"
+          }
+        },
+        "source_hash": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "successful": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimeRange"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "source_hash",
+        "successful",
+        "failed",
+        "errors"
+      ]
+    },
     "SpaceMetadata": {
       "description": "Public vector-space identity. Credentials and key environment names are excluded.",
       "type": "object",
@@ -231,6 +274,24 @@
         "model",
         "dims",
         "query_template"
+      ]
+    },
+    "TimeRange": {
+      "description": "A nonempty half-open interval on an episode's integer-microsecond timeline.",
+      "type": "object",
+      "properties": {
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "required": [
+        "start_us",
+        "end_us"
       ]
     }
   }

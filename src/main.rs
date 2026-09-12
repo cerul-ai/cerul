@@ -93,7 +93,7 @@ struct Cli {
     /// Redo work even when a valid result already exists.
     #[arg(long, global = true, help_heading = ADVANCED)]
     recompute: bool,
-    /// Override a configuration field, for example embedding.dims=1536.
+    /// Override a configuration field, for example embedding.dims=3072.
     #[arg(
         long = "set",
         global = true,
@@ -321,6 +321,9 @@ struct IndexArgs {
     /// Skip screen text recognition.
     #[arg(long)]
     no_ocr: bool,
+    /// Skip visual descriptions, sections, and the episode overview.
+    #[arg(long)]
+    no_understanding: bool,
     /// Length of each searchable window, for example 30s.
     #[arg(long, default_value="30s", value_parser=duration, value_name = "DURATION", help_heading = ADVANCED)]
     chunk: i64,
@@ -754,7 +757,7 @@ enum Outcome {
         seeks: bool,
         opened: bool,
     },
-    Index(pipeline::Report, BTreeMap<String, PathBuf>),
+    Index(pipeline::Report, render::IndexContext),
     Search(cerul::search::Report, render::SearchContext),
     Annotate(cerul::annotate::pipeline::Report, BTreeMap<String, PathBuf>),
 }
@@ -908,7 +911,11 @@ impl Sink {
             if seen.lock().unwrap().insert(endpoint.base_url.clone()) {
                 sink.emit(Event::Log {
                     level: "info".into(),
-                    msg: format!("{verb} {}", endpoint.base_url),
+                    msg: if sink.mode == Mode::Human && verb == MEDIA_NOTICE {
+                        "Model processing uses your key; API charges may apply.".into()
+                    } else {
+                        format!("{verb} {}", endpoint.base_url)
+                    },
                 });
             }
         })
@@ -942,15 +949,9 @@ fn config(cli: &Cli) -> Result<Config> {
     let environment: BTreeMap<_, _> = std::env::vars()
         .filter(|(key, _)| key.starts_with("CERUL_"))
         .collect();
-    let config = Config::resolve(&paths, &environment, toml::Value::Table(overlay))?;
-    let fixed = Config::default().embedding;
-    anyhow::ensure!(
-        config.embedding.kind == fixed.kind
-            && config.embedding.model == fixed.model
-            && config.embedding.base_url.trim_end_matches('/') == fixed.base_url
-            && config.embedding.dims == fixed.dims,
-        "embedding is fixed to Gemini gemini-embedding-2 (1536 dimensions); only its credential setting can be changed"
-    );
+    let mut config = Config::resolve(&paths, &environment, toml::Value::Table(overlay))?;
+    let speech_key = setup::available(&config.transcription);
+    setup::automatic(&mut config.transcription, speech_key);
     Ok(config)
 }
 fn models(config: &Config) -> render::ModelSummary {
@@ -1145,12 +1146,18 @@ async fn execute(
                 if let Some(kind) = r#type {
                     let item = kind.strip_prefix("semantic.").unwrap_or(kind);
                     anyhow::ensure!(
-                        cerul::annotations::SEMANTIC_ITEMS.contains(&item),
+                        cerul::annotations::SEMANTIC_ITEMS.contains(&item)
+                            || cerul::index::understanding::ITEMS.contains(&item),
                         CliError(
                             2,
                             format!(
                                 "unknown annotation type {item}; choose one of: {}",
-                                cerul::annotations::SEMANTIC_ITEMS.join(", ")
+                                cerul::annotations::SEMANTIC_ITEMS
+                                    .iter()
+                                    .chain(cerul::index::understanding::ITEMS)
+                                    .copied()
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             )
                         )
                     );
@@ -1540,17 +1547,20 @@ async fn execute(
             ))
         }
         Some(Command::Index(args)) => {
+            anyhow::ensure!(
+                args.jobs > 0 && args.rpm != Some(0),
+                CliError(2, "jobs and RPM must be positive".into())
+            );
+            cerul::media::chunks(1, args.chunk, args.overlap).map_err(|e| category(2, e))?;
+            anyhow::ensure!(
+                args.chunk <= 32_000_000,
+                CliError(2, "chunk must be at most 32s".into())
+            );
+            readable(&args.paths)?;
+            cerul::media::check_dependencies().map_err(|e| category(3, e))?;
             let mut resolved = config(cli).map_err(|e| category(2, e))?;
-            if !cli.dry_run
-                && !cli.json
-                && !cli.quiet
-                && !cli.yes
-                && guide::asks(&[])
-                && !args.no_audio
-                && resolved.transcription.enabled != Some(false)
-                && (resolved.transcription.enabled.is_none()
-                    || !setup::available(&resolved.transcription))
-                && pipeline::pending_transcription(
+            if !args.no_audio && resolved.transcription.enabled.is_none() {
+                let pending = pipeline::pending_transcription(
                     &args.paths,
                     &workspace,
                     &resolved,
@@ -1564,33 +1574,28 @@ async fn execute(
                         },
                         ..Default::default()
                     },
-                )?
-            {
-                setup::configure(&resolved, cancel.clone()).await?;
-                resolved = config(cli).map_err(|e| category(2, e))?;
+                )?;
+                if !pending {
+                    // Keep complete cached speech usable after credentials are removed.
+                    resolved.transcription.enabled = Some(true);
+                } else if !cli.dry_run
+                    && !cli.json
+                    && !cli.quiet
+                    && !cli.yes
+                    && guide::asks(&[])
+                    && !setup::available(&resolved.embedding)
+                {
+                    credentials::set(&resolved.embedding, cancel.clone()).await?;
+                    resolved = config(cli).map_err(|e| category(2, e))?;
+                }
             }
             let config = resolved;
-            anyhow::ensure!(
-                args.jobs > 0 && args.rpm != Some(0),
-                CliError(2, "jobs and RPM must be positive".into())
-            );
-            cerul::media::chunks(1, args.chunk, args.overlap).map_err(|e| category(2, e))?;
-            anyhow::ensure!(
-                args.chunk <= 32_000_000,
-                CliError(2, "chunk must be at most 32s".into())
-            );
-            readable(&args.paths)?;
-            cerul::media::check_dependencies().map_err(|e| category(3, e))?;
             if sink.mode == Mode::Human && !cli.quiet && !cli.dry_run {
                 let palette = Palette::new(console::colors_enabled_stderr());
-                let _ = render::index_plan(
-                    &mut io::stderr(),
-                    &palette,
-                    &args.paths,
-                    args.no_ocr,
-                    args.no_audio || config.transcription.enabled != Some(true),
-                    &config.transcription.model,
-                );
+                let _ = render::index_plan(&mut io::stderr(), &palette, &args.paths);
+            }
+            if !cli.dry_run {
+                sink.spinner("Preparing video…");
             }
             let events = sink.clone();
             let report = pipeline::run(
@@ -1606,6 +1611,7 @@ async fn execute(
                     },
                     no_audio: args.no_audio,
                     no_ocr: args.no_ocr,
+                    no_understanding: args.no_understanding,
                     streams: args.streams.clone(),
                     only: args.only.clone(),
                     jobs: args.jobs,
@@ -1620,7 +1626,25 @@ async fn execute(
             .await?;
             sink.finish();
             let code = if report.partial { 6 } else { 0 };
-            Ok((Outcome::Index(report, names(&workspace)), code))
+            let mut search_prefix = vec!["cerul".into()];
+            if let Some(path) = &cli.workspace {
+                search_prefix.extend(["--workspace".into(), path.to_string_lossy().into_owned()]);
+            }
+            for setting in &cli.overrides {
+                search_prefix.extend(["--set".into(), setting.clone()]);
+            }
+            search_prefix.push("search".into());
+            Ok((
+                Outcome::Index(
+                    report,
+                    render::IndexContext {
+                        names: names(&workspace),
+                        retry: invocation.to_vec(),
+                        search_prefix,
+                    },
+                ),
+                code,
+            ))
         }
     }
 }
@@ -1793,7 +1817,11 @@ async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::pr
                 .map(|c| c.embedding.api_key_env)
                 .unwrap_or_else(|_| "GEMINI_API_KEY".into());
             let hint = if code == 5 {
-                None
+                matches!(
+                    &cli.command,
+                    Some(Command::Index(_)) | Some(Command::Annotate(_))
+                )
+                .then(|| format!("retry with {}", render::shell_command(&invocation)))
             } else {
                 hint(code, &error, &env)
             };

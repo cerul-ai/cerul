@@ -1,0 +1,74 @@
+{
+  "$id": "https://cerul.ai/schemas/scene-corrections/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SceneCorrections",
+  "description": "User-owned edits live outside generated products and are never overwritten.",
+  "type": "object",
+  "properties": {
+    "edits": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SceneCorrection"
+      }
+    },
+    "schema": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "edits"
+  ],
+  "$defs": {
+    "ContentKind": {
+      "type": "string",
+      "enum": [
+        "talk",
+        "slides",
+        "screen",
+        "demo",
+        "broll",
+        "static"
+      ]
+    },
+    "SceneCorrection": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "base_revision": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "record_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "record_id",
+        "base_revision",
+        "description",
+        "objects",
+        "actions",
+        "kind"
+      ]
+    }
+  }
+}

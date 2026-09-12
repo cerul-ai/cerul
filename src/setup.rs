@@ -16,6 +16,13 @@ pub fn available(endpoint: &Endpoint) -> bool {
     state.env_set || state.saved
 }
 
+/// Resolve automatic speech without changing an explicit provider or opt-out.
+pub fn automatic(endpoint: &mut Endpoint, key_available: bool) {
+    if endpoint.enabled.is_none() && key_available {
+        endpoint.enabled = Some(true);
+    }
+}
+
 fn preset(name: &str) -> Endpoint {
     let mut endpoint = Config::default().transcription;
     endpoint.enabled = Some(true);
@@ -80,7 +87,6 @@ pub async fn configure(config: &Config, cancel: CancellationToken) -> Result<boo
     if !available(&config.embedding) {
         crate::credentials::set(&config.embedding, cancel.clone()).await?;
     }
-    eprintln!("Embedding: Gemini gemini-embedding-2 (1536 dimensions)");
     let palette = crate::render::Palette::new(console::colors_enabled_stderr());
     use crate::guide::Choice;
     let selection = crate::guide::select(
@@ -118,21 +124,7 @@ pub async fn configure(config: &Config, cancel: CancellationToken) -> Result<boo
                 "Using {} from the environment; change that variable to replace it.",
                 endpoint.api_key_env
             );
-        } else if key_state.saved {
-            let keep = crate::guide::select(
-                &palette,
-                "ASR credential",
-                &[
-                    Choice::new("Use saved key", "", true),
-                    Choice::new("Replace saved key", "Enter a new hidden key", false),
-                ],
-            )?;
-            match keep {
-                Some(false) => crate::credentials::set(&endpoint, cancel.clone()).await?,
-                Some(true) => {}
-                None => return Ok(false),
-            }
-        } else {
+        } else if !key_state.saved {
             crate::credentials::set(&endpoint, cancel.clone()).await?;
         }
         // Even a shared or environment key must be checked against the selected ASR model.
@@ -145,16 +137,30 @@ pub async fn configure(config: &Config, cancel: CancellationToken) -> Result<boo
             true,
         )
         .await?;
-        eprintln!("ASR connection and timestamp response verified (silent test clip).");
     }
     save(&endpoint)?;
-    eprintln!("Saved defaults. Run cerul config to change them.");
+    eprintln!("Saved transcription settings.");
     Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn automatic_speech_preserves_explicit_settings() {
+        let mut endpoint = preset("gemini");
+        endpoint.enabled = None;
+        automatic(&mut endpoint, false);
+        assert_eq!(endpoint.enabled, None);
+        automatic(&mut endpoint, true);
+        assert_eq!(endpoint.enabled, Some(true));
+        endpoint.enabled = Some(false);
+        automatic(&mut endpoint, true);
+        assert_eq!(endpoint.enabled, Some(false));
+        let mut custom = preset("groq");
+        automatic(&mut custom, true);
+        assert_eq!(custom.model, "whisper-large-v3-turbo");
+    }
     #[test]
     fn presets_share_protocol_not_credentials() {
         let groq = preset("groq");

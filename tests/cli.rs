@@ -10,6 +10,7 @@ fn cli(directory: &Path, args: &[&str]) -> Output {
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
         .env("HOME", directory)
+        .env("CERUL_VISION_ENABLED", "false")
         .args(args)
         .output()
         .unwrap()
@@ -18,6 +19,87 @@ fn final_json(output: &Output) -> Value {
     let text = std::str::from_utf8(&output.stdout).unwrap();
     assert_eq!(text.lines().count(), 1, "{text}");
     serde_json::from_str(text).unwrap()
+}
+
+#[test]
+fn speech_defaults_reuse_keys_and_respect_opt_out_without_requests() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("audio.mp4");
+    let made = Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=size=64x64:rate=2:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-shortest",
+        ])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        made.status.success(),
+        "{}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+    let run = |key: bool, disabled: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cerul"));
+        command
+            .current_dir(dir.path())
+            .env_clear()
+            .env("HOME", dir.path())
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .args(["--json", "--dry-run", "index", "audio.mp4"]);
+        if key {
+            command.env("GEMINI_API_KEY", "fixture-key-never-sent");
+        }
+        if disabled {
+            command.args(["--set", "transcription.enabled=false"]);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        final_json(&output)["episodes"][0]["streams"][0]["speech"].clone()
+    };
+    assert_eq!(run(false, false), "not_configured");
+    assert_eq!(run(true, false), "planned");
+    assert_eq!(run(true, true), "disabled");
+    assert!(
+        !dir.path().join(".cerul").exists(),
+        "dry run must not write or probe"
+    );
+    let credentials = dir.path().join(".cerul/credentials.json");
+    std::fs::create_dir(credentials.parent().unwrap()).unwrap();
+    let scope = cerul::providers::credential_scope(&cerul::config::Config::default().embedding);
+    std::fs::write(
+        &credentials,
+        serde_json::to_vec(&std::collections::BTreeMap::from([(
+            scope,
+            "fixture-saved-key-never-sent",
+        )]))
+        .unwrap(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&credentials, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    assert_eq!(run(false, false), "planned");
+    assert_eq!(run(false, true), "disabled");
+    assert!(!dir.path().join(".cerul/config.toml").exists());
 }
 fn video(directory: &Path) {
     let output = Command::new("ffmpeg")
@@ -59,14 +141,14 @@ fn json_argument_errors_and_dry_run_are_machine_readable_and_do_not_write() {
     assert!(dry.stderr.is_empty());
 }
 #[test]
-fn unsupported_embedding_configuration_is_rejected_before_processing() {
+fn configurable_embedding_space_is_validated_before_processing() {
     let dir = tempfile::tempdir().unwrap();
     video(dir.path());
     for setting in [
-        "embedding.model=\"other\"",
-        "embedding.kind=\"openai\"",
-        "embedding.base_url=\"http://127.0.0.1:9/v1\"",
-        "embedding.dims=768",
+        "embedding.model=\"\"",
+        "embedding.kind=\"invalid\"",
+        "embedding.base_url=\"file:///tmp/model\"",
+        "embedding.dims=0",
     ] {
         let output = cli(
             dir.path(),
@@ -75,6 +157,19 @@ fn unsupported_embedding_configuration_is_rejected_before_processing() {
         assert_eq!(output.status.code(), Some(2), "{output:?}");
         assert!(!dir.path().join("sample.mp4.cerul").exists());
     }
+    let output = cli(
+        dir.path(),
+        &[
+            "--json",
+            "index",
+            "sample.mp4",
+            "--dry-run",
+            "--set",
+            "embedding.dims=3072",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert!(!dir.path().join("sample.mp4.cerul").exists());
 }
 
 #[test]
@@ -428,7 +523,7 @@ fn offline_commands_ignore_unusable_saved_credentials() {
 }
 
 #[test]
-fn missing_embedding_key_and_unsupported_endpoint_fail_before_processing() {
+fn missing_key_fails_early_and_configurable_unreachable_endpoint_reports_partial() {
     let dir = tempfile::tempdir().unwrap();
     video(dir.path());
     let output = cli(
@@ -444,6 +539,7 @@ fn missing_embedding_key_and_unsupported_endpoint_fail_before_processing() {
         .env("PATH", std::env::var_os("PATH").unwrap())
         .env("HOME", dir.path())
         .env("GEMINI_API_KEY", "test-key")
+        .env("CERUL_VISION_ENABLED", "false")
         .args([
             "--json",
             "--set",
@@ -455,8 +551,9 @@ fn missing_embedding_key_and_unsupported_endpoint_fail_before_processing() {
         ])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(2), "{:?}", output);
+    assert_eq!(output.status.code(), Some(6), "{:?}", output);
     assert!(!String::from_utf8_lossy(&output.stdout).contains("credential file"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("generativelanguage.googleapis.com"));
 }
 
 #[test]

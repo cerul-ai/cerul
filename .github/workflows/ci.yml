@@ -27,6 +27,7 @@ jobs:
           python-version: "3.12"
       - run: python3 scripts/check-docs.py
       - run: python3 -m unittest discover -s tests -p "test_documentation.py"
+      - run: python3 -m unittest discover -s tests -p "test_retrieval_evaluation.py"
 
   core:
     name: Core (${{ matrix.os }})

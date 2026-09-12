@@ -1,7 +1,7 @@
 //! Local Lance tables are disposable projections of authoritative sidecars.
 use crate::index::{
     discover::read_registry,
-    vectors::{self, VectorRow},
+    vectors::{self, Kind, VectorRow},
 };
 use anyhow::{Context, Result, ensure};
 use arrow_array::{Array, Float32Array, RecordBatch, RecordBatchIterator};
@@ -111,6 +111,29 @@ impl VectorIndex {
     pub async fn count(&self) -> Result<usize> {
         Ok(self.table.count_rows(None).await?)
     }
+    pub async fn count_matching(&self, predicate: &str) -> Result<usize> {
+        Ok(self.table.count_rows(Some(predicate.into())).await?)
+    }
+    /// Independent budgets prevent one evidence kind from consuming another's
+    /// candidates. These are separate prefiltered SDK queries, not a claim that
+    /// the engine executes one shared physical scan.
+    pub async fn search_tracks(
+        &self,
+        query: &[f32],
+        filter: &str,
+        kinds: &[Kind],
+        limit: usize,
+    ) -> Result<Vec<Vec<(VectorRow, f32)>>> {
+        use futures::StreamExt;
+        futures::stream::iter(kinds.iter().copied())
+            .map(|kind| async move {
+                let filter = format!("({filter}) AND kind = {}", literal(kind.as_str()));
+                self.search(query, Some(&filter), limit).await
+            })
+            .buffered(4)
+            .try_collect()
+            .await
+    }
     /// Remove only projections whose authoritative embedding state is no longer usable.
     /// This keeps ordinary searches incremental while an interrupted upstream station
     /// refresh cannot leave stale Lance rows queryable.
@@ -131,12 +154,18 @@ impl VectorIndex {
                 if !matches!(stream, crate::episode::Stream::Video { .. }) {
                     continue;
                 }
-                if !super::embed::usable(
-                    &entry.sidecar,
-                    stream.id(),
-                    &episode.time.reference,
-                    &self.space,
-                )? {
+                if !entry
+                    .sidecar
+                    .join("embeddings")
+                    .join(format!("{}.parquet", self.space))
+                    .is_file()
+                    || !super::embed::usable(
+                        &entry.sidecar,
+                        stream.id(),
+                        &episode.time.reference,
+                        &self.space,
+                    )?
+                {
                     self.replace(&episode.episode_id, stream.id(), &[]).await?;
                     check_cancelled(cancel)?;
                 }
@@ -260,6 +289,42 @@ mod tests {
             space_id: space.into(),
             params_hash: "params".into(),
         }
+    }
+    #[tokio::test]
+    async fn per_track_budgets_preserve_visual_candidates_behind_text_distractors() {
+        let dir = tempfile::tempdir().unwrap();
+        let space = "c".repeat(64);
+        let index = VectorIndex::open(dir.path(), &space, 2, true)
+            .await
+            .unwrap();
+        let mut rows: Vec<_> = (0..50)
+            .map(|n| {
+                let mut row = fixture(&format!("speech-{n}"), "episode", vec![1., 0.], &space);
+                row.kind = Kind::Speech;
+                row
+            })
+            .collect();
+        rows.push(fixture("visual", "episode", vec![0.1, 0.9], &space));
+        index.replace("episode", "front", &rows).await.unwrap();
+        assert!(
+            index
+                .search(&[1., 0.], None, 5)
+                .await
+                .unwrap()
+                .iter()
+                .all(|(r, _)| r.kind == Kind::Speech)
+        );
+        let tracks = index
+            .search_tracks(
+                &[1., 0.],
+                "episode = 'episode'",
+                &[Kind::Video, Kind::Speech],
+                5,
+            )
+            .await
+            .unwrap();
+        assert_eq!(tracks[0][0].0.id, "visual");
+        assert_eq!(tracks[1].len(), 5);
     }
     #[tokio::test]
     async fn deleted_index_rebuilds_from_sidecar_and_drops_removed_rows() {

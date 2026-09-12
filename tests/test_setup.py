@@ -15,11 +15,12 @@ import unittest
 
 @unittest.skipUnless(os.environ.get("CERUL_TEST_BINARY"), "requires a built CLI")
 class SetupTests(unittest.TestCase):
-    def interact(self, home, steps, parent_ready=None):
+    def interact(self, home, steps, parent_ready=None, argv=None, expected_code=0):
         pid, fd = pty.fork()
         if pid == 0:
-            env = {"HOME": str(home), "PATH": os.environ["PATH"], "TERM": "xterm", "GEMINI_API_KEY": "fixture-embedding-key"}
-            os.execve(os.environ["CERUL_TEST_BINARY"], ["cerul", "config"], env)
+            env = {"HOME": str(home), "PATH": os.environ["PATH"], "TERM": "xterm", "GEMINI_API_KEY": "fixture-embedding-key", "CERUL_VISION_ENABLED": "false"}
+            os.chdir(home)
+            os.execve(os.environ["CERUL_TEST_BINARY"], argv or ["cerul", "config"], env)
         if parent_ready:
             parent_ready()
         output = b""
@@ -47,14 +48,14 @@ class SetupTests(unittest.TestCase):
                         os.write(fd, answer)
                 child, status = os.waitpid(pid, os.WNOHANG)
                 if child:
-                    self.assertEqual(os.waitstatus_to_exitcode(status), 0, output.decode(errors="replace"))
+                    self.assertEqual(os.waitstatus_to_exitcode(status), expected_code, output.decode(errors="replace"))
                     pid = None
                     break
             if pid:
                 child, status = os.waitpid(pid, 0 if eof else os.WNOHANG)
                 if child:
                     pid = None
-                    self.assertEqual(os.waitstatus_to_exitcode(status), 0, output.decode(errors="replace"))
+                    self.assertEqual(os.waitstatus_to_exitcode(status), expected_code, output.decode(errors="replace"))
                 else:
                     self.fail("setup did not complete: " + output.decode(errors="replace"))
             self.assertFalse(pending, output.decode(errors="replace"))
@@ -64,6 +65,19 @@ class SetupTests(unittest.TestCase):
             if pid:
                 os.kill(pid, signal.SIGKILL)
                 os.waitpid(pid, 0)
+
+    def test_index_starts_after_path_without_confirmation_or_requests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            # A missing file reaches validation immediately, before any model call.
+            output = self.interact(
+                home, [(b"Type a path", b"missing-video.mp4\n")],
+                argv=["cerul", "index"], expected_code=2,
+            )
+            self.assertNotIn(b"Preview only", output)
+            self.assertNotIn(b"Ready", output)
+            self.assertNotIn(b"ASR model", output)
+            self.assertFalse((home / ".cerul").exists())
 
     def test_disabled_choice_is_saved_without_requesting_another_key(self):
         with tempfile.TemporaryDirectory() as directory:

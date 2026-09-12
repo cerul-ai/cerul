@@ -1,12 +1,11 @@
 pub mod filter;
 
 use crate::{
-    annotations::AnnotationFile,
     config::Config,
     episode::{Episode, Stream, TimeRange},
     index::{
         discover, lance,
-        records::{self, RecordIndex, Row},
+        records::{self, Row},
         vectors::Kind,
     },
     media,
@@ -121,6 +120,17 @@ impl Options {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EvidenceScore {
+    pub vector_id: String,
+    pub kind: Kind,
+    pub start_us: i64,
+    pub end_us: i64,
+    /// Uncalibrated cosine similarity in the configured embedding space.
+    pub raw_score: f32,
+    /// One-based rank in this track's prefiltered candidate list.
+    pub rank: usize,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Hit {
     pub episode: String,
     pub stream: String,
@@ -128,6 +138,8 @@ pub struct Hit {
     pub end_us: i64,
     pub frame_range: Option<[u64; 2]>,
     pub score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_scores: Vec<EvidenceScore>,
     pub matched: Option<Kind>,
     pub excerpt: String,
     pub annotations: Vec<Row>,
@@ -192,6 +204,7 @@ fn hit(episode: &str, stream: &str, range: TimeRange, rows: &[Row]) -> Hit {
         end_us: range.end_us,
         frame_range: None,
         score: None,
+        evidence_scores: Vec::new(),
         matched: None,
         excerpt: String::new(),
         annotations: annotations(rows, episode, stream, range),
@@ -266,6 +279,7 @@ fn merge_hits(mut hits: Vec<Hit>, vector: bool) -> Vec<Hit> {
                 previous.excerpt.push_str(&next.excerpt);
             }
             previous.annotations.append(&mut next.annotations);
+            previous.evidence_scores.append(&mut next.evidence_scores);
             previous
                 .annotations
                 .sort_by(|a, b| (&a.annotation, &a.record.id).cmp(&(&b.annotation, &b.record.id)));
@@ -339,69 +353,80 @@ async fn run_inner(
         episode.validate()?;
         episodes.insert(episode.episode_id.clone(), episode);
     }
-    if vector {
+    let vector_index = if vector {
         let dims = config
             .embedding
             .dims
             .context("embedding dimensions missing")?;
-        let mut available = false;
-        for entry in registry
-            .iter()
-            .filter(|entry| episodes.contains_key(&entry.episode_id))
-        {
-            let path = entry
-                .sidecar
-                .join("embeddings")
-                .join(format!("{space}.parquet"));
-            if !path.is_file() {
-                continue;
-            }
-            let episode = &episodes[&entry.episode_id];
-            for row in crate::index::vectors::read(&path, dims)? {
-                if row.episode == entry.episode_id
-                    && row.space_id == space
-                    && kind_allowed(&filters, row.kind)
-                    && filters.iter().all(|filter| match filter.key.as_str() {
-                        "episode" => filter.matches(Some(&Value::String(row.episode.clone()))),
-                        "stream" => filter.matches(Some(&Value::String(row.stream.clone()))),
-                        _ => true,
-                    })
-                    && episode.video(&row.stream).is_ok()
-                    && crate::index::embed::usable(
-                        &entry.sidecar,
-                        &row.stream,
-                        &episode.time.reference,
-                        &space,
-                    )?
-                {
-                    available = true;
-                    break;
+        let kinds: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen]
+            .into_iter()
+            .filter(|kind| kind_allowed(&filters, *kind))
+            .collect();
+        let mut selected = Vec::new();
+        for (id, episode) in &episodes {
+            for stream in &episode.streams {
+                if !matches!(stream, Stream::Video { .. }) {
+                    continue;
                 }
-            }
-            if available {
-                break;
+                if !filters.iter().all(|filter| match filter.key.as_str() {
+                    "episode" => filter.matches(Some(&Value::String(id.clone()))),
+                    "stream" => filter.matches(Some(&Value::String(stream.id().into()))),
+                    _ => true,
+                }) {
+                    continue;
+                }
+                selected.push(format!(
+                    "(episode = {} AND stream = {})",
+                    lance::literal(id),
+                    lance::literal(stream.id())
+                ));
             }
         }
-        if !available {
+        if selected.is_empty() || kinds.is_empty() {
             return Err(unavailable(
                 "no usable saved vectors in the selected scope match the configured embedding space; run index with this model",
             ));
         }
-    }
-    let record_index = RecordIndex::rebuild(workspace, &space).await?;
-    let rows = record_index.read(None).await?;
-    let mut files: Vec<AnnotationFile> = records::sidecars(workspace)?;
-    for file in &mut files {
-        file.records = rows
-            .iter()
-            .filter(|row| {
-                row.episode == file.header.episode
-                    && row.stream == file.header.stream
-                    && row.annotation == file.header.name
+        let index = match lance::VectorIndex::open(workspace, &space, dims, false).await {
+            Ok(index) => index,
+            Err(error) if error.to_string().contains("embedding index is missing") => {
+                lance::rebuild(workspace, &space, dims).await?
+            }
+            Err(error) => return Err(error),
+        };
+        index.prune_incomplete(workspace, &cancel).await?;
+        let predicate = format!(
+            "({}) AND kind IN ({})",
+            selected.join(" OR "),
+            kinds
+                .iter()
+                .map(|kind| lance::literal(kind.as_str()))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        if index.count_matching(&predicate).await? == 0 {
+            return Err(unavailable(
+                "no usable saved vectors in the selected scope match the configured embedding space; run index with this model",
+            ));
+        }
+        Some(index)
+    } else {
+        None
+    };
+    // Read each authoritative file once. Search does not need to rewrite a
+    // complete Lance annotation projection only to read the same records back.
+    let files = records::sidecars(workspace)?;
+    let rows: Vec<Row> = files
+        .iter()
+        .flat_map(|file| {
+            file.records.iter().map(|record| Row {
+                episode: file.header.episode.clone(),
+                stream: file.header.stream.clone(),
+                annotation: file.header.name.clone(),
+                record: record.clone(),
             })
-            .map(|row| row.record.clone())
-            .collect();
-    }
+        })
+        .collect();
     let mut scopes = BTreeMap::new();
     for (id, episode) in &episodes {
         for stream in &episode.streams {
@@ -432,14 +457,9 @@ async fn run_inner(
             .embedding
             .dims
             .context("embedding dimensions missing")?;
-        let index = match lance::VectorIndex::open(workspace, &space, dims, false).await {
-            Ok(index) => index,
-            Err(error) if error.to_string().contains("embedding index is missing") => {
-                lance::rebuild(workspace, &space, dims).await?
-            }
-            Err(error) => return Err(error),
-        };
-        index.prune_incomplete(workspace, &cancel).await?;
+        let index = vector_index
+            .as_ref()
+            .expect("vector search opened its projection");
         let allowed: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen]
             .into_iter()
             .filter(|kind| kind_allowed(&filters, *kind))
@@ -464,7 +484,6 @@ async fn run_inner(
                 let mut provider =
                     Provider::from_env(config.embedding.clone(), 1, None, cancel.clone())?;
                 provider.request_notice = options.request_notice.clone();
-                probes::check(&provider, probes::Capability::Embedding, workspace, false).await?;
                 let (identity, input) = if let Some(path) = &options.image {
                     let bytes = fs::read(path)?;
                     let mime = match image::guess_format(&bytes)? {
@@ -492,6 +511,8 @@ async fn run_inner(
                 {
                     Some(vector) => vector,
                     None => {
+                        probes::check(&provider, probes::Capability::Embedding, workspace, false)
+                            .await?;
                         let vector = provider.embed(input, true).await?;
                         // A cache write must never fail the search that produced it.
                         if fs::create_dir_all(cached.parent().expect("cache path has a parent"))
@@ -506,16 +527,22 @@ async fn run_inner(
                 let mut budget = options.limit.saturating_mul(3).max(32).min(total);
                 loop {
                     cancelled(&cancel)?;
-                    let candidates = index.search(&query, Some(&predicate), budget).await?;
-                    let exhausted = candidates.len() < budget || budget == total;
-                    let below_threshold = candidates.last().is_some_and(|(_, score)| {
-                        options
-                            .threshold
-                            .is_some_and(|threshold| *score < threshold)
+                    let tracks = index
+                        .search_tracks(&query, &predicate, &allowed, budget)
+                        .await?;
+                    let exhausted =
+                        tracks.iter().all(|rows| rows.len() < budget) || budget == total;
+                    let below_threshold = options.threshold.is_some_and(|threshold| {
+                        tracks
+                            .iter()
+                            .all(|rows| rows.last().is_none_or(|(_, score)| *score < threshold))
                     });
+                    let candidates = tracks
+                        .into_iter()
+                        .flat_map(|track| track.into_iter().enumerate());
                     hits.clear();
                     let mut unique = BTreeSet::new();
-                    for (row, score) in candidates {
+                    for (rank, (row, score)) in candidates {
                         if options.threshold.is_some_and(|threshold| score < threshold) {
                             continue;
                         }
@@ -532,6 +559,14 @@ async fn run_inner(
                                 ));
                                 let mut found = hit(&row.episode, &row.stream, range, &rows);
                                 found.score = Some(score);
+                                found.evidence_scores.push(EvidenceScore {
+                                    vector_id: row.id.clone(),
+                                    kind: row.kind,
+                                    start_us: row.start_us,
+                                    end_us: row.end_us,
+                                    raw_score: score,
+                                    rank: rank + 1,
+                                });
                                 found.matched = Some(row.kind);
                                 found.excerpt = row.text.clone();
                                 hits.push(found);
@@ -612,7 +647,7 @@ async fn run_inner(
     }
     if vector {
         let mut intervals: BTreeMap<(String, String, i64, i64), Hit> = BTreeMap::new();
-        for found in hits {
+        for mut found in hits {
             let key = (
                 found.episode.clone(),
                 found.stream.clone(),
@@ -620,11 +655,17 @@ async fn run_inner(
                 found.end_us,
             );
             match intervals.get_mut(&key) {
-                Some(old) if found.score > old.score => *old = found,
+                Some(old) => {
+                    if found.score > old.score {
+                        old.score = found.score;
+                        old.matched = found.matched;
+                        old.excerpt = found.excerpt;
+                    }
+                    old.evidence_scores.append(&mut found.evidence_scores);
+                }
                 None => {
                     intervals.insert(key, found);
                 }
-                _ => {}
             }
         }
         hits = intervals.into_values().collect();
@@ -694,7 +735,7 @@ async fn run_inner(
 mod tests {
     use super::*;
     use crate::{
-        annotations::{Header, Model, Record},
+        annotations::{AnnotationFile, Header, Model, Record},
         index::vectors::{self, VectorRow},
     };
     use serde_json::json;
