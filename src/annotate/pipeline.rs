@@ -955,6 +955,8 @@ mod tests {
         let before = fs::read(&third.exports[0].annotations).unwrap();
         let loaded = super::super::video::load(&paths[0], &workspace).unwrap();
         assert_eq!(loaded.annotations.len(), 2);
+        let exported: super::super::export::Bundle = serde_json::from_slice(&before).unwrap();
+        assert_eq!(loaded.generation, exported.generation);
         let output = dir.path().join("review.mp4");
         let rendered = super::super::video::render(
             &paths[0],

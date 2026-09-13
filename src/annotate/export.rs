@@ -122,6 +122,12 @@ pub fn summary(bundle: &Bundle) -> String {
     output
 }
 
+pub(crate) fn canonicalize(annotations: &mut [AnnotationFile]) {
+    annotations.sort_by(|a, b| {
+        (&a.header.stream, &a.header.name).cmp(&(&b.header.stream, &b.header.name))
+    });
+}
+
 pub fn publish(
     episode: &Episode,
     sidecar: &Path,
@@ -173,9 +179,7 @@ pub fn publish(
             }
         }
     }
-    annotations.sort_by(|a, b| {
-        (&a.header.stream, &a.header.name).cmp(&(&b.header.stream, &b.header.name))
-    });
+    canonicalize(&mut annotations);
     let bundle = Bundle {
         schema: "annotations/1".into(),
         generator: Generator {

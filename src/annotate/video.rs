@@ -64,6 +64,7 @@ pub fn load(input: &Path, workspace: &Path) -> Result<Bundle> {
         }
     }
     ensure!(!annotations.is_empty(), "no published semantic annotations");
+    super::export::canonicalize(&mut annotations);
     Ok(Bundle {
         schema: "annotations/1".into(),
         generator: Generator {
@@ -78,6 +79,31 @@ pub fn load(input: &Path, workspace: &Path) -> Result<Bundle> {
     })
 }
 
+// Decode one frame with the same autorotation behavior used by composition.
+// Coded ffprobe dimensions do not describe rotated display-matrix inputs.
+fn display_dimensions(source: &Path) -> Result<(u32, u32)> {
+    let output = media::run(
+        media::command("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(source)
+            .args([
+                "-map",
+                "0:v:0",
+                "-frames:v",
+                "1",
+                "-an",
+                "-c:v",
+                "png",
+                "-f",
+                "image2pipe",
+                "pipe:1",
+            ]),
+    )?;
+    Ok(image::ImageReader::new(std::io::Cursor::new(output.stdout))
+        .with_guessed_format()?
+        .into_dimensions()?)
+}
+
 fn interrupted(cancel: &CancellationToken) -> Result<()> {
     if cancel.is_cancelled() {
         return Err(crate::providers::ProviderError {
@@ -90,6 +116,20 @@ fn interrupted(cancel: &CancellationToken) -> Result<()> {
 }
 
 pub fn render(
+    input: &Path,
+    workspace: &Path,
+    output: &Path,
+    stream: Option<&str>,
+    watermark: bool,
+    dry_run: bool,
+    cancel: &CancellationToken,
+) -> Result<Report> {
+    media::with_sync_cancellation(cancel.clone(), || {
+        render_inner(input, workspace, output, stream, watermark, dry_run, cancel)
+    })
+}
+
+fn render_inner(
     input: &Path,
     workspace: &Path,
     output: &Path,
@@ -181,7 +221,8 @@ pub fn render(
     let boundaries = boundaries.into_iter().collect::<Vec<_>>();
     let directory = tempfile::tempdir()?;
     let mut concat = "ffconcat version 1.0\n".to_owned();
-    let width = probe.width.max(32).div_ceil(2) * 2;
+    let (display_width, display_height) = display_dimensions(&source)?;
+    let width = display_width.max(32).div_ceil(2) * 2;
     let mut panel_height = 0;
     for (index, times) in boundaries.windows(2).enumerate() {
         interrupted(cancel)?;
@@ -228,7 +269,7 @@ pub fn render(
     let temp = tempfile::Builder::new()
         .suffix(".mp4")
         .tempfile_in(parent)?;
-    let height = probe.height.div_ceil(2) * 2;
+    let height = display_height.div_ceil(2) * 2;
     let start = source_start as f64 / 1e6;
     let end = source_end as f64 / 1e6;
     let filter = format!(
@@ -313,41 +354,9 @@ mod tests {
     use crate::annotations::{Header, Model, Record};
     use std::collections::BTreeMap;
 
-    #[test]
-    fn render_preserves_offset_vfr_timeline_audio_and_source() {
-        let dir = tempfile::tempdir().unwrap();
-        let source = dir.path().join("a quote's 视频.mp4");
-        media::run(
-            media::command("ffmpeg")
-                .args([
-                    "-v",
-                    "error",
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "testsrc2=size=128x96:rate=10:duration=1.5",
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "sine=frequency=440:duration=1.5",
-                    "-vf",
-                    "select='not(eq(n,2)+eq(n,3))',setpts=PTS+2/TB",
-                    "-af",
-                    "asetpts=PTS+2/TB",
-                    "-fps_mode",
-                    "vfr",
-                    "-c:v",
-                    "libx264",
-                    "-c:a",
-                    "aac",
-                ])
-                .arg(&source),
-        )
-        .unwrap();
-        let original = media::sha256(&source).unwrap();
-        let episode = discover::ordinary_episode(&source).unwrap();
-        let workspace = dir.path().join("workspace");
-        let sidecar = discover::publish_episode(&workspace, &episode, None).unwrap();
+    fn annotate_fixture(source: &Path, workspace: &Path) -> Episode {
+        let episode = discover::ordinary_episode(source).unwrap();
+        let sidecar = discover::publish_episode(workspace, &episode, None).unwrap();
         let coverage = episode.video_coverage("primary").unwrap().unwrap();
         let file = AnnotationFile {
             header: Header {
@@ -382,6 +391,43 @@ mod tests {
         };
         file.publish_in_range(&sidecar.join("semantic.task.jsonl"), coverage, None)
             .unwrap();
+        episode
+    }
+
+    #[test]
+    fn render_preserves_offset_vfr_timeline_audio_and_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("a quote's 视频.mp4");
+        media::run(
+            media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=128x96:rate=10:duration=1.5",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:duration=1.5",
+                    "-vf",
+                    "select='not(eq(n,2)+eq(n,3))',setpts=PTS+2/TB",
+                    "-af",
+                    "asetpts=PTS+2/TB",
+                    "-fps_mode",
+                    "vfr",
+                    "-c:v",
+                    "libx264",
+                    "-c:a",
+                    "aac",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let original = media::sha256(&source).unwrap();
+        let workspace = dir.path().join("workspace");
+        let episode = annotate_fixture(&source, &workspace);
         let output = dir.path().join("review.mp4");
         let plan = render(
             &source,
@@ -430,5 +476,137 @@ mod tests {
             .is_err()
         );
         assert_eq!(fs::read(&source).unwrap(), source_before);
+    }
+    #[test]
+    fn rotated_phone_videos_render_at_display_dimensions() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base.mp4");
+        media::run(
+            media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=128x96:rate=2:duration=1",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&base),
+        )
+        .unwrap();
+        for rotation in [90, 270] {
+            let source = dir.path().join(format!("phone-{rotation}.mp4"));
+            media::run(
+                media::command("ffmpeg")
+                    .args([
+                        "-v",
+                        "error",
+                        "-display_rotation:v:0",
+                        &rotation.to_string(),
+                        "-i",
+                    ])
+                    .arg(&base)
+                    .args(["-c", "copy"])
+                    .arg(&source),
+            )
+            .unwrap();
+            assert_eq!(display_dimensions(&source).unwrap(), (96, 128));
+            let workspace = dir.path().join(format!("workspace-{rotation}"));
+            annotate_fixture(&source, &workspace);
+            let output = dir.path().join(format!("review-{rotation}.mp4"));
+            render(
+                &source,
+                &workspace,
+                &output,
+                None,
+                false,
+                false,
+                &CancellationToken::new(),
+            )
+            .unwrap();
+            let expected = (
+                96,
+                128 + super::super::caption::panel(96, "", false).height(),
+            );
+            let probe = media::probe(&output).unwrap();
+            assert_eq!((probe.width, probe.height), expected);
+            assert_eq!(
+                display_dimensions(&output).unwrap(),
+                expected,
+                "rotation must not be applied a second time on playback"
+            );
+            assert_eq!(
+                media::frame_pts(&source).unwrap(),
+                media::frame_pts(&output).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn cancellation_during_hashing_uses_the_library_call_token() {
+        use std::{io::Write, sync::mpsc, time::Duration};
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("slow.mp4");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&source)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let cancel = CancellationToken::new();
+        let ambient = CancellationToken::new();
+        let (tx, rx) = mpsc::channel();
+        let worker_cancel = cancel.clone();
+        let worker_ambient = ambient.clone();
+        let input = source.clone();
+        let root = dir.path().to_owned();
+        let worker = std::thread::spawn(move || {
+            let result = media::with_sync_cancellation(worker_ambient, || {
+                render(
+                    &input,
+                    &root,
+                    &root.join("out.mp4"),
+                    None,
+                    false,
+                    true,
+                    &worker_cancel,
+                )
+            });
+            tx.send(result).unwrap();
+        });
+        // FIFO open pairs with File::open in sha256: cancellation happens after
+        // render's entry check, while the source-reading phase is active.
+        let mut writer = fs::OpenOptions::new().write(true).open(&source).unwrap();
+        cancel.cancel();
+        let _ = writer.write_all(b"first chunk");
+        let result = rx.recv_timeout(Duration::from_secs(1));
+        let timely = result.is_ok();
+        let result = match result {
+            Ok(result) => result,
+            Err(_) => {
+                // Release a regressed implementation through its ambient token,
+                // so this test never leaks a blocked worker after asserting.
+                ambient.cancel();
+                let _ = writer.write_all(b"wake reader");
+                rx.recv_timeout(Duration::from_secs(2)).unwrap()
+            }
+        };
+        worker.join().unwrap();
+        assert!(
+            timely,
+            "render ignored its own cancellation token while hashing"
+        );
+        assert!(matches!(
+            result
+                .unwrap_err()
+                .downcast_ref::<crate::providers::ProviderError>()
+                .unwrap()
+                .kind,
+            crate::providers::Failure::Cancelled
+        ));
+        assert!(!dir.path().join("out.mp4").exists());
     }
 }

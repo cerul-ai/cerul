@@ -72,7 +72,11 @@ pub(super) fn collect(
     screen: Option<&AnnotationFile>,
 ) -> Vec<Suggestion> {
     let directory = super::stations::stream_directory(sidecar, stream, &episode.time.reference);
-    let semantic = AnnotationFile::read(&directory.join("semantic.subtask.jsonl")).ok();
+    let semantic = AnnotationFile::read(&crate::annotate::layout::annotation(
+        &directory,
+        "semantic.subtask",
+    ))
+    .ok();
     let mut suggestions: Vec<Suggestion> = Vec::new();
     let Ok(duration) = episode.duration_us() else {
         return suggestions;
@@ -169,6 +173,51 @@ pub(super) fn collect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn subtask_fallback_reads_current_and_legacy_layouts() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("demo.mp4");
+        crate::media::run(
+            crate::media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=64x64:rate=2:duration=1",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let episode = crate::index::discover::ordinary_episode(&source).unwrap();
+        let sidecar = dir.path().join("sidecar");
+        let key = crate::index::stations::station_key(
+            &episode,
+            "primary",
+            "semantic.subtask",
+            &serde_json::json!({}),
+        )
+        .unwrap();
+        let file: AnnotationFile = serde_json::from_value(serde_json::json!({
+            "header": {"$cerul":"annotation/1", "name":"semantic.subtask", "episode":episode.episode_id, "stream":"primary", "model":{"kind":"fixture", "name":"test"}, "params":{}, "created":"now", "cerul_version":"test", "input_hash":key, "record_schema":"semantic.subtask/1"},
+            "records": [{"id":"subtask-0", "start_us":0, "end_us":1000000, "index":0, "text":"Place the cup on the table"}]
+        })).unwrap();
+        let current = crate::annotate::layout::annotation(&sidecar, "semantic.subtask");
+        file.publish(&current, 1_000_000, None).unwrap();
+        for legacy in [false, true] {
+            if legacy {
+                std::fs::rename(&current, sidecar.join("semantic.subtask.jsonl")).unwrap();
+            }
+            let suggestions = collect(&episode, &sidecar, "primary", None, None);
+            assert_eq!(suggestions.len(), 1);
+            assert_eq!(suggestions[0].query, "Place the cup on the table");
+            assert_eq!(suggestions[0].input_hash, key);
+        }
+    }
+
     #[test]
     fn ocr_examples_remain_literal_and_keep_source_references() {
         let file: AnnotationFile = serde_json::from_value(serde_json::json!({
