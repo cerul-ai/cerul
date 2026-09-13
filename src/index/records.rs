@@ -87,22 +87,7 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
                 continue;
             }
             let directory = stream_directory(&entry.sidecar, stream.id(), &episode.time.reference);
-            let entries = match fs::read_dir(&directory) {
-                Ok(entries) => entries,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.into()),
-            };
-            for entry in entries {
-                let entry = entry?;
-                if !entry.file_type()?.is_file() {
-                    continue;
-                }
-                let path = entry.path();
-                if path.extension().is_none_or(|ext| ext != "jsonl")
-                    || path.file_name().is_some_and(|name| name == "log.jsonl")
-                {
-                    continue;
-                }
+            for path in crate::annotate::layout::files(&directory)? {
                 let file = AnnotationFile::read(&path)?;
                 if file.header.stream != stream.id()
                     || !crate::index::stations::has_current_input(&episode, &file)?

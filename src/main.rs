@@ -50,13 +50,13 @@ Examples:
   cerul annotate ./video.mp4 --semantic subtask,event,interaction,state
       Label action steps, events, contacts, and state changes in a demonstration.
   cerul annotate ./dataset --semantic --only 0
-      Label the first LeRobot episode using all seven semantic types.
+      Label the first LeRobot episode with the general defaults. Add --embodied for demonstrations.
   cerul annotate ./video.mp4 --semantic --dry-run
       Preview the work without writing files or calling models.
 
 Types: task, subtask, event, interaction, state, flag, progress.
-Defaults: videos use task,subtask,flag; LeRobot uses all seven types.
-Outputs: semantic.<type>.jsonl sidecars beside the media; cerul status shows paths.
+Defaults: task,subtask,flag for every format; --embodied selects subtask,event,interaction,state.
+Outputs: annotations.json and summary.md; internal semantic.<type>.jsonl sidecars retain provenance.
 LeRobot: annotations live in .cerul/episodes/<episode_index>/ inside the dataset.
 --out is a new LeRobot dataset copy and requires --write-lerobot; it is not a
 JSONL export directory. See the LeRobot guide for supported writeback versions.
@@ -147,6 +147,20 @@ enum Command {
         before_help = ANNOTATE_EXAMPLES
     )]
     Annotate(AnnotateArgs),
+    /// Render published semantic annotations into a new video without model calls.
+    Render {
+        /// Annotated video, or an exported annotations.json for a dataset episode.
+        path: PathBuf,
+        /// New review video (must not already exist).
+        #[arg(long, value_name = "MP4")]
+        out: PathBuf,
+        /// Camera id (defaults to the primary camera).
+        #[arg(long)]
+        stream: Option<String>,
+        /// Burn a visible Cerul signature into the caption panel.
+        #[arg(long)]
+        watermark: bool,
+    },
     /// Remove indexed videos, or free the disk they and their caches use.
     Remove(RemoveArgs),
     /// Install the newest published release of Cerul over this one.
@@ -221,6 +235,9 @@ struct AnnotateArgs {
     /// Semantic items to generate, comma-separated (default set when no value is given).
     #[arg(long,num_args=0..=1,default_missing_value="default", value_name = "ITEMS")]
     semantic: Option<String>,
+    /// Annotate embodied demonstrations (subtask, event, interaction, state).
+    #[arg(long)]
+    embodied: bool,
     /// Write subtask annotations back into the LeRobot dataset.
     #[arg(long)]
     write_lerobot: bool,
@@ -760,6 +777,7 @@ enum Outcome {
     Index(pipeline::Report, render::IndexContext),
     Search(cerul::search::Report, render::SearchContext),
     Annotate(cerul::annotate::pipeline::Report, BTreeMap<String, PathBuf>),
+    Render(cerul::annotate::video::Report),
 }
 impl Outcome {
     fn json(&self) -> Result<Value> {
@@ -795,10 +813,21 @@ impl Outcome {
                 value
             }
             Outcome::Annotate(report, _) => serde_json::to_value(report)?,
+            Outcome::Render(report) => serde_json::to_value(report)?,
         })
     }
     fn render(&self, out: &mut dyn Write, palette: &Palette) -> io::Result<()> {
         match self {
+            Outcome::Render(report) => writeln!(
+                out,
+                "{} {}",
+                if report.rendered {
+                    "Rendered"
+                } else {
+                    "Would render"
+                },
+                report.output.display()
+            ),
             Outcome::Home(status, models) => render::home(out, palette, status, models),
             Outcome::Status {
                 status,
@@ -1286,6 +1315,25 @@ async fn execute(
             };
             Ok((Outcome::Auth(credentials::state(endpoint), action), 0))
         }
+        Some(Command::Render {
+            path,
+            out,
+            stream,
+            watermark,
+        }) => {
+            sink.spinner("Rendering published annotations");
+            let report = cerul::annotate::video::render(
+                path,
+                &workspace,
+                out,
+                stream.as_deref(),
+                *watermark,
+                cli.dry_run,
+                &cancel,
+            )?;
+            sink.finish();
+            Ok((Outcome::Render(report), 0))
+        }
         Some(Command::Annotate(args)) => {
             if args.grounding.is_some() || args.world.is_some() {
                 return Err(ProviderError {
@@ -1294,21 +1342,14 @@ async fn execute(
                 }
                 .into());
             }
-            anyhow::ensure!(
-                args.semantic.is_some(),
-                CliError(
-                    2,
-                    "choose labels with --semantic, for example: cerul annotate ./video.mp4 --semantic subtask,event,interaction,state; see cerul annotate --help".into()
-                )
-            );
             let config = config(cli).map_err(|e| category(2, e))?;
             let items = match args.semantic.as_deref() {
-                Some("default") => Vec::new(),
+                Some("default") | None => Vec::new(),
                 Some(value) => value.split(',').map(str::to_owned).collect(),
-                None => unreachable!(),
             };
             let options = cerul::annotate::pipeline::Options {
                 items,
+                embodied: args.embodied,
                 write_lerobot: args.write_lerobot,
                 out: args.out.clone(),
                 streams: args.streams.clone(),

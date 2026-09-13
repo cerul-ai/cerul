@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
 generated-by: cerul 0.0.10
-generated-sha256: a6ff32afc3689dba25208ea9b7d9d547ca84984379aa34a426cc8825c5af3c2b
+generated-sha256: 52fd7358f06ddd81ea063a1f0f8afef82f9256b33a0331d85cae8e28577375ef
 ---
 
 # Cerul
@@ -48,6 +48,8 @@ the work finished and the rest did not.
 Events on stderr:
 
 - `progress` counts units of work for one station.
+- `annotation_progress` reports annotation work units, cached units and phase;
+  percentage is completed planned work, not model-internal progress.
 - `checkpoint` marks a window that is saved and will be reused after an
   interruption, so a rerun resumes rather than repeating it.
 - `published` marks a validated annotation file that now exists, with its record
@@ -104,20 +106,27 @@ replace the task and action annotations below.
 **Annotate actions.** No indexing step is needed.
 
 ```sh
-cerul --json --dry-run annotate ./video.mp4 --semantic subtask,event,interaction,state
-cerul --json annotate ./video.mp4 --semantic subtask,event,interaction,state
+cerul --json --dry-run annotate ./video.mp4 --embodied
+cerul --json annotate ./video.mp4 --embodied
 cerul --json status ./video.mp4 --timeline
 ```
 
-Ordinary videos default to `task,subtask,flag`; list the items explicitly to get
-the rest. Available items: task, subtask, event, interaction, state, flag,
+Every input format defaults to `task,subtask,flag`. Use `--embodied` for
+demonstration prompts and `subtask,event,interaction,state`, or list `--semantic`
+items explicitly. Available items: task, subtask, event, interaction, state, flag,
 progress. Pose, depth, segmentation, and 3D trajectories are not implemented and
 must not be offered.
+
+Each episode exports `annotations.json` and `summary.md` with Cerul provenance.
+Internal typed sidecars remain authoritative. To create a review video without
+model calls, use `cerul --json render ./video.mp4 --out ./video.annotated.mp4`.
+Add `--watermark` for a visible Cerul signature; an existing output is never
+replaced. Rendering labels does not generate hand keypoints or depth.
 
 **Annotate a LeRobot dataset.** Pass the dataset root that contains `meta/`.
 
 ```sh
-cerul --json annotate ./dataset --semantic --only 0
+cerul --json annotate ./dataset --embodied --only 0
 cerul --json status ./dataset --timeline
 ```
 
@@ -225,6 +234,7 @@ Generate semantic annotations (tasks, events, states) for videos
 
   <PATHS>...                  Videos, directories, or LeRobot datasets
   --semantic <ITEMS>          Semantic items to generate, comma-separated (default set when no value is given)
+  --embodied                  Annotate embodied demonstrations (subtask, event, interaction, state)
   --write-lerobot             Write subtask annotations back into the LeRobot dataset
   --out <DIR>                 New output LeRobot dataset (requires --write-lerobot)
   --ontology <FILE>           Custom ontology file
@@ -234,6 +244,15 @@ Generate semantic annotations (tasks, events, states) for videos
   --rpm <RPM>                 Cap on model requests per minute
   --streams <STREAMS>         Streams to annotate, comma-separated (default primary)
   --only <ONLY>               Only these episodes (ids or local indexes), comma-separated
+
+### cerul render
+
+Render published semantic annotations into a new video without model calls
+
+  <PATH>                      Annotated video, or an exported annotations.json for a dataset episode
+  --out <MP4>                 New review video (must not already exist)
+  --stream <STREAM>           Camera id (defaults to the primary camera)
+  --watermark                 Burn a visible Cerul signature into the caption panel
 
 ### cerul remove
 

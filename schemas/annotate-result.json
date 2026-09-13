@@ -7,6 +7,13 @@
     "dry_run": {
       "type": "boolean"
     },
+    "exports": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Export"
+      }
+    },
     "modules": {
       "type": "array",
       "items": {
@@ -41,6 +48,38 @@
     "dry_run"
   ],
   "$defs": {
+    "Export": {
+      "type": "object",
+      "properties": {
+        "annotations": {
+          "type": "string"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "records": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "summary": {
+          "type": "string"
+        },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TrackCount"
+          }
+        }
+      },
+      "required": [
+        "episode",
+        "annotations",
+        "summary",
+        "records",
+        "tracks"
+      ]
+    },
     "ModuleResult": {
       "type": "object",
       "properties": {
@@ -125,6 +164,27 @@
           "type": "string",
           "const": "incomplete"
         }
+      ]
+    },
+    "TrackCount": {
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "type": "string"
+        },
+        "records": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stream",
+        "annotation",
+        "records"
       ]
     },
     "WritebackResult": {

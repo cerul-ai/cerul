@@ -56,6 +56,12 @@ Exit 6 is not success. Some work finished and the rest did not; read `retry`.
 
 ## Events
 
+Annotation runs emit `annotation_progress` with `episode`, `phase`, `done`,
+`total` and `cached`. Count cached units as complete but exclude them from
+throughput estimates. Totals include model passes and publication; a partial
+run can finish below 100%. `progress` remains the index-station event.
+
+
 ```jsonl
 {"event":"progress","episode":"demo","station":"semantic.subtask","done":3,"total":5}
 {"event":"checkpoint","episode":"demo","station":"semantic.subtask","window":3,"total":5}

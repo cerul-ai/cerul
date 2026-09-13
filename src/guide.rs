@@ -250,20 +250,6 @@ fn show_command(palette: &Palette, typed: &[String], extra: &[String]) -> io::Re
     Ok(())
 }
 
-fn confirm(palette: &Palette, typed: &[String], extra: &[String]) -> io::Result<Option<bool>> {
-    show_command(palette, typed, extra)?;
-    let choices = [
-        Choice::new("Start", "", Some(false)),
-        Choice::new(
-            "Preview only",
-            "--dry-run: no writes, no model calls",
-            Some(true),
-        ),
-        Choice::new("Cancel", "", None),
-    ];
-    Ok(select(palette, "Ready", &choices)?.flatten())
-}
-
 /// Where an invocation came from, which decides how much of it may be missing.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Entry {
@@ -400,47 +386,23 @@ fn lerobot_scope(palette: &Palette, episodes: &[cerul::episode::Episode]) -> Opt
 fn annotate(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
     let path = pick_input(palette, "Annotate · which video or dataset?").ok()??;
     let episodes = dataset(&path);
-    let robot = Choice::new(
-        "A robot or first-person demonstration",
-        "subtask, event, interaction, state",
-        "subtask,event,interaction,state",
-    );
-    // Naming the labels rather than leaning on the default: a dataset's own
-    // default is all seven types, which is not what this choice promises.
-    let general = Choice::new(
-        "A general video",
-        "task, subtask, flag",
-        "task,subtask,flag",
-    );
-    let everything = Choice::new(
-        "Everything",
-        "all seven semantic types",
-        "task,subtask,event,interaction,state,flag,progress",
-    );
-    // A dataset's own default is every semantic type, so that choice leads here.
-    let presets = match episodes.is_some() {
-        true => [
-            Choice::new(
-                "Everything",
-                "the LeRobot default: all seven types",
-                "default",
-            ),
-            robot,
-            general,
-        ],
-        false => [robot, general, everything],
-    };
-    let items = select(palette, "What is in it?", &presets).ok()??;
-    let mut extra = vec![path, "--semantic".to_owned()];
-    if items != "default" {
-        extra.push(items.to_owned());
+    let choices = [
+        Choice::new("A general video", "task, subtask, flag", false),
+        Choice::new(
+            "An embodied demonstration",
+            "subtask, event, interaction, state",
+            true,
+        ),
+    ];
+    let embodied = select(palette, "Annotation mode", &choices).ok()??;
+    let mut extra = vec![path];
+    if embodied {
+        extra.push("--embodied".to_owned());
     }
     if let Some(episodes) = &episodes {
         extra.extend(lerobot_scope(palette, episodes)?);
     }
-    if confirm(palette, typed, &extra).ok()?? {
-        extra.push("--dry-run".into());
-    }
+    show_command(palette, typed, &extra).ok()?;
     Some(extra)
 }
 

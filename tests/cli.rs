@@ -265,13 +265,7 @@ fn annotate_default_plan_and_m2_rejection_are_explicit() {
     video(dir.path());
     let output = cli(
         dir.path(),
-        &[
-            "--json",
-            "annotate",
-            "sample.mp4",
-            "--semantic",
-            "--dry-run",
-        ],
+        &["--json", "annotate", "sample.mp4", "--dry-run"],
     );
     assert!(
         output.status.success(),
@@ -298,8 +292,7 @@ fn annotate_default_plan_and_m2_rejection_are_explicit() {
             "--json",
             "annotate",
             "sample.mp4",
-            "--semantic",
-            "subtask,event,interaction,state",
+            "--embodied",
             "--dry-run",
         ],
     );

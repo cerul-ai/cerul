@@ -10,6 +10,14 @@ pub enum Event {
         #[serde(flatten)]
         report: crate::providers::usage::RequestReport,
     },
+    /// Completed annotation work units, including reused units separately.
+    AnnotationProgress {
+        episode: String,
+        phase: String,
+        done: u64,
+        total: u64,
+        cached: u64,
+    },
     Progress {
         episode: String,
         station: String,

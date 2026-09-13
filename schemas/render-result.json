@@ -1,0 +1,26 @@
+{
+  "$id": "https://cerul.ai/schemas/render-result/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Report",
+  "type": "object",
+  "properties": {
+    "generation": {
+      "type": "string"
+    },
+    "output": {
+      "type": "string"
+    },
+    "rendered": {
+      "type": "boolean"
+    },
+    "stream": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "output",
+    "generation",
+    "stream",
+    "rendered"
+  ]
+}

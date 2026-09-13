@@ -1,7 +1,7 @@
 //! Command orchestration keeps independent semantic modules recoverable.
 use super::semantic;
 use crate::{
-    annotations::{AnnotationFile, Header, Model, Record, SEMANTIC_ITEMS, VERBS},
+    annotations::{AnnotationFile, Header, Model, Record, SEMANTIC_ITEMS},
     config::Config,
     episode::Episode,
     events::{Event, EventSink},
@@ -28,6 +28,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct Options {
     pub items: Vec<String>,
+    pub embodied: bool,
     pub write_lerobot: bool,
     pub out: Option<PathBuf>,
     pub streams: String,
@@ -45,6 +46,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             items: Vec::new(),
+            embodied: false,
             write_lerobot: false,
             out: None,
             streams: "primary".into(),
@@ -94,7 +96,7 @@ impl Options {
             self.jobs > 0 && self.rpm != Some(0),
             "jobs and RPM must be positive"
         );
-        ontology(self, false)?;
+        ontology(self)?;
         Ok(())
     }
 }
@@ -152,6 +154,8 @@ pub struct Retry {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Report {
     pub modules: Vec<ModuleResult>,
+    #[serde(default)]
+    pub exports: Vec<super::export::Export>,
     pub writebacks: Vec<WritebackResult>,
     pub partial: bool,
     pub dry_run: bool,
@@ -169,7 +173,7 @@ fn interrupted(cancel: &CancellationToken) -> Result<()> {
     }
     Ok(())
 }
-fn ontology(options: &Options, dataset: bool) -> Result<Option<BTreeSet<String>>> {
+fn ontology(options: &Options) -> Result<Option<BTreeSet<String>>> {
     if let Some(path) = &options.ontology {
         let text = fs::read_to_string(path)?;
         let words = if path.extension().is_some_and(|ext| ext == "json")
@@ -189,15 +193,15 @@ fn ontology(options: &Options, dataset: bool) -> Result<Option<BTreeSet<String>>
         );
         return Ok(Some(words.into_iter().collect()));
     }
-    Ok(dataset.then(|| VERBS.iter().map(|s| s.to_string()).collect()))
+    Ok(None)
 }
 /// Generated conflicts are projected alongside model flags without becoming model input.
 pub(crate) fn publish_conflicts(episode: &Episode, stream: &str, sidecar: &Path) -> Result<()> {
     let directory = stream_directory(sidecar, stream, &episode.time.reference);
     let mut conflicts: Vec<Record> = Vec::new();
     for item in SEMANTIC_ITEMS {
-        let path = directory.join(format!("semantic.{item}.conflicts.json"));
-        let annotation_path = directory.join(format!("semantic.{item}.jsonl"));
+        let path = super::layout::recovery(&directory, &format!("semantic.{item}"));
+        let annotation_path = super::layout::annotation(&directory, &format!("semantic.{item}"));
         if !path.is_file() || !annotation_path.is_file() {
             continue;
         }
@@ -226,7 +230,7 @@ pub(crate) fn publish_conflicts(episode: &Episode, stream: &str, sidecar: &Path)
             conflicts.push(conflict);
         }
     }
-    let path = directory.join("semantic.flag.jsonl");
+    let path = super::layout::annotation(&directory, "semantic.flag");
     let mut existing = if path.is_file() {
         Some(AnnotationFile::read(&path)?)
     } else {
@@ -290,7 +294,13 @@ pub(crate) fn publish_conflicts(episode: &Episode, stream: &str, sidecar: &Path)
                 &file.header.params,
             )?;
         }
-        file.publish(&path, episode.duration_us()?, None)?;
+        super::layout::publish_flags(
+            &directory,
+            &file,
+            episode
+                .video_coverage(stream)?
+                .ok_or_else(|| anyhow::anyhow!("missing stream coverage"))?,
+        )?;
     }
     Ok(())
 }
@@ -380,17 +390,22 @@ async fn run_inner(
     provider.request_notice = options.request_notice.clone();
     let mut report = Report {
         modules: Vec::new(),
+        exports: Vec::new(),
         writebacks: Vec::new(),
         partial: false,
         dry_run: options.dry_run,
         retry: None,
     };
+    let mut completion = Vec::new();
     for episode in episodes {
         let dataset = episode.source.format.starts_with("lerobot/");
-        let vocabulary = ontology(options, dataset)?;
+        let vocabulary = ontology(options)?;
         let mut items = if options.items.is_empty() {
-            if dataset {
-                SEMANTIC_ITEMS.iter().map(|s| s.to_string()).collect()
+            if options.embodied {
+                ["subtask", "event", "interaction", "state"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
             } else {
                 vec!["task".into(), "subtask".into(), "flag".into()]
             }
@@ -405,6 +420,26 @@ async fn run_inner(
         } else {
             discover::publish_episode(workspace, &episode, None)?
         };
+        let total = selected_streams
+            .iter()
+            .try_fold(1u64, |total, stream| -> Result<u64> {
+                let coverage = episode
+                    .video_coverage(stream)?
+                    .ok_or_else(|| anyhow::anyhow!("no stream coverage"))?;
+                let windows = crate::media::chunks(
+                    coverage.end_us - coverage.start_us,
+                    options.window_us,
+                    5_000_000,
+                )?
+                .len() as u64;
+                Ok(total
+                    + items
+                        .iter()
+                        .map(|item| windows * if item == "subtask" { 2 } else { 1 } + 1)
+                        .sum::<u64>())
+            })?;
+        let mut done = 0;
+        let mut cached = 0;
         for stream in selected_streams {
             // Conflicts are projected into the flag file once every module of
             // this stream has run, so a flag module's real count is not known
@@ -439,6 +474,8 @@ async fn run_inner(
                     path: None,
                 };
                 if !options.dry_run {
+                    let mut module_done = 0;
+                    let mut module_cached = 0;
                     match semantic::run(
                         &episode,
                         &stream,
@@ -447,21 +484,43 @@ async fn run_inner(
                         workspace,
                         &provider,
                         &semantic::Options {
+                            embodied: options.embodied,
                             window_us: options.window_us,
                             fps: options.fps,
                             recompute: options.recompute,
                             ontology: vocabulary.clone(),
                         },
-                        events,
+                        &mut |event| match event {
+                            Event::AnnotationProgress {
+                                phase,
+                                done: current,
+                                cached: reused,
+                                ..
+                            } => {
+                                done += current.saturating_sub(module_done);
+                                cached += reused.saturating_sub(module_cached);
+                                module_done = current;
+                                module_cached = reused;
+                                events.emit(Event::AnnotationProgress {
+                                    episode: episode.episode_id.clone(),
+                                    phase,
+                                    done,
+                                    total,
+                                    cached,
+                                });
+                            }
+                            other => events.emit(other),
+                        },
                     )
                     .await
                     {
                         Ok(product) => {
                             result.complete = true;
                             result.records = product.annotation.records.len();
-                            let published =
-                                stream_directory(&sidecar, &stream, &episode.time.reference)
-                                    .join(format!("semantic.{item}.jsonl"));
+                            let published = super::layout::annotation(
+                                &stream_directory(&sidecar, &stream, &episode.time.reference),
+                                &format!("semantic.{item}"),
+                            );
                             result.path = Some(published.clone());
                             match item.as_str() {
                                 "flag" => deferred.push(report.modules.len()),
@@ -523,6 +582,12 @@ async fn run_inner(
                     });
                 }
             }
+        }
+        if !options.dry_run {
+            report
+                .exports
+                .push(super::export::publish(&episode, &sidecar, &report.modules)?);
+            completion.push((episode.episode_id.clone(), done, total, cached));
         }
     }
     for (root, count) in expected {
@@ -586,6 +651,27 @@ async fn run_inner(
         for space in spaces {
             RecordIndex::rebuild(workspace, &space).await?;
         }
+    }
+    for (episode, done, total, cached) in completion {
+        let writeback_failed = report.writebacks.iter().any(|writeback| {
+            !writeback.complete
+                && report.modules.iter().any(|module| {
+                    module.episode == episode && module.dataset && module.source == writeback.source
+                })
+        });
+        let completed = done + u64::from(!writeback_failed);
+        events.emit(Event::AnnotationProgress {
+            episode,
+            phase: if completed == total {
+                "published"
+            } else {
+                "incomplete"
+            }
+            .into(),
+            done: completed,
+            total,
+            cached,
+        });
     }
     Ok(report)
 }
@@ -749,17 +835,39 @@ mod tests {
             ..Default::default()
         };
         let paths = vec![source];
+        let mut observed = Vec::new();
         let first = run(
             &paths,
             &workspace,
             &config,
             &options,
             CancellationToken::new(),
-            &mut |_| {},
+            &mut |event| observed.push(event),
         )
         .await
         .unwrap();
         assert!(first.partial);
+        let bundle: super::super::export::Bundle =
+            serde_json::from_slice(&fs::read(&first.exports[0].annotations).unwrap()).unwrap();
+        assert_eq!(bundle.generator.name, "cerul");
+        assert_eq!(bundle.annotations.len(), 1);
+        assert_eq!(bundle.incomplete, ["primary: semantic.flag"]);
+        let progress = observed
+            .iter()
+            .filter_map(|event| match event {
+                Event::AnnotationProgress {
+                    done,
+                    total,
+                    cached,
+                    ..
+                } => Some((*done, *total, *cached)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(progress.first(), Some(&(0, 5, 0)));
+        assert!(progress.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+        assert!(progress.last().unwrap().0 < progress.last().unwrap().1);
+
         assert!(
             first
                 .modules
@@ -795,16 +903,86 @@ mod tests {
         assert!(!second.partial);
         assert!(second.modules.iter().all(|m| m.complete));
         assert_eq!(server.join().unwrap().len(), 4);
+        let sidecar = discover::read_registry(&workspace).unwrap()[0]
+            .sidecar
+            .clone();
+        // Simulate an older installation: only legacy files remain, while the
+        // provider is now shut down. The next run must migrate without calls.
+        for item in ["task", "flag"] {
+            let name = format!("semantic.{item}");
+            fs::rename(
+                super::super::layout::annotation(&sidecar, &name),
+                sidecar.join(format!("{name}.jsonl")),
+            )
+            .unwrap();
+            fs::rename(
+                super::super::layout::recovery(&sidecar, &name),
+                sidecar.join(format!("{name}.conflicts.json")),
+            )
+            .unwrap();
+        }
+
+        observed.clear();
         let third = run(
             &paths,
             &workspace,
             &config,
             &options,
             CancellationToken::new(),
-            &mut |_| {},
+            &mut |event| observed.push(event),
         )
         .await
         .unwrap();
         assert!(!third.partial);
+        assert!(!sidecar.join("semantic.task.jsonl").exists());
+        assert!(!sidecar.join("semantic.task.conflicts.json").exists());
+        assert!(
+            sidecar
+                .join(".internal/annotations/semantic.task.jsonl")
+                .is_file()
+        );
+        assert!(sidecar.join(".internal/checkpoints").is_dir());
+
+        assert!(observed.iter().any(|event| matches!(
+            event,
+            Event::AnnotationProgress {
+                done: 5,
+                total: 5,
+                cached: 4,
+                ..
+            }
+        )));
+        let before = fs::read(&third.exports[0].annotations).unwrap();
+        let loaded = super::super::video::load(&paths[0], &workspace).unwrap();
+        assert_eq!(loaded.annotations.len(), 2);
+        let output = dir.path().join("review.mp4");
+        let rendered = super::super::video::render(
+            &paths[0],
+            &workspace,
+            &output,
+            None,
+            true,
+            false,
+            &CancellationToken::new(),
+        )
+        .unwrap();
+        assert!(rendered.rendered);
+        assert_eq!(
+            crate::media::frame_pts(&output).unwrap(),
+            crate::media::frame_pts(&paths[0]).unwrap()
+        );
+        assert!(
+            super::super::video::render(
+                &paths[0],
+                &workspace,
+                &output,
+                None,
+                false,
+                false,
+                &CancellationToken::new()
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(&third.exports[0].annotations).unwrap(), before);
     }
 }

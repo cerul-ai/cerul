@@ -10,7 +10,7 @@ installation instructions are in the [documentation](docs/README.md).
 | Area | Decision |
 | --- | --- |
 | Language | Rust, one crate with a library and one binary. ffmpeg subprocesses, four endpoint types, LanceDB, and embedded OCR. No PyTorch, GPU runtime, Python runtime, or plugins. |
-| Commands | `index`, `search`, `status`, `open`, `auth`, `annotate`, `remove`. HTTP and MCP serving are not implemented. |
+| Commands | `index`, `search`, `status`, `open`, `auth`, `annotate`, `render`, `remove`. HTTP and MCP serving are not implemented. |
 | Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
 | Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
 | Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, query instruction template, and applicable document template. The same model name at different endpoints is a different space. Queries must match exactly. |
@@ -106,13 +106,31 @@ start at a timestamp and says so.
 
 | Options | Behavior/default |
 | --- | --- |
-| `--semantic` | LeRobot: task, subtask, event, interaction, state, flag, progress. Ordinary video: task, subtask, flag; the other four are explicit selections. |
+| `--semantic` | Optional explicit types; default task, subtask, flag for every input format. |
+| `--embodied` | Demonstration prompts and default subtask, event, interaction, state. Explicit types override the default set. Mode and prompt recipe participate in cache identity. |
 | `--grounding` | Reserved; rejected as unsupported. |
 | `--world` | Reserved; rejected as unsupported. |
-| `--streams`, `--only`, `--ontology FILE`, `--window 30s`, `--fps 2` | LeRobot defaults to `cerul.verbs.v1` with verb validation. Ordinary videos have unrestricted verbs unless an ontology is supplied. |
+| `--streams`, `--only`, `--ontology FILE`, `--window 30s`, `--fps 2` | Verbs are unrestricted unless an ontology is supplied, regardless of input format. |
 | `--write-lerobot`, `--out DIR` | No dataset mutation by default. Writeback accepts only an existing compatible v3.1 dataset. |
 
 Each subtype is a module: frames → timestamped contact sheet → schema-constrained model response → staging → validation → annotation publication → records index update. Invalid modules publish nothing; independent modules can still succeed.
+
+### `render <video-or-annotations.json> --out FILE`
+
+Render published semantic labels into a new MP4 with no model calls. The caption
+panel preserves the source image; source timestamps and audio are rebased by the
+same clip origin. `--stream` selects a camera from a dataset bundle; non-unit
+time scaling is rejected. The output records Cerul version/generation metadata;
+`--watermark` opts into a visible Cerul signature. Existing outputs are never
+overwritten. Source hashes and per-track provenance are validated before rendering.
+
+Annotation completion publishes a portable `annotations.json` and readable
+`summary.md` per episode. The bundle includes source identity, a single Cerul
+generator marker and full per-track provenance. Both views carry a content
+generation; each is atomically replaced and a rerun repairs interrupted pairs.
+Sidecars remain authoritative. `annotation_progress` reports planned work,
+completed units, cached units and phase; success is only complete after export
+and record-index publication.
 
 ### `search [query]`
 
@@ -194,7 +212,7 @@ my_dataset/
   index/<space_id>/records.lance
 ~~~
 
-Embedding Parquet rows contain stream, kind, start_us, end_us, vector, and params_hash. The adjacent JSON records kind/base_url/model/dims/query_template and optional document_template for status inspection. Legacy metadata without a document template retains its original space ID; newly prefixed Gemini documents use a new space. Primary annotations remain at the sidecar root; non-primary annotations cannot overwrite them.
+Embedding Parquet rows contain stream, kind, start_us, end_us, vector, and params_hash. The adjacent JSON records kind/base_url/model/dims/query_template and optional document_template for status inspection. Legacy metadata without a document template retains its original space ID; newly prefixed Gemini documents use a new space. Semantic annotation files now publish under each stream directory's `.internal/annotations/`, with recovery products under `.internal/recovery/`. Legacy root-level files remain readable and migrate after durable replacement. Index-produced tracks retain their existing paths. Non-primary annotations cannot overwrite primary annotations.
 
 Proxy metadata stores the recipe and output hash; missing/corrupt files are rebuilt. Contact proxy metadata additionally preserves original source-relative PTS for each sampled frame. It must not substitute the proxy encoder's frame clock.
 
@@ -234,7 +252,7 @@ An annotation JSONL file starts with a header containing $cerul=annotation/1, na
 
 Chunks columns: id, episode, stream, kind, start_us, end_us, vector[3072] for the default space, text, still, space_id, params_hash. Records columns: episode, stream, annotation, id, start_us, end_us, fields. Both tables are rebuildable from sidecars.
 
-Default `cerul.verbs.v1` vocabulary: reach, grasp, regrasp, lift, carry, place, release, push, pull, open, close, insert, rotate, pour, wipe.
+Reference `cerul.verbs.v1` vocabulary (not enforced implicitly): reach, grasp, regrasp, lift, carry, place, release, push, pull, open, close, insert, rotate, pour, wipe.
 
 ## 7. Required behavior
 

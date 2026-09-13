@@ -23,15 +23,17 @@ process every camera, or pass comma-separated feature keys. Model annotations
 and vectors are stored per episode and stream; the original media, actions,
 and state are preserved.
 
-For all seven semantic modules, omit the item after `--semantic`:
+For all seven semantic modules, list them explicitly:
 
 ```sh
-cerul annotate ./dataset --semantic
+cerul annotate ./dataset --embodied --semantic task,subtask,event,interaction,state,flag,progress
 cerul search --filter 'semantic.event.verb=regrasp' --in ./dataset
 cerul search --filter 'semantic.event.verb=regrasp' --in ./dataset --count
 ```
 
-The LeRobot default ontology validates event verbs against `cerul.verbs.v1`.
+Event verbs are unrestricted by default. Use `--ontology FILE` to validate a
+specific vocabulary. `--embodied` chooses demonstration prompts independently
+of LeRobot storage format.
 Time intervals use each episode's origin even when several episodes occupy the
 same source MP4. A dataset UUID separates identically numbered episodes in
 different datasets.

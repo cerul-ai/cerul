@@ -318,6 +318,7 @@ pub struct Progress {
     multi: Option<MultiProgress>,
     bars: HashMap<(String, String), ProgressBar>,
     estimates: HashMap<(String, String), (Instant, u64)>,
+    annotation_episodes: std::collections::HashSet<String>,
     /// Finished station summaries per episode, in completion order.
     finished: HashMap<String, Vec<(String, String)>>,
     /// The episode whose stations are currently on screen.
@@ -338,6 +339,7 @@ impl Progress {
             multi,
             bars: HashMap::new(),
             estimates: HashMap::new(),
+            annotation_episodes: std::collections::HashSet::new(),
             finished: HashMap::new(),
             active: None,
             spinner: None,
@@ -459,6 +461,48 @@ impl Progress {
             // A checkpoint moves no counter of its own: the progress event for the
             // same window already drew it. It exists so a machine reader can tell
             // durable work from work still only in memory.
+            Event::AnnotationProgress {
+                episode,
+                phase,
+                done,
+                total,
+                cached,
+            } => {
+                if self.quiet {
+                    return;
+                }
+                self.stop_spinner();
+                self.annotation_episodes.insert(episode.clone());
+                let name = short_name(&self.name(&episode));
+                let key = (episode.clone(), "annotate".to_owned());
+                let (started, _) = self
+                    .estimates
+                    .entry(key.clone())
+                    .or_insert((Instant::now(), 0));
+                let elapsed = started.elapsed();
+                let eta = remaining(
+                    done.saturating_sub(cached),
+                    total.saturating_sub(cached),
+                    0,
+                    elapsed,
+                );
+                if let Some(multi) = &self.multi {
+                    let bar = self.bars.entry(key).or_insert_with(|| {
+                        let bar = multi.add(ProgressBar::new(total));
+                        bar.set_style(ProgressStyle::with_template("  {spinner:.cyan} Annotating {prefix} {bar:20.cyan/black} {percent}% · {elapsed} · {msg}").expect("static template"));
+                        bar.enable_steady_tick(Duration::from_millis(100));
+                        bar
+                    });
+                    bar.set_prefix(name);
+                    bar.set_position(done);
+                    bar.set_message(format!("{phase} · {eta}"));
+                    if done == total {
+                        bar.finish_and_clear();
+                    }
+                } else if done == total {
+                    eprintln!("  ✓ {}  annotation published", self.name(&episode));
+                }
+            }
             Event::Checkpoint { .. } | Event::ModelRequest { .. } => {}
             Event::Published {
                 episode,
@@ -467,6 +511,9 @@ impl Progress {
                 ..
             } => {
                 if self.quiet {
+                    return;
+                }
+                if self.annotation_episodes.contains(&episode) {
                     return;
                 }
                 let label = station_label(&annotation);
@@ -1774,7 +1821,17 @@ pub fn annotate(
             (0, _) => (palette.err("✗"), format!("Could not annotate {name}")),
             _ => (palette.warn("!"), format!("Annotated {name} partially")),
         };
-        writeln!(out, "{mark} {}", palette.bold(&title))?;
+        let export = report
+            .exports
+            .iter()
+            .find(|export| export.episode == *episode);
+        let records: usize = modules
+            .iter()
+            .filter(|module| module.complete)
+            .map(|module| module.records)
+            .sum();
+        let records = export.map(|export| export.records).unwrap_or(records);
+        writeln!(out, "{mark} {} · {records} records", palette.bold(&title))?;
         writeln!(out)?;
         // Cameras of one episode share a file name, so the stream has to appear
         // whenever more than one of them was annotated.
@@ -1786,67 +1843,53 @@ pub fn annotate(
                 item_name(&module.annotation).to_owned()
             }
         };
-        let width = modules
+        let counts = if let Some(export) = export {
+            let cameras: BTreeSet<_> = export.tracks.iter().map(|track| &track.stream).collect();
+            export
+                .tracks
+                .iter()
+                .map(|track| {
+                    let name = item_name(&track.annotation);
+                    if cameras.len() > 1 {
+                        format!("{} {} · {}", track.records, track.stream, name)
+                    } else {
+                        format!("{} {}", track.records, name)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" · ")
+        } else {
+            modules
+                .iter()
+                .filter(|module| module.complete)
+                .map(|module| format!("{} {}", module.records, label(module)))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+        if !counts.is_empty() {
+            writeln!(out, "  {counts}")?;
+        }
+        for module in modules.iter().filter(|module| !module.complete) {
+            writeln!(
+                out,
+                "  ! {} · {}",
+                label(module),
+                module.error.as_deref().unwrap_or("not started")
+            )?;
+        }
+        if let Some(export) = report
+            .exports
             .iter()
-            .map(|module| measure_text_width(&label(module)))
-            .max()
-            .unwrap_or(0);
-        let counts: Vec<String> = modules
+            .find(|export| export.episode == *episode)
+        {
+            writeln!(out, "  Annotations: {}", tilde(&export.annotations))?;
+            writeln!(out, "  Summary:     {}", tilde(&export.summary))?;
+        } else if let Some(path) = modules
             .iter()
-            .map(|module| {
-                if module.complete {
-                    format!(
-                        "{} record{}",
-                        module.records,
-                        if module.records == 1 { "" } else { "s" }
-                    )
-                } else {
-                    String::new()
-                }
-            })
-            .collect();
-        let count_width = counts
-            .iter()
-            .map(|count| measure_text_width(count))
-            .max()
-            .unwrap_or(0);
-        let mixed = published != modules.len();
-        for (module, count) in modules.iter().zip(&counts) {
-            let glyph = if mixed {
-                let mark = match (&module.error, module.complete) {
-                    (_, true) => palette.ok("✓"),
-                    (Some(_), _) => palette.err("✗"),
-                    _ => palette.dim("·"),
-                };
-                format!("{mark} ")
-            } else {
-                String::new()
-            };
-            let text = label(module);
-            let pad = " ".repeat(width - measure_text_width(&text) + 3);
-            match (&module.error, module.complete) {
-                (_, true) => {
-                    let gap = " ".repeat(count_width - measure_text_width(count) + 3);
-                    let path = module
-                        .path
-                        .as_deref()
-                        .map(tilde)
-                        .unwrap_or_else(|| "published".into());
-                    writeln!(
-                        out,
-                        "  {glyph}{text}{pad}{count}{gap}{}",
-                        palette.dim(&path)
-                    )?;
-                }
-                (Some(error), _) => writeln!(
-                    out,
-                    "  {glyph}{text}{pad}{}",
-                    palette.warn(&format!("stopped · {error}"))
-                )?,
-                (None, false) => {
-                    writeln!(out, "  {glyph}{text}{pad}{}", palette.dim("not started"))?
-                }
-            }
+            .find_map(|module| module.path.as_ref())
+            .and_then(|path| path.parent())
+        {
+            writeln!(out, "  Results: {}", tilde(path))?;
         }
     }
     for writeback in &report.writebacks {
@@ -1893,28 +1936,13 @@ pub fn annotate(
                 true => Some(&module.source),
                 false => names.get(&module.episode).or(Some(&module.source)),
             });
-        let mut steps: Vec<(String, &str)> = Vec::new();
         if let Some(Some(path)) = media {
-            steps.push((
-                format!("cerul status {} --timeline", shell_path(path)),
-                "read the labels in order",
-            ));
+            writeln!(
+                out,
+                "  Timeline: {}",
+                palette.cmd(&format!("cerul status {} --timeline", shell_path(path)))
+            )?;
         }
-        if report
-            .modules
-            .iter()
-            .any(|module| module.complete && item_name(&module.annotation) == "event")
-        {
-            steps.push((
-                "cerul search --filter 'semantic.event.verb=grasp'".into(),
-                "find one action across videos",
-            ));
-        }
-        let steps: Vec<(&str, &str)> = steps
-            .iter()
-            .map(|(command, note)| (command.as_str(), *note))
-            .collect();
-        next_block(out, palette, &steps)?;
     }
     if report.partial {
         writeln!(out)?;
@@ -1940,14 +1968,6 @@ pub fn annotate(
                     .dim("Finished windows are saved; re-run the same command to resume the rest.")
             )?,
         }
-    }
-    if !report.dry_run && report.modules.iter().any(|module| module.complete) {
-        writeln!(out)?;
-        writeln!(
-            out,
-            "{}",
-            palette.dim("Labels are model-generated; review them before training on them.")
-        )?;
     }
     Ok(())
 }
@@ -2343,9 +2363,10 @@ mod tests {
     }
 
     #[test]
-    fn the_annotation_receipt_names_every_published_file_and_what_to_run_next() {
+    fn the_annotation_receipt_shows_one_result_location_and_a_timeline() {
         let report = annotate::pipeline::Report {
             modules: vec![module("subtask", 12, None), module("event", 18, None)],
+            exports: Vec::new(),
             writebacks: Vec::new(),
             partial: false,
             dry_run: false,
@@ -2359,17 +2380,13 @@ mod tests {
         // The episode hash is an internal name; a person needs the file.
         assert!(!text.contains("demo/0"), "{text}");
         assert!(text.contains("subtask"), "{text}");
-        assert!(text.contains("12 records"), "{text}");
-        assert!(
-            text.contains("/videos/demo.mp4.cerul/semantic.event.jsonl"),
-            "{text}"
-        );
+        assert!(text.contains("12 subtask"), "{text}");
+        assert!(text.contains("Results: /videos/demo.mp4.cerul"), "{text}");
         assert!(
             text.contains("cerul status /videos/demo.mp4 --timeline"),
             "{text}"
         );
-        assert!(text.contains("cerul search --filter"), "{text}");
-        assert!(text.contains("review them before training"), "{text}");
+        assert!(!text.contains("semantic.event.jsonl"), "{text}");
     }
 
     #[test]
@@ -2384,6 +2401,7 @@ mod tests {
                     ..module("state", 0, None)
                 },
             ],
+            exports: Vec::new(),
             writebacks: Vec::new(),
             partial: true,
             dry_run: false,
@@ -2395,8 +2413,8 @@ mod tests {
         annotate(&mut out, &Palette::new(false), &report, &names, Some(retry)).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("partially"), "{text}");
-        assert!(text.contains("12 records"), "{text}");
-        assert!(text.contains("stopped · gemini rate limit (429)"), "{text}");
+        assert!(text.contains("12 subtask"), "{text}");
+        assert!(text.contains("event · gemini rate limit (429)"), "{text}");
         assert!(text.contains("not started"), "{text}");
         assert!(text.contains(retry), "{text}");
         // Recomputing would throw away the windows that did finish.
@@ -2559,6 +2577,7 @@ mod tests {
         };
         let report = annotate::pipeline::Report {
             modules: vec![module],
+            exports: Vec::new(),
             writebacks: Vec::new(),
             partial: false,
             dry_run: false,

@@ -75,6 +75,45 @@
       ]
     },
     {
+      "description": "Completed annotation work units, including reused units separately.",
+      "type": "object",
+      "properties": {
+        "cached": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "done": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "episode": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "annotation_progress"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "event",
+        "episode",
+        "phase",
+        "done",
+        "total",
+        "cached"
+      ]
+    },
+    {
       "type": "object",
       "properties": {
         "done": {

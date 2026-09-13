@@ -249,11 +249,12 @@ pub fn timeline(
                 stream.id(),
                 &episode.time.reference,
             );
-            for name in file_names(&directory, ".jsonl")? {
+            for path in crate::annotate::layout::files(&directory)? {
+                let name = path.file_stem().unwrap().to_string_lossy().into_owned();
                 if !name.starts_with("semantic.") || name.contains("conflicts") {
                     continue;
                 }
-                let file = AnnotationFile::read(&directory.join(format!("{name}.jsonl")))?;
+                let file = AnnotationFile::read(&path)?;
                 // A file whose inputs changed describes media that no longer
                 // exists in that form; showing its records would mislead.
                 if file.header.stream != stream.id()
@@ -353,11 +354,12 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
                 stream.id(),
                 &episode.time.reference,
             );
-            for name in file_names(&directory, ".jsonl")? {
+            for path in crate::annotate::layout::files(&directory)? {
+                let name = path.file_stem().unwrap().to_string_lossy().into_owned();
                 if name == "log" {
                     continue;
                 }
-                let file = AnnotationFile::read(&directory.join(format!("{name}.jsonl")))?;
+                let file = AnnotationFile::read(&path)?;
                 if file.header.stream != stream.id()
                     || !crate::index::stations::has_current_input(&episode, &file)?
                     || !crate::index::understanding::current_dependencies(&directory, &file)?
