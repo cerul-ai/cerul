@@ -65,6 +65,28 @@ pub fn load(input: &Path, workspace: &Path) -> Result<Bundle> {
     }
     ensure!(!annotations.is_empty(), "no published semantic annotations");
     super::export::canonicalize(&mut annotations);
+    // A completed export also records failed modules. Keep that exact view
+    // while its included tracks match current sidecars; a failed recompute may
+    // intentionally leave an older authoritative file for an excluded track.
+    if let Ok(mut published) = load(&sidecar.join("annotations.json"), workspace)
+        && published.source.episode_id == episode.episode_id
+    {
+        let included = annotations
+            .iter()
+            .filter(|file| {
+                !published
+                    .incomplete
+                    .contains(&format!("{}: {}", file.header.stream, file.header.name))
+            })
+            .collect::<Vec<_>>();
+        if storage::cache_key(&included)? == storage::cache_key(&published.annotations)? {
+            // A video may have moved since the export. Its content/timeline
+            // identity was verified above; render from the current location.
+            published.source = episode;
+            return Ok(published);
+        }
+    }
+
     Ok(Bundle {
         schema: "annotations/1".into(),
         generator: Generator {

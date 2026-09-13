@@ -852,6 +852,42 @@ mod tests {
         assert_eq!(bundle.generator.name, "cerul");
         assert_eq!(bundle.annotations.len(), 1);
         assert_eq!(bundle.incomplete, ["primary: semantic.flag"]);
+        let partial_loaded = super::super::video::load(&paths[0], &workspace).unwrap();
+        assert_eq!(partial_loaded.generation, bundle.generation);
+        assert_eq!(partial_loaded.incomplete, bundle.incomplete);
+        let partial_output = dir.path().join("partial-review.mp4");
+        let partial_render = super::super::video::render(
+            &paths[0],
+            &workspace,
+            &partial_output,
+            None,
+            false,
+            false,
+            &CancellationToken::new(),
+        )
+        .unwrap();
+        assert_eq!(partial_render.generation, bundle.generation);
+        let metadata = crate::media::run(
+            crate::media::command("ffprobe")
+                .args([
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format_tags=comment",
+                    "-of",
+                    "json",
+                ])
+                .arg(&partial_output),
+        )
+        .unwrap();
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+        assert!(
+            metadata["format"]["tags"]["comment"]
+                .as_str()
+                .unwrap()
+                .contains(&bundle.generation)
+        );
+
         let progress = observed
             .iter()
             .filter_map(|event| match event {
@@ -986,5 +1022,43 @@ mod tests {
             .is_err()
         );
         assert_eq!(fs::read(&third.exports[0].annotations).unwrap(), before);
+        // A failed recompute can leave the earlier flag sidecar on disk. The
+        // partial export intentionally excludes it, and direct rendering must
+        // retain that exclusion instead of silently claiming complete output.
+        let mut partial_modules = third.modules.clone();
+        let flag = partial_modules
+            .iter_mut()
+            .find(|module| module.annotation == "semantic.flag")
+            .unwrap();
+        flag.complete = false;
+        flag.path = None;
+        flag.error = Some("recompute failed".into());
+        let partial_export =
+            super::super::export::publish(&loaded.source, &sidecar, &partial_modules).unwrap();
+        let partial_bundle: super::super::export::Bundle =
+            serde_json::from_slice(&fs::read(&partial_export.annotations).unwrap()).unwrap();
+        let partial_loaded = super::super::video::load(&paths[0], &workspace).unwrap();
+        assert_eq!(partial_loaded.annotations.len(), 1);
+        assert_eq!(partial_loaded.generation, partial_bundle.generation);
+        assert_eq!(partial_loaded.incomplete, ["primary: semantic.flag"]);
+
+        // A changed included track invalidates the derived export; never reuse
+        // its generation merely because the source video is unchanged.
+        let task_path = super::super::layout::annotation(&sidecar, "semantic.task");
+        let mut changed = AnnotationFile::read(&task_path).unwrap();
+        changed.records[0]
+            .fields
+            .insert("text".into(), "Observe the cup".into());
+        changed
+            .publish(&task_path, loaded.source.duration_us().unwrap(), None)
+            .unwrap();
+        let refreshed = super::super::video::load(&paths[0], &workspace).unwrap();
+        assert_ne!(refreshed.generation, partial_bundle.generation);
+        assert_eq!(refreshed.annotations.len(), 2);
+        assert!(refreshed.annotations.iter().any(|file| {
+            file.records
+                .iter()
+                .any(|record| record.fields.get("text") == Some(&json!("Observe the cup")))
+        }));
     }
 }
