@@ -12,19 +12,28 @@ Configuration priority, from lowest to highest:
 4. `CERUL_<ENDPOINT>_<FIELD>` environment variables.
 5. Repeated `--set KEY=TOML_VALUE` arguments.
 
-Multimodal embedding is fixed to `gemini-embedding-2`, 1536 dimensions, at the
+Multimodal embedding defaults to `gemini-embedding-2`, 3072 dimensions, at the
 Google Gemini endpoint. A Gemini key is required for new vectors and semantic
-queries. Other embedding providers, models, dimensions, and URLs are rejected
-by the CLI. Offline status, cleanup, and rebuilding cached vectors need no key.
-Vision defaults to `gemini-3.8-flash`.
+queries. Providers, models, dimensions, and URLs remain configurable; changing
+an embedding space requires compatible saved vectors or re-indexing. Offline
+status, cleanup, and rebuilding cached vectors need no key.
+Vision defaults to `gemini-3.8-flash` and runs during indexing. Use
+`cerul index ./video.mp4 --no-understanding` for a deliberate one-run skip, or
+set `enabled = false` in `[vision]` to disable automatic understanding.
+Scene generation, overview generation, and their source references are cached
+independently. A failed understanding step leaves completed base vectors usable.
 
-Run `cerul config` to configure optional speech transcription. The same chooser
-appears when interactive indexing finds an audio track and missing ASR settings
-or credentials. Choose Gemini (reuse the Gemini key), Groq, OpenAI, Custom, or
-Disabled. Defaults are saved in `~/.cerul/config.toml`; an explicit Disabled
-choice is remembered. JSON, quiet, yes, dry-run, and redirected invocations never
-prompt. Unconfigured ASR is skipped in those modes. An enabled ASR that fails
-is reported as a partial result, not silently disabled.
+The CLI automatically enables the configured transcription endpoint when its key
+is already available. With defaults, this reuses the Gemini key for
+`gemini-3.5-transcribe`; indexing does not open a provider/model/credential chooser.
+Use `cerul config` to choose Gemini, Groq, OpenAI, Custom, or Disabled. Saved keys
+are reused; `cerul auth set` replaces the Gemini key. Explicit provider settings
+and `enabled = false` take precedence over automatic selection.
+
+Defaults are saved in `~/.cerul/config.toml`. JSON, quiet, yes, dry-run, and redirected
+invocations never prompt. Without credentials, new unconfigured ASR is skipped;
+complete compatible transcripts can still be reused offline. An enabled ASR that
+fails is reported as a partial result, not silently disabled.
 
 The presets are Gemini `gemini-3.5-transcribe`, Groq `whisper-large-v3-turbo`, and
 OpenAI `whisper-1`. Model names can be edited. Custom services need a base URL,
@@ -44,7 +53,7 @@ For non-interactive setup, export the selected key variable and configure ASR:
 [embedding]
 kind = "gemini"
 model = "gemini-embedding-2"
-dims = 1536
+dims = 3072
 api_key_env = "GEMINI_API_KEY"
 
 [vision]
@@ -122,20 +131,25 @@ matters. A failed ASR does not prevent video/OCR embedding publication. Repeat
 completed OCR and compatible embedding checkpoints are reused. Changing the ASR
 model invalidates its transcript and the derived text embeddings.
 
-Skipping ASR omits the separate transcript; the video sent to the multimodal
-embedding service may still contain audio. JSON stream results include `speech`
-(`disabled`, `not_configured`, `no_audio`, `complete`, or `failed`). A partial
+Skipping ASR omits the separate transcript. Video embedding proxies contain no
+audio; speech retrieval depends on the separate transcript. JSON stream results include `speech`
+(`disabled`, `not_configured`, `no_audio`, `no_speech`, `complete`, `planned`, or `failed`). A partial
 failure returns exit 6 and retains a diagnostic in the stream's index state.
 
 ## Workspace and vector spaces
 
 `--workspace DIR` overrides `CERUL_WORKSPACE`, then the default `~/.cerul`.
 Each embedding space includes provider kind, base URL, model, dimensions, and
-query template in its identity. Changing any of these requires compatible new
+query and applicable document templates in its identity. Changing any of these requires compatible new
 vectors. `status` lists space IDs and public model metadata. A query cannot
 silently search a different space.
 
-The CLI currently uses only the fixed Gemini embedding space. Sidecar vectors are
+Gemini Embedding 2's document prefix is part of the space identity. Legacy
+metadata without a document template keeps its original ID for inspection and
+rebuilding; newly prefixed documents occupy a separate space. Existing vectors
+are retained, and indexing into the new space requires new model embeddings.
+
+The CLI defaults to the Gemini embedding space. Compatible endpoints and dimensions can be configured; different configurations create separate spaces. Sidecar vectors are
 retained by cache/index cleaning and can rebuild the corresponding index.
 
 ## Process contract
@@ -176,3 +190,39 @@ content identity. If the adjacent sidecar belongs to the previous content, the
 new sidecar uses `<media>.<sha256>.cerul`; the previous annotations are preserved
 on disk and are not included in the current registry. Shared LeRobot video
 shards continue to keep one registry entry and sidecar per episode.
+
+## Default hybrid search
+
+```toml
+[search]
+hybrid = true
+```
+
+Normal `cerul search "query"` combines independent video, speech, screen, and
+visual-description vectors with full-text candidates over original OCR/ASR.
+No additional query embedding or generation call is made for each track.
+Missing descriptions or speech simply leave those tracks absent. Image queries
+use vector tracks only. Sidecars remain authoritative; both additional search
+projections rebuild offline and discard stale description generations.
+
+The initial recipe `hybrid/affine-max-full-query-lexical/1` maps cosine to
+`0.5 * cosine + 0.5` and BM25 to `0.8 + 0.01 * BM25`, clamping to [0, 1].
+Only full-query token matches enter the lexical route (case-insensitive;
+CJK phrases can match within unsegmented text). Video/description and
+speech/screen/lexical each contribute their strongest vote, with a maximum 0.02
+agreement bonus. This fixed normalization is not fitted calibration or confidence.
+`--threshold` continues to gate raw cosine; it does not gate BM25 or the final
+fused score. `--text` remains case-sensitive substring search.
+
+Set `hybrid = false`, or pass `--set search.hybrid=false`, to restore three-track
+raw-max ranking. Existing vectors are reused in either mode. JSON retains raw
+vector scores in `evidence_scores`, and all admitted evidence, raw units, ranks,
+original intervals, normalized values and contributing flags in `fusion_evidence`.
+
+Hybrid search currently expands candidate budgets until every scoped source is
+exhausted before final ranking, so agreement from lower-ranked evidence can
+change the top results. Large libraries may require more time and memory; use
+`--in` or annotation filters to narrow the scope. Each disjoint filter interval
+is fused independently: later text cannot provide an excerpt or agreement bonus
+to an earlier interval that it does not overlap. Evidence retains its original
+source timestamps even when displayed result boundaries are clipped.

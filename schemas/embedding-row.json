@@ -63,7 +63,8 @@
       "enum": [
         "video",
         "speech",
-        "screen"
+        "screen",
+        "description"
       ]
     }
   }

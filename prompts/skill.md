@@ -80,6 +80,25 @@ Result numbers are global, so `cerul open 1` plays the first moment in the user'
 video player and `cerul open 3` plays the third. `score` is a ranking similarity, not a probability that the
 moment is the right one; do not present it as a confidence or an accuracy.
 
+Indexing also runs visual understanding by default. It saves visible scene
+descriptions, coarse sections, and a grounded overview with up to three search
+suggestions. This uses the configured vision endpoint in addition to embedding
+and any enabled ASR. `--no-understanding` explicitly skips that work. Missing ASR
+does not prevent visual descriptions; failed understanding can leave base search
+usable while returning partial success. Do not treat suggested queries as
+verified retrieval results.
+
+```sh
+cerul --json status ./video.mp4 --timeline --type summary
+cerul --json status ./video.mp4 --timeline --type scene
+```
+
+Visual descriptions, spoken words, and screen text have distinct provenance.
+Use scene evidence for what is visible, transcript evidence for what was said,
+and OCR for visible words. Sparse visual samples cannot establish exact motion
+boundaries, success, intent, or camera trajectories. Scene descriptions do not
+replace the task and action annotations below.
+
 **Annotate actions.** No indexing step is needed.
 
 ```sh

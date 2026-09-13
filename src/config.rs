@@ -8,6 +8,8 @@ use std::{
 };
 
 pub const QUERY_TEMPLATE: &str = "task: search result | query: {query}";
+pub const DOCUMENT_TEMPLATE: &str = "title: none | text: {text}";
+pub const DEFAULT_EMBEDDING_DIMS: usize = 3072;
 
 /// Public vector-space identity. Credentials and key environment names are excluded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -18,6 +20,9 @@ pub struct SpaceMetadata {
     pub model: String,
     pub dims: usize,
     pub query_template: String,
+    /// Absent in legacy spaces that embedded unprefixed document text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_template: Option<String>,
 }
 impl SpaceMetadata {
     pub fn id(&self) -> Result<String> {
@@ -29,13 +34,26 @@ impl SpaceMetadata {
                 && !self.query_template.is_empty(),
             "invalid vector space metadata"
         );
-        Ok(crate::storage::sha256_hex(serde_json::to_vec(&(
+        ensure!(
+            self.document_template
+                .as_ref()
+                .is_none_or(|s| !s.is_empty()),
+            "empty document template"
+        );
+        let legacy = (
             &self.kind,
             self.base_url.trim_end_matches('/'),
             &self.model,
             Some(self.dims),
             &self.query_template,
-        ))?))
+        );
+        let identity = if let Some(template) = &self.document_template {
+            serde_json::to_vec(&(legacy, template))?
+        } else {
+            // Old metadata must still identify its saved products correctly.
+            serde_json::to_vec(&legacy)?
+        };
+        Ok(crate::storage::sha256_hex(identity))
     }
 }
 
@@ -47,12 +65,16 @@ pub struct Endpoint {
     pub base_url: String,
     pub api_key_env: String,
     pub dims: Option<usize>,
-    /// None means speech has not been configured; false is an explicit opt-out.
+    /// False is an explicit opt-out. Unset speech is automatic; vision defaults on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
 }
 
 impl Endpoint {
+    pub fn document_template(&self) -> Option<&'static str> {
+        (self.kind == "gemini" && self.model.trim_start_matches("models/") == "gemini-embedding-2")
+            .then_some(DOCUMENT_TEMPLATE)
+    }
     pub fn uses_native_transcription(&self) -> bool {
         self.kind == "gemini"
             && self
@@ -77,6 +99,19 @@ pub struct Config {
     pub vision: Endpoint,
     pub transcription: Endpoint,
     pub perception: Perception,
+    #[serde(default)]
+    pub search: Search,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Search {
+    pub hybrid: bool,
+}
+impl Default for Search {
+    fn default() -> Self {
+        Self { hybrid: true }
+    }
 }
 
 impl Default for Config {
@@ -90,7 +125,8 @@ impl Default for Config {
             enabled: None,
         };
         Self {
-            embedding: endpoint("gemini-embedding-2", Some(1536)),
+            search: Search::default(),
+            embedding: endpoint("gemini-embedding-2", Some(DEFAULT_EMBEDDING_DIMS)),
             vision: endpoint("gemini-3.8-flash", None),
             transcription: endpoint("gemini-3.5-transcribe", None),
             perception: Perception {
@@ -186,7 +222,7 @@ impl Config {
                 "dims",
                 "enabled",
             ] {
-                if (field == "enabled" && section != "transcription")
+                if (field == "enabled" && !matches!(section, "transcription" | "vision"))
                     || (section == "perception" && !matches!(field, "base_url" | "api_key_env"))
                 {
                     continue;
@@ -282,6 +318,7 @@ impl Config {
                 .dims
                 .context("embedding dimensions missing")?,
             query_template: QUERY_TEMPLATE.into(),
+            document_template: self.embedding.document_template().map(str::to_owned),
         })
     }
     pub fn space_id(&self) -> Result<String> {
@@ -296,6 +333,34 @@ pub fn config_paths(home: &Path, cwd: &Path) -> [PathBuf; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn document_template_separates_spaces_without_relabeling_legacy_vectors() {
+        let current = Config::default().space_metadata().unwrap();
+        let mut legacy_json = serde_json::to_value(&current).unwrap();
+        legacy_json
+            .as_object_mut()
+            .unwrap()
+            .remove("document_template");
+        let legacy: SpaceMetadata = serde_json::from_value(legacy_json).unwrap();
+        assert_ne!(current.id().unwrap(), legacy.id().unwrap());
+        assert_eq!(
+            legacy.id().unwrap(),
+            crate::storage::cache_key(&(
+                &legacy.kind,
+                &legacy.base_url,
+                &legacy.model,
+                Some(legacy.dims),
+                &legacy.query_template
+            ))
+            .unwrap()
+        );
+        let mut changed = current.clone();
+        changed.document_template = Some("a different template".into());
+        assert_ne!(current.id().unwrap(), changed.id().unwrap());
+        let mut endpoint = Config::default().embedding;
+        endpoint.kind = "openai".into();
+        assert!(endpoint.document_template().is_none());
+    }
     #[test]
     fn speech_choice_is_distinct_from_missing_configuration() {
         assert_eq!(Config::load(&[]).unwrap().transcription.enabled, None);
@@ -351,7 +416,11 @@ mod tests {
     #[test]
     fn space_is_endpoint_specific_but_not_key_specific() {
         let mut config = Config::default();
+        assert_eq!(config.embedding.dims, Some(3072));
         let original = config.space_id().unwrap();
+        config.embedding.dims = Some(1536);
+        assert_ne!(original, config.space_id().unwrap());
+        config.embedding.dims = Some(3072);
         config.embedding.api_key_env = "OTHER_KEY".into();
         assert_eq!(original, config.space_id().unwrap());
         config.embedding.base_url = "https://another.example/v1".into();

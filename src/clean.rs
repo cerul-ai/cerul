@@ -65,12 +65,12 @@ fn indexes(workspace: &Path) -> Result<Vec<PathBuf>> {
     let root = workspace.join("index");
     no_symlinks(&root)?;
     let entries = match fs::read_dir(&root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Ok(entries) => Some(entries),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
     };
     let mut paths = Vec::new();
-    for entry in entries {
+    for entry in entries.into_iter().flatten() {
         let entry = entry?;
         if space_id(&entry.file_name().to_string_lossy()) {
             no_symlinks(&entry.path())?;
@@ -80,6 +80,12 @@ fn indexes(workspace: &Path) -> Result<Vec<PathBuf>> {
             );
             paths.push(entry.path());
         }
+    }
+    let lexical = workspace.join("lexical");
+    if lexical.exists() {
+        no_symlinks(&lexical)?;
+        ensure!(lexical.is_dir(), "lexical index must be a directory");
+        paths.push(lexical);
     }
     paths.sort();
     Ok(paths)
@@ -347,6 +353,14 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn lexical_projection_is_discovered_without_vector_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let lexical = root.join("lexical");
+        fs::create_dir_all(&lexical).unwrap();
+        assert_eq!(indexes(&root).unwrap(), vec![lexical]);
+    }
     #[tokio::test]
     async fn cancellation_prevents_cleanup_before_start_and_between_actions() {
         for cancelled_before_start in [true, false] {

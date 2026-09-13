@@ -47,6 +47,20 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Publish a new artifact atomically, without replacing an existing export.
+pub fn atomic_write_new(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    temp.persist_noclobber(path).map_err(|error| error.error)?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
 pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let mut bytes = serde_json::to_vec(value)?;
     bytes.push(b'\n');
@@ -121,6 +135,21 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"old\n");
         atomic_write(&path, b"new\n").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"new\n");
+    }
+    #[test]
+    fn interrupted_export_can_retry_without_overwriting_completed_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("candidates.jsonl");
+        {
+            let mut interrupted = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+            interrupted.write_all(b"{partial").unwrap();
+            interrupted.as_file().sync_all().unwrap();
+            assert!(!path.exists());
+        }
+        atomic_write_new(&path, b"{\"complete\":true}\n").unwrap();
+        assert!(atomic_write_new(&path, b"replacement\n").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"{\"complete\":true}\n");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
     #[test]
     fn successful_unit_survives_restart_but_changed_source_does_not_reuse_it() {

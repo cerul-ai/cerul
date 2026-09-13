@@ -69,7 +69,7 @@ pub fn video_quality(
     input(&mut command, source, source_range)?;
     command.args(["-map", "0:v:0"]);
     if proxy {
-        command.args(["-an", "-vf", "scale='min(480,iw)':'min(480,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=2"]);
+        command.args(["-an", "-vf", "scale='min(480,iw)':'min(480,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=1:round=up"]);
     } else {
         command.args(["-map", "0:a:0?", "-c:a", "aac"]);
     }
@@ -152,7 +152,7 @@ pub fn audio(source: &Path, source_range: SourceRange, destination: &Path) -> Re
 }
 
 /// Materialize sampled frames only inside the supplied temporary directory.
-/// Returned episode timestamps are selected from actual source-frame PTS.
+/// Returned relative timestamps come from the same decode as the saved pixels.
 pub fn keyframes(
     source: &Path,
     source_range: SourceRange,
@@ -164,67 +164,87 @@ pub fn keyframes(
         "invalid keyframe rate"
     );
     fs::create_dir_all(directory)?;
-    let pts = super::frame_pts(source)?;
     let interval = (1_000_000. / fps).round() as i64;
-    let mut next = source_range.start_us;
-    let mut selected = Vec::new();
-    for (index, time) in pts.iter().enumerate() {
-        if *time >= source_range.end_us {
-            break;
-        }
-        if *time >= next {
-            selected.push((index, *time));
-            next = time.saturating_add(interval);
-        }
-    }
-    if selected.is_empty() {
-        return Ok(Vec::new());
-    }
-    // Accurate input seeking discards frames before the requested start. Keep
-    // ffprobe's actual selected frame numbers relative to that first retained frame.
-    let first_frame = selected[0].0;
-    // A flat sum exceeds ffmpeg's expression-parser recursion limit on long
-    // recordings. Balance the tree and keep it in a file to avoid ARG_MAX.
-    fn selection(frames: &[(usize, i64)], first: usize) -> String {
-        if frames.len() == 1 {
-            return format!("eq(n\\,{})", frames[0].0 - first);
-        }
-        let (left, right) = frames.split_at(frames.len() / 2);
-        format!("({}+{})", selection(left, first), selection(right, first))
-    }
-    let expression = selection(&selected, first_frame);
+    // Keep integer microseconds through selection and emit the observed PTS on
+    // stdout. This avoids a separate ffprobe -show_frames decode and a filter
+    // expression that grows with video length. Clear the marker before setting
+    // it so source metadata cannot inject lines into this private protocol.
     let filter = format!(
-        "select='{expression}',scale='min(1080,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease"
+        "settb=1/1000000,select='gte(pts,{})*lt(pts,{})*if(isnan(prev_selected_pts),1,gte(pts-prev_selected_pts,{interval}))',scale='min(1080,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease,metadata=mode=delete:key=cerul.sample,metadata=mode=add:key=cerul.sample:value=1,metadata=mode=print:key=cerul.sample:file='pipe\\:1'",
+        source_range.start_us, source_range.end_us
     );
     let pattern = directory.join("frame-%08d.png");
-    let filter_path = directory.join("selection.filter");
-    fs::write(&filter_path, &filter)?;
-    // New FFmpeg releases removed filter_script in favor of file-valued options.
-    // Detect the legacy option instead of parsing distributor-specific versions.
-    let help = run(crate::media::command("ffmpeg").args(["-hide_banner", "-h", "full"]))?;
-    let legacy = String::from_utf8_lossy(&help.stdout).contains("-filter_script");
-    let filter_option = if legacy {
-        "-filter_script:v"
-    } else {
-        "-/filter:v"
-    };
+    let origin = probe(source)?.start_us;
+    let offset = source_range
+        .start_us
+        .checked_sub(origin)
+        .context("seek time overflow")?;
+    ensure!(offset >= 0, "clip starts before the source timeline");
     let mut command = crate::media::command("ffmpeg");
-    seek_input(&mut command, source, source_range)?;
+    command.args(["-nostdin", "-v", "error", "-y", "-copyts"]);
+    if origin >= 0 {
+        command.args([
+            "-ss",
+            &seconds(offset),
+            "-t",
+            &seconds(source_range.end_us - source_range.start_us),
+        ]);
+    } else {
+        // Seeking even to offset zero can discard a Matroska stream's negative
+        // PTS prefix. Decode from the beginning and let the source-PTS predicate
+        // select the requested range. Shared indexing samples still need one pass.
+        let duration = source_range
+            .end_us
+            .checked_sub(origin)
+            .context("duration overflow")?;
+        command.args(["-t", &seconds(duration)]);
+    }
+    command.arg("-i").arg(source);
     command
-        .args(["-map", "0:v:0", filter_option])
-        .arg(&filter_path)
-        .args(["-frames:v", &selected.len().to_string(), "-fps_mode", "vfr"])
+        .args([
+            "-map",
+            "0:v:0",
+            "-vf",
+            &filter,
+            "-fps_mode",
+            "passthrough",
+            "-enc_time_base",
+            "1:1000000",
+            "-avoid_negative_ts",
+            "disabled",
+        ])
         .arg(&pattern);
-    run(&mut command)?;
-    selected
-        .into_iter()
-        .enumerate()
-        .map(|(index, (_, time))| {
-            let path = directory.join(format!("frame-{:08}.png", index + 1));
-            ensure!(path.is_file(), "keyframe output missing");
-            Ok((time - source_range.start_us, path))
-        })
-        .collect()
+    let output = run(&mut command)?;
+    let text = std::str::from_utf8(&output.stdout).context("invalid frame timestamps")?;
+    let lines: Vec<_> = text.lines().collect();
+    let (pairs, remainder) = lines.as_chunks::<2>();
+    ensure!(remainder.is_empty(), "incomplete frame timestamps");
+    let mut frames = Vec::new();
+    let mut previous = None;
+    for (index, pair) in pairs.iter().enumerate() {
+        let mut fields = pair[0].split_whitespace();
+        ensure!(
+            fields.next() == Some(format!("frame:{index}").as_str()) && pair[1] == "cerul.sample=1",
+            "invalid frame timestamp sequence"
+        );
+        let time: i64 = fields
+            .next()
+            .and_then(|field| field.strip_prefix("pts:"))
+            .context("missing frame timestamp")?
+            .parse()
+            .context("invalid frame timestamp")?;
+        ensure!(
+            time >= source_range.start_us
+                && time < source_range.end_us
+                && previous.is_none_or(|before| time > before),
+            "frame timestamp outside ordered source interval"
+        );
+        previous = Some(time);
+        let path = directory.join(format!("frame-{:08}.png", index + 1));
+        ensure!(path.is_file(), "keyframe output missing");
+        frames.push((time - source_range.start_us, path));
+    }
+    Ok(frames)
 }
 
 #[cfg(test)]
@@ -262,8 +282,18 @@ mod tests {
     }
     #[test]
     fn seeked_vfr_frames_match_full_decode_pixels_and_original_pts() {
+        assert_sampled_timeline("mp4", "libx264", "10", "5");
+    }
+
+    #[test]
+    fn fractional_rates_preserve_negative_and_large_source_timestamps() {
+        assert_sampled_timeline("mkv", "ffv1", "30000/1001", "-0.3");
+        assert_sampled_timeline("mp4", "libx264", "30000/1001", "7200");
+    }
+
+    fn assert_sampled_timeline(extension: &str, codec: &str, rate: &str, offset: &str) {
         let dir = tempfile::tempdir().unwrap();
-        let source = dir.path().join("vfr.mp4");
+        let source = dir.path().join(format!("vfr.{extension}"));
         run(crate::media::command("ffmpeg")
             .args([
                 "-v",
@@ -271,29 +301,38 @@ mod tests {
                 "-f",
                 "lavfi",
                 "-i",
-                "testsrc2=size=64x64:rate=10:duration=4",
+                &format!("testsrc2=size=64x64:rate={rate}:duration=4"),
                 "-vf",
                 "select='not(eq(mod(n,3),1))'",
                 "-fps_mode",
                 "vfr",
                 "-c:v",
-                "libx264",
+                codec,
                 "-output_ts_offset",
-                "5",
+                offset,
+                "-avoid_negative_ts",
+                "disabled",
             ])
             .arg(&source))
         .unwrap();
         let pts = super::super::frame_pts(&source).unwrap();
-        assert!(pts[0] >= 5_000_000);
+        assert_eq!(pts[0] < 0, offset.starts_with('-'));
         let reference = dir.path().join("reference");
         fs::create_dir(&reference).unwrap();
         run(crate::media::command("ffmpeg")
-            .args(["-v", "error", "-i"])
+            .args(["-v", "error", "-copyts", "-i"])
             .arg(&source)
-            .args(["-fps_mode", "vfr"])
+            .args([
+                "-fps_mode",
+                "passthrough",
+                "-enc_time_base",
+                "1:1000000",
+                "-avoid_negative_ts",
+                "disabled",
+            ])
             .arg(reference.join("%08d.png")))
         .unwrap();
-        let range = SourceRange::new(5_150_000, 7_050_000).unwrap();
+        let range = SourceRange::new(pts[0] + 150_000, pts[0] + 2_050_000).unwrap();
         let frames = keyframes(&source, range, &dir.path().join("selected"), 2.).unwrap();
         let mut next = range.start_us;
         let wanted: Vec<_> = pts

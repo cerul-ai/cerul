@@ -165,7 +165,7 @@ async fn prompt(
     let mut validation = endpoint.clone();
     if validation.kind == "gemini" && !validation.uses_native_transcription() {
         validation.model = "gemini-embedding-2".into();
-        validation.dims = Some(1536);
+        validation.dims = Some(cerul::config::DEFAULT_EMBEDDING_DIMS);
     }
     let embedding_check = validation.dims.is_some();
     let provider = Provider::new(validation, Some(key.trim().to_owned()), 1, None, cancel)?;

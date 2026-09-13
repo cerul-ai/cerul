@@ -34,6 +34,22 @@ Cerul 將本機影片變成可搜尋的資料庫。描述一個畫面，查找�
 
 ## 快速開始
 
+### Indexing updates
+
+Indexing defaults to Gemini Embedding 2 at 3072 dimensions and generates visual
+descriptions, a short title, and up to three grounded search suggestions.
+`--no-understanding` skips generation; `--no-audio` skips speech independently.
+An available Gemini key enables speech unless explicitly disabled. See
+[configuration](docs/configuration.md) and [video understanding](docs/video-search.md#inspect-video-understanding).
+
+![Cerul indexing, search, and embodied annotation architecture](docs/assets/cerul-architecture.png)
+
+*Architecture with AI-generated illustrative frames. Default search combines
+independent video, speech, screen-text, and description candidates with gated
+full-text matches using max fusion and capped agreement. Original evidence and
+timestamps remain inspectable. Dataset writeback supports opt-in LeRobot
+subtasks. See [DESIGN.md](DESIGN.md) for implemented behavior.*
+
 Cerul 是一個搜尋影片、匯出片段的命令列工具。安裝包已包含所需的媒體工具和 OCR 模型。
 
 支援 **macOS Apple Silicon** 和 **Linux x86_64（Ubuntu 24.04 或更新）**。

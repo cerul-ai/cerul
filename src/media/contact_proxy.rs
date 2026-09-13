@@ -6,7 +6,7 @@ use std::{
     fs::{self, File},
     path::{Path, PathBuf},
 };
-pub const RECIPE_VERSION: &str = "contact-proxy/1";
+pub const RECIPE_VERSION: &str = "contact-proxy/2";
 #[derive(Serialize, Deserialize)]
 struct Manifest {
     key: String,

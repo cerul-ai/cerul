@@ -1,12 +1,12 @@
 pub mod filter;
+pub mod fusion;
 
 use crate::{
-    annotations::AnnotationFile,
     config::Config,
     episode::{Episode, Stream, TimeRange},
     index::{
-        discover, lance,
-        records::{self, RecordIndex, Row},
+        descriptions, discover, lance, lexical,
+        records::{self, Row},
         vectors::Kind,
     },
     media,
@@ -121,6 +121,17 @@ impl Options {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EvidenceScore {
+    pub vector_id: String,
+    pub kind: Kind,
+    pub start_us: i64,
+    pub end_us: i64,
+    /// Uncalibrated cosine similarity in the configured embedding space.
+    pub raw_score: f32,
+    /// One-based rank in this track's prefiltered candidate list.
+    pub rank: usize,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Hit {
     pub episode: String,
     pub stream: String,
@@ -128,6 +139,12 @@ pub struct Hit {
     pub end_us: i64,
     pub frame_range: Option<[u64; 2]>,
     pub score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_scores: Vec<EvidenceScore>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fusion_evidence: Vec<fusion::Evidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fusion_recipe: Option<String>,
     pub matched: Option<Kind>,
     pub excerpt: String,
     pub annotations: Vec<Row>,
@@ -192,6 +209,9 @@ fn hit(episode: &str, stream: &str, range: TimeRange, rows: &[Row]) -> Hit {
         end_us: range.end_us,
         frame_range: None,
         score: None,
+        evidence_scores: Vec::new(),
+        fusion_evidence: Vec::new(),
+        fusion_recipe: None,
         matched: None,
         excerpt: String::new(),
         annotations: annotations(rows, episode, stream, range),
@@ -204,9 +224,30 @@ fn hit(episode: &str, stream: &str, range: TimeRange, rows: &[Row]) -> Hit {
 /// the small overlap between neighbouring index windows must not chain a whole
 /// video into one hit.
 fn mostly_same(previous: &Hit, next: &Hit) -> bool {
-    let overlap = previous.end_us.min(next.end_us) - next.start_us;
+    let overlap = previous.end_us.min(next.end_us) - previous.start_us.max(next.start_us);
     let shortest = (previous.end_us - previous.start_us).min(next.end_us - next.start_us);
     shortest <= 0 || overlap * 2 >= shortest
+}
+/// Keep the best localized interval instead of widening it to a weaker window.
+fn ranked_dedup(mut hits: Vec<Hit>) -> Vec<Hit> {
+    hits.sort_by(|a, b| {
+        b.score
+            .unwrap_or_default()
+            .total_cmp(&a.score.unwrap_or_default())
+            .then_with(|| {
+                (&a.episode, &a.stream, a.start_us, a.end_us)
+                    .cmp(&(&b.episode, &b.stream, b.start_us, b.end_us))
+            })
+    });
+    let mut selected: Vec<Hit> = Vec::new();
+    for found in hits {
+        if !selected.iter().any(|old| {
+            old.episode == found.episode && old.stream == found.stream && mostly_same(old, &found)
+        }) {
+            selected.push(found);
+        }
+    }
+    selected
 }
 /// One still frame at the start of a hit, cached under the workspace so repeated
 /// searches reuse it and `clean --cache` removes it.
@@ -266,6 +307,7 @@ fn merge_hits(mut hits: Vec<Hit>, vector: bool) -> Vec<Hit> {
                 previous.excerpt.push_str(&next.excerpt);
             }
             previous.annotations.append(&mut next.annotations);
+            previous.evidence_scores.append(&mut next.evidence_scores);
             previous
                 .annotations
                 .sort_by(|a, b| (&a.annotation, &a.record.id).cmp(&(&b.annotation, &b.record.id)));
@@ -339,69 +381,101 @@ async fn run_inner(
         episode.validate()?;
         episodes.insert(episode.episode_id.clone(), episode);
     }
-    if vector {
+    let hybrid = vector && config.search.hybrid;
+    let description_index = if hybrid {
+        Some(
+            descriptions::projection(
+                workspace,
+                &space,
+                config
+                    .embedding
+                    .dims
+                    .context("embedding dimensions missing")?,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let vector_index = if vector {
         let dims = config
             .embedding
             .dims
             .context("embedding dimensions missing")?;
-        let mut available = false;
-        for entry in registry
-            .iter()
-            .filter(|entry| episodes.contains_key(&entry.episode_id))
-        {
-            let path = entry
-                .sidecar
-                .join("embeddings")
-                .join(format!("{space}.parquet"));
-            if !path.is_file() {
-                continue;
-            }
-            let episode = &episodes[&entry.episode_id];
-            for row in crate::index::vectors::read(&path, dims)? {
-                if row.episode == entry.episode_id
-                    && row.space_id == space
-                    && kind_allowed(&filters, row.kind)
-                    && filters.iter().all(|filter| match filter.key.as_str() {
-                        "episode" => filter.matches(Some(&Value::String(row.episode.clone()))),
-                        "stream" => filter.matches(Some(&Value::String(row.stream.clone()))),
-                        _ => true,
-                    })
-                    && episode.video(&row.stream).is_ok()
-                    && crate::index::embed::usable(
-                        &entry.sidecar,
-                        &row.stream,
-                        &episode.time.reference,
-                        &space,
-                    )?
-                {
-                    available = true;
-                    break;
+        let kinds: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen, Kind::Description]
+            .into_iter()
+            .filter(|kind| hybrid || *kind != Kind::Description)
+            .filter(|kind| kind_allowed(&filters, *kind))
+            .collect();
+        let mut selected = Vec::new();
+        for (id, episode) in &episodes {
+            for stream in &episode.streams {
+                if !matches!(stream, Stream::Video { .. }) {
+                    continue;
                 }
-            }
-            if available {
-                break;
+                if !filters.iter().all(|filter| match filter.key.as_str() {
+                    "episode" => filter.matches(Some(&Value::String(id.clone()))),
+                    "stream" => filter.matches(Some(&Value::String(stream.id().into()))),
+                    _ => true,
+                }) {
+                    continue;
+                }
+                selected.push(format!(
+                    "(episode = {} AND stream = {})",
+                    lance::literal(id),
+                    lance::literal(stream.id())
+                ));
             }
         }
-        if !available {
+        if selected.is_empty() || kinds.is_empty() {
             return Err(unavailable(
                 "no usable saved vectors in the selected scope match the configured embedding space; run index with this model",
             ));
         }
-    }
-    let record_index = RecordIndex::rebuild(workspace, &space).await?;
-    let rows = record_index.read(None).await?;
-    let mut files: Vec<AnnotationFile> = records::sidecars(workspace)?;
-    for file in &mut files {
-        file.records = rows
-            .iter()
-            .filter(|row| {
-                row.episode == file.header.episode
-                    && row.stream == file.header.stream
-                    && row.annotation == file.header.name
+        let index = match lance::VectorIndex::open(workspace, &space, dims, false).await {
+            Ok(index) => index,
+            Err(error) if error.to_string().contains("embedding index is missing") => {
+                lance::rebuild(workspace, &space, dims).await?
+            }
+            Err(error) => return Err(error),
+        };
+        index.prune_incomplete(workspace, &cancel).await?;
+        let predicate = format!(
+            "({}) AND kind IN ({})",
+            selected.join(" OR "),
+            kinds
+                .iter()
+                .map(|kind| lance::literal(kind.as_str()))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let description_count = match &description_index {
+            Some(index) => index.count_matching(&predicate).await?,
+            None => 0,
+        };
+        if index.count_matching(&predicate).await? + description_count == 0 {
+            return Err(unavailable(
+                "no usable saved vectors in the selected scope match the configured embedding space; run index with this model",
+            ));
+        }
+        Some(index)
+    } else {
+        None
+    };
+    // Read each authoritative file once. Search does not need to rewrite a
+    // complete Lance annotation projection only to read the same records back.
+    let files = records::sidecars(workspace)?;
+    let rows: Vec<Row> = files
+        .iter()
+        .flat_map(|file| {
+            file.records.iter().map(|record| Row {
+                episode: file.header.episode.clone(),
+                stream: file.header.stream.clone(),
+                annotation: file.header.name.clone(),
+                record: record.clone(),
             })
-            .map(|row| row.record.clone())
-            .collect();
-    }
+        })
+        .collect();
     let mut scopes = BTreeMap::new();
     for (id, episode) in &episodes {
         for stream in &episode.streams {
@@ -432,16 +506,12 @@ async fn run_inner(
             .embedding
             .dims
             .context("embedding dimensions missing")?;
-        let index = match lance::VectorIndex::open(workspace, &space, dims, false).await {
-            Ok(index) => index,
-            Err(error) if error.to_string().contains("embedding index is missing") => {
-                lance::rebuild(workspace, &space, dims).await?
-            }
-            Err(error) => return Err(error),
-        };
-        index.prune_incomplete(workspace, &cancel).await?;
-        let allowed: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen]
+        let index = vector_index
+            .as_ref()
+            .expect("vector search opened its projection");
+        let allowed: Vec<_> = [Kind::Video, Kind::Speech, Kind::Screen, Kind::Description]
             .into_iter()
+            .filter(|kind| hybrid || *kind != Kind::Description)
             .filter(|kind| kind_allowed(&filters, *kind))
             .collect();
         if !allowed.is_empty() {
@@ -460,11 +530,14 @@ async fn run_inner(
                     .collect::<Vec<_>>()
                     .join(",")
             );
-            if index.count().await? > 0 {
+            let description_count = match &description_index {
+                Some(index) => index.count().await?,
+                None => 0,
+            };
+            if index.count().await? + description_count > 0 {
                 let mut provider =
                     Provider::from_env(config.embedding.clone(), 1, None, cancel.clone())?;
                 provider.request_notice = options.request_notice.clone();
-                probes::check(&provider, probes::Capability::Embedding, workspace, false).await?;
                 let (identity, input) = if let Some(path) = &options.image {
                     let bytes = fs::read(path)?;
                     let mime = match image::guess_format(&bytes)? {
@@ -492,6 +565,8 @@ async fn run_inner(
                 {
                     Some(vector) => vector,
                     None => {
+                        probes::check(&provider, probes::Capability::Embedding, workspace, false)
+                            .await?;
                         let vector = provider.embed(input, true).await?;
                         // A cache write must never fail the search that produced it.
                         if fs::create_dir_all(cached.parent().expect("cache path has a parent"))
@@ -502,20 +577,93 @@ async fn run_inner(
                         vector
                     }
                 };
-                let total = index.count().await?;
+                let lexical_index = if hybrid
+                    && options
+                        .query
+                        .as_deref()
+                        .is_some_and(|query| lexical::covers_query(query, query))
+                    && allowed
+                        .iter()
+                        .any(|kind| matches!(kind, Kind::Speech | Kind::Screen))
+                {
+                    Some(lexical::LexicalIndex::prepare(workspace, &files).await?)
+                } else {
+                    None
+                };
+                let total = index.count().await?
+                    + description_count
+                    + if lexical_index.is_some() {
+                        rows.len()
+                    } else {
+                        0
+                    };
                 let mut budget = options.limit.saturating_mul(3).max(32).min(total);
                 loop {
                     cancelled(&cancel)?;
-                    let candidates = index.search(&query, Some(&predicate), budget).await?;
-                    let exhausted = candidates.len() < budget || budget == total;
-                    let below_threshold = candidates.last().is_some_and(|(_, score)| {
-                        options
-                            .threshold
-                            .is_some_and(|threshold| *score < threshold)
-                    });
+                    let mut tracks = index
+                        .search_tracks(&query, &predicate, &allowed, budget)
+                        .await?;
+                    if let Some(index) = &description_index
+                        && allowed.contains(&Kind::Description)
+                    {
+                        tracks.extend(
+                            index
+                                .search_tracks(&query, &predicate, &[Kind::Description], budget)
+                                .await?,
+                        );
+                    }
+                    let lexical_rows = match &lexical_index {
+                        Some(index) => {
+                            index
+                                .search(options.query.as_deref().unwrap(), Some(&predicate), budget)
+                                .await?
+                        }
+                        None => Vec::new(),
+                    };
+                    let exhausted = (tracks.iter().all(|rows| rows.len() < budget)
+                        && lexical_rows.len() < budget)
+                        || budget == total;
+                    // A lower-ranked row can still win after cross-group agreement,
+                    // or change which temporal anchor receives derived evidence.
+                    // Until a safe bound covers both effects, exhaust every scoped
+                    // source before fusing. Do not repeatedly fuse partial batches.
+                    if hybrid && !exhausted {
+                        budget = budget.saturating_mul(2).min(total);
+                        continue;
+                    }
+                    let below_threshold = !hybrid
+                        && options.threshold.is_some_and(|threshold| {
+                            tracks
+                                .iter()
+                                .all(|rows| rows.last().is_none_or(|(_, score)| *score < threshold))
+                        });
+                    let candidates = tracks
+                        .into_iter()
+                        .flat_map(|track| track.into_iter().enumerate());
                     hits.clear();
                     let mut unique = BTreeSet::new();
-                    for (row, score) in candidates {
+                    let mut fusion_candidates = Vec::new();
+                    for (rank, (row, score)) in candidates {
+                        if hybrid {
+                            fusion_candidates.push(fusion::Candidate {
+                                id: row.id,
+                                episode: row.episode,
+                                stream: row.stream,
+                                start_us: row.start_us,
+                                end_us: row.end_us,
+                                track: match row.kind {
+                                    Kind::Video => fusion::Track::Video,
+                                    Kind::Speech => fusion::Track::Speech,
+                                    Kind::Screen => fusion::Track::Screen,
+                                    Kind::Description => fusion::Track::Description,
+                                },
+                                raw_score: f64::from(score),
+                                rank: rank + 1,
+                                text: Some(row.text),
+                                annotation: None,
+                            });
+                            continue;
+                        }
                         if options.threshold.is_some_and(|threshold| score < threshold) {
                             continue;
                         }
@@ -532,13 +680,113 @@ async fn run_inner(
                                 ));
                                 let mut found = hit(&row.episode, &row.stream, range, &rows);
                                 found.score = Some(score);
+                                found.evidence_scores.push(EvidenceScore {
+                                    vector_id: row.id.clone(),
+                                    kind: row.kind,
+                                    start_us: row.start_us,
+                                    end_us: row.end_us,
+                                    raw_score: score,
+                                    rank: rank + 1,
+                                });
                                 found.matched = Some(row.kind);
                                 found.excerpt = row.text.clone();
                                 hits.push(found);
                             }
                         }
                     }
-                    if unique.len() >= options.limit || exhausted || below_threshold {
+                    if hybrid {
+                        for (rank, (row, score)) in lexical_rows.into_iter().enumerate() {
+                            let text = row
+                                .record
+                                .fields
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            if !lexical::covers_query(options.query.as_deref().unwrap(), text) {
+                                continue;
+                            }
+                            fusion_candidates.push(fusion::Candidate {
+                                id: row.record.id,
+                                episode: row.episode,
+                                stream: row.stream,
+                                start_us: row.record.start_us,
+                                end_us: row.record.end_us,
+                                track: fusion::Track::Lexical,
+                                raw_score: f64::from(score),
+                                rank: rank + 1,
+                                text: Some(text.into()),
+                                annotation: Some(row.annotation),
+                            });
+                        }
+                        for ((episode, stream), ranges) in &scopes {
+                            for scope in ranges {
+                                // The SQL OR prefilter admits candidates from all matched
+                                // intervals. Each interval must get its own evidence and
+                                // fusion scores before the displayed anchor is clipped.
+                                let local: Vec<_> = fusion_candidates
+                                    .iter()
+                                    .filter(|candidate| {
+                                        &candidate.episode == episode
+                                            && &candidate.stream == stream
+                                            && candidate.start_us < scope.range.end_us
+                                            && candidate.end_us > scope.range.start_us
+                                    })
+                                    .cloned()
+                                    .collect();
+                                for moment in fusion::fuse(
+                                    &local,
+                                    &fusion::default_recipe(options.threshold),
+                                )? {
+                                    if let Some(range) = scope.range.intersection(TimeRange::new(
+                                        moment.start_us,
+                                        moment.end_us,
+                                    )?) {
+                                        let mut found =
+                                            hit(&moment.episode, &moment.stream, range, &rows);
+                                        found.score = Some(moment.score as f32);
+                                        for evidence in &moment.evidence {
+                                            let candidate = &evidence.candidate;
+                                            let kind = match candidate.track {
+                                                fusion::Track::Video => Kind::Video,
+                                                fusion::Track::Speech => Kind::Speech,
+                                                fusion::Track::Screen => Kind::Screen,
+                                                fusion::Track::Description => Kind::Description,
+                                                fusion::Track::Lexical => {
+                                                    if candidate.annotation.as_deref()
+                                                        == Some("transcript")
+                                                    {
+                                                        Kind::Speech
+                                                    } else {
+                                                        Kind::Screen
+                                                    }
+                                                }
+                                            };
+                                            if found.matched.is_none() && evidence.contributes {
+                                                found.matched = Some(kind);
+                                                found.excerpt =
+                                                    candidate.text.clone().unwrap_or_default();
+                                            }
+                                            if candidate.track != fusion::Track::Lexical {
+                                                found.evidence_scores.push(EvidenceScore {
+                                                    vector_id: candidate.id.clone(),
+                                                    kind,
+                                                    start_us: candidate.start_us,
+                                                    end_us: candidate.end_us,
+                                                    raw_score: candidate.raw_score as f32,
+                                                    rank: candidate.rank,
+                                                });
+                                            }
+                                        }
+                                        found.fusion_evidence = moment.evidence.clone();
+                                        found.fusion_recipe = Some(fusion::DEFAULT_RECIPE.into());
+                                        hits.push(found);
+                                    }
+                                }
+                            }
+                        }
+                        hits = ranked_dedup(hits);
+                    }
+                    if (!hybrid && unique.len() >= options.limit) || exhausted || below_threshold {
                         break;
                     }
                     budget = budget.saturating_mul(2).min(total);
@@ -610,9 +858,9 @@ async fn run_inner(
             dry_run: false,
         });
     }
-    if vector {
+    if vector && !hybrid {
         let mut intervals: BTreeMap<(String, String, i64, i64), Hit> = BTreeMap::new();
-        for found in hits {
+        for mut found in hits {
             let key = (
                 found.episode.clone(),
                 found.stream.clone(),
@@ -620,11 +868,17 @@ async fn run_inner(
                 found.end_us,
             );
             match intervals.get_mut(&key) {
-                Some(old) if found.score > old.score => *old = found,
+                Some(old) => {
+                    if found.score > old.score {
+                        old.score = found.score;
+                        old.matched = found.matched;
+                        old.excerpt = found.excerpt;
+                    }
+                    old.evidence_scores.append(&mut found.evidence_scores);
+                }
                 None => {
                     intervals.insert(key, found);
                 }
-                _ => {}
             }
         }
         hits = intervals.into_values().collect();
@@ -632,7 +886,11 @@ async fn run_inner(
         // Choose the top unique intervals before joining their adjacent windows.
         hits.truncate(options.limit);
     }
-    let mut hits = merge_hits(hits, vector);
+    let mut hits = if hybrid {
+        ranked_dedup(hits)
+    } else {
+        merge_hits(hits, vector)
+    };
     hits.truncate(options.limit);
     for found in &mut hits {
         if let Some(Stream::Video { path, .. }) = episodes
@@ -694,7 +952,7 @@ async fn run_inner(
 mod tests {
     use super::*;
     use crate::{
-        annotations::{Header, Model, Record},
+        annotations::{AnnotationFile, Header, Model, Record},
         index::vectors::{self, VectorRow},
     };
     use serde_json::json;
@@ -730,6 +988,173 @@ mod tests {
                 fields: serde_json::from_value(fields).unwrap(),
             }],
         }
+    }
+    fn hybrid_fixture(root: &Path) -> (PathBuf, PathBuf, Episode, Config, String) {
+        let source = root.join("source.mp4");
+        media::run(
+            media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=red:size=64x64:rate=1:duration=30",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let workspace = root.join("workspace");
+        let episode = discover::ordinary_episode(&source).unwrap();
+        let sidecar = discover::publish_episode(&workspace, &episode, None).unwrap();
+        let mut config = Config::default();
+        config.embedding.dims = Some(2);
+        config.embedding.base_url = "http://127.0.0.1:1".into();
+        let space = config.space_id().unwrap();
+        storage::write_json(
+            &workspace.join("cache/queries").join(format!(
+                "{}.json",
+                storage::cache_key(&(&space, "needle")).unwrap()
+            )),
+            &vec![1_f32, 0.],
+        )
+        .unwrap();
+        (workspace, sidecar, episode, config, space)
+    }
+    fn scored_row(
+        episode: &Episode,
+        space: &str,
+        kind: Kind,
+        start_us: i64,
+        end_us: i64,
+        cosine: f32,
+    ) -> VectorRow {
+        VectorRow {
+            id: format!("{}-{start_us}", kind.as_str()),
+            episode: episode.episode_id.clone(),
+            stream: "primary".into(),
+            kind,
+            start_us,
+            end_us,
+            vector: vec![cosine, (1. - cosine * cosine).sqrt()],
+            text: format!("{} evidence", kind.as_str()),
+            still: false,
+            space_id: space.into(),
+            params_hash: "fixture".into(),
+        }
+    }
+    #[tokio::test]
+    async fn hybrid_recovers_agreement_beyond_initial_candidate_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let (workspace, sidecar, episode, config, space) = hybrid_fixture(dir.path());
+        let mut rows = Vec::new();
+        for (group, kind) in [Kind::Video, Kind::Speech].into_iter().enumerate() {
+            for i in 0..32 {
+                let start = (group as i64 * 32 + i) * 200_000;
+                rows.push(scored_row(
+                    &episode,
+                    &space,
+                    kind,
+                    start,
+                    start + 100_000,
+                    0.82,
+                ));
+            }
+            rows.push(scored_row(
+                &episode, &space, kind, 26_000_000, 27_000_000, 0.80,
+            ));
+        }
+        vectors::write(
+            &sidecar.join("embeddings").join(format!("{space}.parquet")),
+            &rows,
+            2,
+        )
+        .unwrap();
+        let report = run(
+            &workspace,
+            &config,
+            &Options {
+                query: Some("needle".into()),
+                limit: 10,
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.hits[0].start_us, 26_000_000);
+        assert!((report.hits[0].score.unwrap() - 0.92).abs() < 0.0001);
+        assert_eq!(report.hits[0].fusion_evidence.len(), 2);
+        assert!(
+            report.hits[0]
+                .fusion_evidence
+                .iter()
+                .all(|e| e.contributes && e.candidate.rank == 33)
+        );
+    }
+    #[tokio::test]
+    async fn hybrid_fuses_only_evidence_in_each_disjoint_filter_interval() {
+        let dir = tempfile::tempdir().unwrap();
+        let (workspace, sidecar, episode, config, space) = hybrid_fixture(dir.path());
+        let mut events = file(&episode, "semantic.event", json!({"verb":"regrasp"}));
+        events.records[0].start_us = 0;
+        events.records[0].end_us = 1_000_000;
+        let mut late = events.records[0].clone();
+        late.id = "late".into();
+        late.start_us = 20_000_000;
+        late.end_us = 21_000_000;
+        events.records.push(late);
+        events
+            .publish(&sidecar.join("semantic.event.jsonl"), 30_000_000, None)
+            .unwrap();
+        let mut ocr = file(&episode, "screen_text", json!({"text":"needle"}));
+        ocr.records[0].start_us = 15_000_000;
+        ocr.records[0].end_us = 30_000_000;
+        ocr.publish(&sidecar.join("screen_text.jsonl"), 30_000_000, None)
+            .unwrap();
+        vectors::write(
+            &sidecar.join("embeddings").join(format!("{space}.parquet")),
+            &[scored_row(
+                &episode,
+                &space,
+                Kind::Video,
+                0,
+                30_000_000,
+                0.4,
+            )],
+            2,
+        )
+        .unwrap();
+        let report = run(
+            &workspace,
+            &config,
+            &Options {
+                query: Some("needle".into()),
+                filters: vec!["semantic.event.verb=regrasp".into()],
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.hits.len(), 2);
+        let early = report.hits.iter().find(|h| h.start_us == 0).unwrap();
+        assert_eq!(early.end_us, 1_000_000);
+        assert_eq!(early.excerpt, "video evidence");
+        assert_eq!(early.fusion_evidence.len(), 1);
+        assert!((early.score.unwrap() - 0.7).abs() < 0.0001);
+        let late = report
+            .hits
+            .iter()
+            .find(|h| h.start_us == 20_000_000)
+            .unwrap();
+        assert_eq!(late.end_us, 21_000_000);
+        assert_eq!(late.excerpt, "needle");
+        assert_eq!(late.fusion_evidence.len(), 2);
+        assert!(late.score > early.score);
+        assert_eq!(late.fusion_evidence[0].candidate.start_us, 15_000_000);
     }
     #[tokio::test]
     async fn busy_workspace_precedes_vector_availability_errors() {
@@ -833,6 +1258,63 @@ mod tests {
         assert_eq!(report.hits[0].start_us, 26_000_000);
         assert_eq!(report.hits[0].end_us, 27_000_000);
         assert_eq!(report.hits[0].excerpt, "unit 13");
+        // Full-query lexical evidence can recover an identifier despite a cosine gate.
+        let lexical_query = "ECONNREFUSED";
+        storage::write_json(
+            &workspace.join("cache/queries").join(format!(
+                "{}.json",
+                storage::cache_key(&(&space, lexical_query)).unwrap()
+            )),
+            &vec![1_f32, 0.],
+        )
+        .unwrap();
+        let lexical_options = Options {
+            query: Some(lexical_query.into()),
+            threshold: Some(1.1),
+            limit: 1,
+            ..Default::default()
+        };
+        let exact = run(
+            &workspace,
+            &config,
+            &lexical_options,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(exact.hits[0].excerpt, lexical_query);
+        assert_eq!(exact.hits[0].start_us, 26_000_000);
+        assert!(exact.hits[0].evidence_scores.is_empty());
+        assert_eq!(
+            exact.hits[0].fusion_evidence[0].candidate.track,
+            fusion::Track::Lexical
+        );
+        let scoped = run(
+            &workspace,
+            &config,
+            &Options {
+                filters: vec!["kind=video".into()],
+                ..lexical_options.clone()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(scoped.hits.is_empty());
+        let mut legacy = config.clone();
+        legacy.search.hybrid = false;
+        assert!(
+            run(
+                &workspace,
+                &legacy,
+                &lexical_options,
+                CancellationToken::new()
+            )
+            .await
+            .unwrap()
+            .hits
+            .is_empty()
+        );
         // A changed query must receive its own embedding, not reuse the old one.
         let rewritten = run(
             &workspace,

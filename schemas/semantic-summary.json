@@ -1,0 +1,167 @@
+{
+  "$id": "https://cerul.ai/schemas/semantic-summary/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Summary",
+  "type": "object",
+  "properties": {
+    "content_type": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ContentKind"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "coverage": {
+      "$ref": "#/$defs/Coverage"
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "environment": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "language": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceRef"
+      }
+    },
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/QuerySuggestion"
+      }
+    },
+    "summary": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "title",
+    "summary",
+    "coverage",
+    "suggestions",
+    "source_refs",
+    "dependencies"
+  ],
+  "$defs": {
+    "ContentKind": {
+      "type": "string",
+      "enum": [
+        "talk",
+        "slides",
+        "screen",
+        "demo",
+        "broll",
+        "static"
+      ]
+    },
+    "Coverage": {
+      "type": "object",
+      "properties": {
+        "failed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimeRange"
+          }
+        },
+        "input_modalities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "successful": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimeRange"
+          }
+        }
+      },
+      "required": [
+        "successful",
+        "failed",
+        "input_modalities"
+      ]
+    },
+    "QuerySuggestion": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "query",
+        "kind",
+        "source_refs"
+      ]
+    },
+    "SourceRef": {
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "type": "string"
+        },
+        "record_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "annotation",
+        "record_id",
+        "revision"
+      ]
+    },
+    "TimeRange": {
+      "description": "A nonempty half-open interval on an episode's integer-microsecond timeline.",
+      "type": "object",
+      "properties": {
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "required": [
+        "start_us",
+        "end_us"
+      ]
+    }
+  }
+}

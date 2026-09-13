@@ -1,6 +1,6 @@
 //! Disposable, validated proxies keyed by source content, interval, and encoding recipe.
 use super::extract::SourceRange;
-pub const RECIPE_VERSION: &str = "proxy/1";
+pub const RECIPE_VERSION: &str = "proxy/4";
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,6 +13,8 @@ struct Recipe {
     source_sha256: String,
     start_us: i64,
     end_us: i64,
+    sample_start_us: i64,
+    sample_end_us: i64,
     crf: u8,
     max_edge: u32,
     fps: u32,
@@ -30,6 +32,17 @@ pub fn get(
     workspace: &Path,
     crf: u8,
 ) -> Result<PathBuf> {
+    get_with_samples(source, source_sha256, range, range, workspace, crf)
+}
+
+pub fn get_with_samples(
+    source: &Path,
+    source_sha256: &str,
+    range: SourceRange,
+    sample_range: SourceRange,
+    workspace: &Path,
+    crf: u8,
+) -> Result<PathBuf> {
     super::check_cancellation()?;
     ensure!(
         source_sha256.len() == 64 && source_sha256.bytes().all(|b| b.is_ascii_hexdigit()),
@@ -42,9 +55,11 @@ pub fn get(
         source_sha256: source_sha256.into(),
         start_us: range.start_us,
         end_us: range.end_us,
+        sample_start_us: sample_range.start_us,
+        sample_end_us: sample_range.end_us,
         crf,
         max_edge: 480,
-        fps: 2,
+        fps: 1,
     };
     let key = crate::storage::cache_key(&recipe)?;
     let directory = workspace.join("cache").join(source_sha256).join("proxies");
@@ -74,19 +89,26 @@ pub fn get(
     fs::create_dir_all(&directory)?;
     let stage = tempfile::tempdir_in(&directory)?;
     let staged_video = stage.path().join("proxy.mp4");
-    super::extract::video_quality(source, range, &staged_video, true, crf)?;
+    let frames = super::frames::get(source, source_sha256, sample_range, range, workspace)?;
+    if frames.is_empty() {
+        // A subsecond tail can fall between shared samples. Decode that exact
+        // interval instead of borrowing a frame from outside its evidence.
+        super::extract::video_quality(source, range, &staged_video, true, crf)?;
+    } else {
+        super::frames::encode_proxy(&frames, sample_range.start_us, range, &staged_video, crf)?;
+    }
     let probe = super::probe(&staged_video)?;
     ensure!(
         probe.width <= 480
             && probe.height <= 480
             && probe.codec == "h264"
-            && probe.fps == "2/1"
+            && probe.fps == "1/1"
             && !probe.has_audio,
         "invalid encoded proxy"
     );
     let duration = range.end_us - range.start_us;
     ensure!(
-        probe.duration_us.abs_diff(duration) <= 500_000,
+        probe.duration_us.abs_diff(duration) < 1_000_000,
         "proxy duration differs from requested interval"
     );
     let manifest = Manifest {
@@ -126,6 +148,24 @@ mod tests {
         let workspace = dir.path().join("workspace");
         let range = SourceRange::new(0, 2_000_000).unwrap();
         let first = get(&source, &hash, range, &workspace, 24).unwrap();
+        let probe = super::super::probe(&first).unwrap();
+        assert_eq!(probe.fps, "1/1");
+        assert!(!probe.has_audio);
+        // A 1 FPS proxy must still contain a frame for a subsecond tail and
+        // preserve the requested source interval within one sampling period.
+        for (start, end) in [(0, 200_000), (500_000, 1_800_000), (3_200_000, 4_000_000)] {
+            let clip = get(
+                &source,
+                &hash,
+                SourceRange::new(start, end).unwrap(),
+                &workspace,
+                24,
+            )
+            .unwrap();
+            let tail = super::super::probe(&clip).unwrap();
+            assert!(tail.duration_us > 0);
+            assert!(tail.duration_us.abs_diff(end - start) < 1_000_000);
+        }
         let modified = fs::metadata(&first).unwrap().modified().unwrap();
         // The cache hit needs neither the source file nor a new ffmpeg invocation.
         let moved = dir.path().join("moved.mp4");

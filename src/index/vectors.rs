@@ -23,6 +23,7 @@ pub enum Kind {
     Video,
     Speech,
     Screen,
+    Description,
 }
 impl Kind {
     pub fn as_str(self) -> &'static str {
@@ -30,6 +31,7 @@ impl Kind {
             Self::Video => "video",
             Self::Speech => "speech",
             Self::Screen => "screen",
+            Self::Description => "description",
         }
     }
     fn parse(value: &str) -> Result<Self> {
@@ -37,6 +39,7 @@ impl Kind {
             "video" => Ok(Self::Video),
             "speech" => Ok(Self::Speech),
             "screen" => Ok(Self::Screen),
+            "description" => Ok(Self::Description),
             _ => anyhow::bail!("invalid embedding kind"),
         }
     }

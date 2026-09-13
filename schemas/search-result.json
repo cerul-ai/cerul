@@ -48,6 +48,114 @@
         "episodes"
       ]
     },
+    "Evidence": {
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "contributes": {
+          "description": "Only group winners contribute. Other admitted evidence remains auditable.",
+          "type": "boolean"
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "rank": {
+          "description": "Original one-based rank, before gating or temporal alignment.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "raw_score": {
+          "type": "number",
+          "format": "double"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "stream": {
+          "type": "string"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "track": {
+          "$ref": "#/$defs/Track"
+        },
+        "value": {
+          "description": "Calibrated relevance or weighted reciprocal rank; raw_score is retained.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "id",
+        "episode",
+        "stream",
+        "start_us",
+        "end_us",
+        "track",
+        "raw_score",
+        "rank",
+        "value",
+        "contributes"
+      ]
+    },
+    "EvidenceScore": {
+      "type": "object",
+      "properties": {
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "kind": {
+          "$ref": "#/$defs/Kind"
+        },
+        "rank": {
+          "description": "One-based rank in this track's prefiltered candidate list.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "raw_score": {
+          "description": "Uncalibrated cosine similarity in the configured embedding space.",
+          "type": "number",
+          "format": "float"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "vector_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "vector_id",
+        "kind",
+        "start_us",
+        "end_us",
+        "raw_score",
+        "rank"
+      ]
+    },
     "Hit": {
       "type": "object",
       "properties": {
@@ -70,6 +178,12 @@
         "episode": {
           "type": "string"
         },
+        "evidence_scores": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceScore"
+          }
+        },
         "excerpt": {
           "type": "string"
         },
@@ -85,6 +199,18 @@
           },
           "maxItems": 2,
           "minItems": 2
+        },
+        "fusion_evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "fusion_recipe": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "matched": {
           "anyOf": [
@@ -141,7 +267,8 @@
       "enum": [
         "video",
         "speech",
-        "screen"
+        "screen",
+        "description"
       ]
     },
     "Record": {
@@ -195,6 +322,16 @@
         "stream",
         "annotation",
         "record"
+      ]
+    },
+    "Track": {
+      "type": "string",
+      "enum": [
+        "video",
+        "speech",
+        "screen",
+        "description",
+        "lexical"
       ]
     }
   }

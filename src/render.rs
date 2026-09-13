@@ -16,7 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// Optional terminal features. Both stay off unless the terminal advertises
@@ -249,6 +249,28 @@ pub fn file_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+fn short_name(name: &str) -> String {
+    truncate_str(name, 48, "…").into_owned()
+}
+
+/// A stage estimate needs measured work; cached initial positions are not throughput.
+fn remaining(done: u64, total: u64, baseline: u64, elapsed: Duration) -> String {
+    let measured = done.saturating_sub(baseline);
+    if done >= total && total > 0 {
+        return String::new();
+    }
+    if measured < 2 || elapsed.as_secs() < 2 {
+        return "estimating…".into();
+    }
+    let seconds =
+        (elapsed.as_secs_f64() / measured as f64 * total.saturating_sub(done) as f64).ceil() as u64;
+    if seconds < 60 {
+        format!("~{seconds}s left")
+    } else {
+        format!("~{}m left", seconds.div_ceil(60))
+    }
+}
+
 pub fn clock(us: i64) -> String {
     let total = us.max(0) / 1_000_000;
     let (hours, minutes, seconds) = (total / 3600, (total % 3600) / 60, total % 60);
@@ -264,6 +286,8 @@ fn station_label(station: &str) -> String {
         "screen_text" => "Screen text".into(),
         "transcript" => "Speech".into(),
         "embed" => "Search index".into(),
+        "understanding" => "Understanding".into(),
+        "description" => "Descriptions".into(),
         other => {
             let name = other.strip_prefix("semantic.").unwrap_or(other);
             let mut chars = name.chars();
@@ -279,6 +303,7 @@ fn station_unit(station: &str, count: u64) -> String {
         "screen_text" => ("frame", "frames"),
         "transcript" => ("segment", "segments"),
         "embed" => ("batch", "batches"),
+        "understanding" => ("step", "steps"),
         _ => ("window", "windows"),
     };
     format!("{count} {}", if count == 1 { one } else { many })
@@ -292,6 +317,7 @@ pub struct Progress {
     workspace: PathBuf,
     multi: Option<MultiProgress>,
     bars: HashMap<(String, String), ProgressBar>,
+    estimates: HashMap<(String, String), (Instant, u64)>,
     /// Finished station summaries per episode, in completion order.
     finished: HashMap<String, Vec<(String, String)>>,
     /// The episode whose stations are currently on screen.
@@ -311,6 +337,7 @@ impl Progress {
             workspace: workspace.to_owned(),
             multi,
             bars: HashMap::new(),
+            estimates: HashMap::new(),
             finished: HashMap::new(),
             active: None,
             spinner: None,
@@ -320,7 +347,7 @@ impl Progress {
     }
     fn name(&mut self, episode: &str) -> String {
         if let Some(name) = self.names.get(episode) {
-            return name.clone();
+            return short_name(name);
         }
         // A video joins the registry as its turn begins, so an unknown id means
         // the cached copy predates it. Refresh once per id, never per event.
@@ -335,11 +362,13 @@ impl Progress {
         self.names
             .get(episode)
             .cloned()
-            .unwrap_or_else(|| episode.to_owned())
+            .map(|name| short_name(&name))
+            .unwrap_or_else(|| short_name(episode))
     }
     /// Replaces one episode's station bars with a single line, so indexing many
     /// videos keeps the live area the size of the video being worked on.
     fn collapse(&mut self, episode: &str) {
+        self.estimates.retain(|(id, _), _| id != episode);
         let Some(multi) = self.multi.clone() else {
             return;
         };
@@ -353,6 +382,15 @@ impl Progress {
             true
         });
         let summaries = self.finished.remove(episode).unwrap_or_default();
+        // The final index report already states which videos are searchable.
+        if summaries.iter().all(|(station, _)| {
+            matches!(
+                station.as_str(),
+                "screen_text" | "transcript" | "embed" | "understanding" | "description"
+            )
+        }) {
+            return;
+        }
         if !removed || summaries.is_empty() {
             return;
         }
@@ -421,7 +459,7 @@ impl Progress {
             // A checkpoint moves no counter of its own: the progress event for the
             // same window already drew it. It exists so a machine reader can tell
             // durable work from work still only in memory.
-            Event::Checkpoint { .. } => {}
+            Event::Checkpoint { .. } | Event::ModelRequest { .. } => {}
             Event::Published {
                 episode,
                 annotation,
@@ -474,6 +512,7 @@ impl Progress {
                 if self.quiet {
                     return;
                 }
+                self.stop_spinner();
                 // Episodes are indexed one at a time, so the previous one is done.
                 if self.active.as_deref() != Some(episode.as_str()) {
                     if let Some(previous) = self.active.take() {
@@ -485,27 +524,32 @@ impl Progress {
                 let label = station_label(&station);
                 match &self.multi {
                     Some(multi) => {
-                        // Only the first station of an episode repeats its name.
-                        let heading = !self.bars.keys().any(|(id, _)| id == &episode);
                         let key = (episode.clone(), station.clone());
+                        if done == 0 {
+                            self.estimates.remove(&key);
+                        }
+                        let (started, baseline) = self
+                            .estimates
+                            .entry(key.clone())
+                            .or_insert((Instant::now(), done));
+                        let eta = remaining(done, total, *baseline, started.elapsed());
                         let bar = self.bars.entry(key).or_insert_with(|| {
                             let bar = multi.add(ProgressBar::new(total.max(1)));
                             bar.set_style(
                                 ProgressStyle::with_template(
-                                    "  {spinner:.cyan} {prefix:<20!} {msg:<13} {bar:20.cyan/black} {pos}/{len} {elapsed}",
+                                    "  {spinner:.cyan} {prefix:<13} {bar:20.cyan/black} {pos}/{len} {wide_msg}",
                                 )
                                 .expect("static template")
                                 .progress_chars("━╸─"),
                             );
-                            bar.set_prefix(if heading {
-                                name.clone()
-                            } else {
-                                String::new()
-                            });
-                            bar.set_message(label.clone());
+                            bar.set_prefix(label.clone());
                             bar.enable_steady_tick(Duration::from_millis(100));
                             bar
                         });
+                        if done == 0 {
+                            bar.reset();
+                        }
+                        bar.set_message(eta);
                         bar.set_length(total.max(1));
                         bar.set_position(done.min(total.max(1)));
                         if done >= total {
@@ -517,17 +561,7 @@ impl Progress {
                                     format!("{} {unit}", label.to_lowercase()),
                                 ));
                             }
-                            bar.set_style(
-                                ProgressStyle::with_template("    {prefix:<20!} {msg}")
-                                    .expect("static template"),
-                            );
-                            bar.set_message(format!(
-                                "{} {:<13} {}",
-                                self.palette.ok("✓"),
-                                label,
-                                self.palette.dim(&unit)
-                            ));
-                            bar.finish();
+                            bar.finish_and_clear();
                         }
                     }
                     None => {
@@ -636,8 +670,7 @@ pub fn shell_path(path: &Path) -> String {
     }
 }
 
-/// The screen shown for a bare `cerul`. Until the first video is searchable it
-/// walks through setup step by step; afterwards it is a short launch pad.
+/// A compact launch pad; detailed configuration and inventories live in status.
 pub fn home(
     out: &mut dyn Write,
     palette: &Palette,
@@ -648,144 +681,46 @@ pub fn home(
         out,
         "{}  {}",
         palette.bold(&format!("cerul {}", status.version)),
-        palette.dim("·  Search and annotate your videos")
+        palette.dim("· Search and annotate video")
     )?;
-    writeln!(out)?;
-    let key_ready = models.key.available();
-    let indexed = status.episodes.len();
-    let searchable = status
-        .episodes
-        .iter()
-        .filter(|e| e.embeddings.iter().any(|x| x.complete) || !e.annotations.is_empty())
-        .count();
-    if !key_ready || searchable == 0 {
-        writeln!(out, "{}", palette.bold("Get started"))?;
-        let step = |done: bool, current: bool| {
-            if done {
-                palette.ok("✓")
-            } else if current {
-                palette.cmd("→")
-            } else {
-                palette.dim("·")
-            }
-        };
-        let rows = [
-            (
-                key_ready,
-                "Save your Gemini key",
-                "cerul auth set".to_owned(),
-                if key_ready {
-                    models.key.summary(palette)
-                } else {
-                    palette.dim("get one at https://aistudio.google.com/apikey")
-                },
-            ),
-            (
-                searchable > 0,
-                "Index a video",
-                "cerul index ./video.mp4".to_owned(),
-                if indexed > 0 && searchable == 0 {
-                    palette.warn("indexing incomplete, run it again")
-                } else {
-                    palette.dim("screen text, speech, and visual search")
-                },
-            ),
-            (
-                false,
-                "Search it",
-                "cerul search \"a person holding a cup\"".to_owned(),
-                palette.dim("or --text \"exact words\""),
-            ),
-            (
-                false,
-                "Export clips",
-                "cerul search \"...\" --save ./clips".to_owned(),
-                String::new(),
-            ),
-        ];
-        let mut current_marked = false;
-        for (number, (done, title, cmd, note)) in rows.iter().enumerate() {
-            let current = !done && !current_marked;
-            if current {
-                current_marked = true;
-            }
-            writeln!(
-                out,
-                "  {} {}. {:<22} {:<40} {}",
-                step(*done, current),
-                number + 1,
-                title,
-                palette.cmd(cmd),
-                note
-            )?;
-        }
-        writeln!(out)?;
-        if !key_ready {
-            writeln!(
-                out,
-                "{}",
-                palette.dim(
-                    "Skipping step 1 is fine: cerul index asks for the key when it first needs it."
-                )
-            )?;
-            writeln!(out)?;
-        }
+    if status.episodes.is_empty() {
+        writeln!(out, "\n{}", palette.bold("Get started"))?;
     } else {
-        let videos = match indexed {
-            1 => "1 video indexed".to_owned(),
-            n => format!("{n} videos indexed"),
-        };
+        let count = status.episodes.len();
         writeln!(
             out,
-            "Workspace  {}  ·  {videos}  ·  {}",
-            tilde(&status.workspace),
+            "{} video{} indexed · {}",
+            count,
+            if count == 1 { "" } else { "s" },
             models.key.summary(palette)
         )?;
-        writeln!(out)?;
-        let steps = [
-            ("cerul index ./video.mp4", "add a video"),
-            ("cerul search \"a person holding a cup\"", "find moments"),
-            (
-                "cerul search \"...\" --save ./clips",
-                "export matching clips",
-            ),
-        ];
-        next_steps(out, palette, &steps)?;
-        writeln!(out)?;
     }
-    writeln!(
-        out,
-        "{}",
-        palette.bold("Annotate actions and demonstrations")
-    )?;
+    if !models.key.available() {
+        writeln!(
+            out,
+            "{}",
+            palette.dim(
+                "Index asks for your Gemini key when needed; cerul auth set saves it ahead of time."
+            )
+        )?;
+    }
+    writeln!(out)?;
     next_steps(
         out,
         palette,
         &[
+            ("cerul index ./video.mp4", "make searchable"),
+            ("cerul search \"a person holding a cup\"", "find moments"),
             (
                 "cerul annotate ./video.mp4 --semantic",
-                "tasks, steps, and quality flags",
-            ),
-            (
-                "cerul annotate ./dataset --semantic --only 0",
-                "first LeRobot episode",
-            ),
-            (
-                "cerul annotate --help",
-                "types, examples, and output locations",
+                "label actions · no index step needed",
             ),
         ],
     )?;
     writeln!(
         out,
-        "{}",
-        palette.dim("Annotate directly; no index step needed.")
-    )?;
-    writeln!(out)?;
-    writeln!(
-        out,
-        "{}",
-        palette.dim("cerul status for details · cerul --help for all commands")
+        "\n{}",
+        palette.dim("cerul status · cerul config · cerul annotate --help · cerul --help")
     )
 }
 
@@ -910,7 +845,7 @@ pub fn status(
             ))
         )?;
         for episode in &status.episodes {
-            let name = name_of(episode);
+            let name = short_name(&name_of(episode));
             let length = episode.duration_us.map(clock).unwrap_or_else(|| "–".into());
             let (plain, styled) = search_state(episode);
             let labels = items(episode);
@@ -1270,44 +1205,30 @@ pub fn open(
     Ok(())
 }
 
-pub fn index_plan(
-    out: &mut dyn Write,
-    palette: &Palette,
-    paths: &[PathBuf],
-    no_ocr: bool,
-    no_audio: bool,
-    speech_model: &str,
-) -> io::Result<()> {
-    let names: Vec<String> = paths.iter().map(|path| file_name(path)).collect();
-    writeln!(
-        out,
-        "{} {}",
-        palette.bold("Indexing"),
-        truncate_str(&names.join(", "), 60, "…")
-    )?;
-    let mut stations = Vec::new();
-    if !no_ocr {
-        stations.push(format!("screen text {}", palette.dim("(local)")));
-    }
-    if !no_audio {
-        stations.push(format!(
-            "speech {}",
-            palette.dim(&format!("({speech_model})"))
-        ));
-    }
-    stations.push(format!("search index {}", palette.dim("(Gemini)")));
-    writeln!(out, "  {}", stations.join(&palette.dim("  ·  ")))?;
-    writeln!(out)
+pub fn index_plan(out: &mut dyn Write, palette: &Palette, paths: &[PathBuf]) -> io::Result<()> {
+    let subject = if paths.len() == 1 {
+        short_name(&file_name(&paths[0]))
+    } else {
+        format!("{} inputs", paths.len())
+    };
+    writeln!(out, "{} {subject}", palette.bold("Indexing"))
+}
+
+pub struct IndexContext {
+    pub names: BTreeMap<String, PathBuf>,
+    pub retry: Vec<String>,
+    pub search_prefix: Vec<String>,
 }
 
 pub fn index(
     out: &mut dyn Write,
     palette: &Palette,
     report: &index::pipeline::Report,
-    names: &BTreeMap<String, PathBuf>,
+    context: &IndexContext,
 ) -> io::Result<()> {
     let name_of = |episode: &index::pipeline::EpisodeResult| {
-        names
+        context
+            .names
             .get(&episode.episode_id)
             .map(|p| file_name(p))
             .unwrap_or_else(|| {
@@ -1340,7 +1261,7 @@ pub fn index(
             e.streams.iter().all(|s| s.errors.is_empty()) && e.streams.iter().any(|s| s.indexed)
         });
     for episode in &report.episodes {
-        let name = name_of(episode);
+        let name = short_name(&episode.title.clone().unwrap_or_else(|| name_of(episode)));
         let errors: Vec<&String> = episode.streams.iter().flat_map(|s| &s.errors).collect();
         let indexed = episode.streams.iter().any(|s| s.indexed);
         if errors.is_empty() && indexed {
@@ -1350,12 +1271,12 @@ pub fn index(
             }
             writeln!(
                 out,
-                "{} {} ready to search   {}",
+                "{} {} ready to search",
                 palette.ok("✓"),
-                palette.bold(&name),
-                palette.dim(&format!("index: {}", tilde(&episode.sidecar)))
+                palette.bold(&name)
             )?;
         } else if indexed {
+            ready += 1;
             writeln!(
                 out,
                 "{} {} partially indexed",
@@ -1368,8 +1289,7 @@ pub fn index(
             writeln!(
                 out,
                 "    {}",
-                palette
-                    .dim("what finished is searchable now; re-run cerul index to retry the rest")
+                palette.dim("completed work is searchable and will be reused on retry")
             )?;
         } else {
             writeln!(out, "{} {} failed", palette.err("✗"), palette.bold(&name))?;
@@ -1378,7 +1298,7 @@ pub fn index(
             }
         }
     }
-    if ready > 1 && ready == report.episodes.len() {
+    if compact && ready > 1 {
         writeln!(
             out,
             "{} {} ready to search   {}",
@@ -1387,22 +1307,77 @@ pub fn index(
             palette.dim("indexes saved beside your videos")
         )?;
     }
-    if ready > 0 {
-        next_block(
+    if report.partial {
+        writeln!(
             out,
-            palette,
-            &[
-                (
-                    "cerul search \"what you're looking for\"",
-                    "find moments by meaning",
-                ),
-                (
-                    "cerul search --text \"exact words\"",
-                    "match screen text or speech",
-                ),
-                ("cerul status", "what is searchable and where it lives"),
-            ],
+            "\nRetry: {}",
+            palette.cmd(&shell_command(&context.retry))
         )?;
+    }
+    if ready > 0 {
+        let mut examples: Vec<(String, String)> = Vec::new();
+        for episode in &report.episodes {
+            for suggestion in &episode.suggestions {
+                let mut argv = context.search_prefix.clone();
+                if suggestion.exact {
+                    argv.push("--text".into());
+                }
+                argv.push(suggestion.query.clone());
+                if let Some(path) = context.names.get(&episode.episode_id) {
+                    argv.extend(["--in".into(), path.to_string_lossy().into_owned()]);
+                }
+                let source = match suggestion.source.as_str() {
+                    "transcript" => "speech",
+                    "screen_text" => "screen text",
+                    "semantic.scene" => "visual",
+                    _ => "annotation",
+                };
+                examples.push((
+                    shell_command(&argv),
+                    format!("{source} · {}", clock(suggestion.start_us)),
+                ));
+                if examples.len() == 3 {
+                    break;
+                }
+            }
+            if examples.len() == 3 {
+                break;
+            }
+        }
+        if examples.is_empty() {
+            let mut argv = context.search_prefix.clone();
+            argv.push("describe a visual moment".into());
+            writeln!(out, "\n{}", palette.cmd(&shell_command(&argv)))?;
+        } else {
+            writeln!(out, "\n{}", palette.bold("Try searching"))?;
+            for (command, evidence) in examples {
+                writeln!(out, "  {}", palette.dim(&evidence))?;
+                writeln!(out, "  {}", palette.cmd(&command))?;
+            }
+        }
+        let speech: Vec<_> = report.episodes.iter().flat_map(|e| &e.streams).collect();
+        if speech.iter().all(|s| {
+            matches!(
+                s.speech,
+                index::pipeline::SpeechStatus::NoAudio | index::pipeline::SpeechStatus::NoSpeech
+            )
+        }) {
+            writeln!(
+                out,
+                "{}",
+                palette.dim("No speech found; search still uses video and available screen text.")
+            )?;
+        } else if speech
+            .iter()
+            .any(|s| matches!(s.speech, index::pipeline::SpeechStatus::NotConfigured))
+        {
+            writeln!(
+                out,
+                "{}",
+                palette
+                    .dim("Speech skipped: no transcription key. Configure it with cerul config.")
+            )?;
+        }
     }
     Ok(())
 }
@@ -1441,6 +1416,7 @@ fn kind_label(kind: Option<Kind>) -> &'static str {
         Some(Kind::Video) => "visual",
         Some(Kind::Speech) => "speech",
         Some(Kind::Screen) => "screen text",
+        Some(Kind::Description) => "visual description",
         None => "annotation",
     }
 }
@@ -2128,10 +2104,68 @@ mod tests {
     use cerul::search::{Hit, Report};
 
     #[test]
+    fn eta_requires_measured_work_and_names_stay_bounded() {
+        assert_eq!(remaining(1, 10, 0, Duration::from_secs(5)), "estimating…");
+        assert_eq!(
+            remaining(80, 100, 80, Duration::from_secs(10)),
+            "estimating…"
+        );
+        assert_eq!(remaining(4, 10, 0, Duration::from_secs(8)), "~12s left");
+        assert_eq!(remaining(10, 10, 0, Duration::from_secs(20)), "");
+        assert!(measure_text_width(&short_name(&"示例".repeat(80))) <= 48);
+    }
+
+    #[test]
+    fn index_examples_are_scoped_quoted_and_partial_results_offer_retry() {
+        let report: index::pipeline::Report = serde_json::from_value(serde_json::json!({
+            "episodes": [{"episode_id":"example", "sidecar":"/media/example.cerul",
+                "streams":[{"stream":"video", "indexed":true, "speech":"failed", "vector_rows":3, "errors":["speech unavailable"]}],
+                "suggestions":[{"query":"worker's cup $(touch danger)","exact":false,"source":"semantic.subtask","stream":"video","record_id":"step-1","start_us":2000000,"end_us":5000000,"input_hash":"current"}]
+            }], "partial":true,"dry_run":false
+        })).unwrap();
+        let context = IndexContext {
+            names: BTreeMap::from([(
+                "example".into(),
+                PathBuf::from(format!("/media/{}.mp4", "long-name-".repeat(20))),
+            )]),
+            retry: vec![
+                "cerul".into(),
+                "index".into(),
+                "video with spaces.mp4".into(),
+                "--no-ocr".into(),
+            ],
+            search_prefix: vec![
+                "cerul".into(),
+                "--workspace".into(),
+                "/tmp/my workspace".into(),
+                "search".into(),
+            ],
+        };
+        let mut output = Vec::new();
+        index(&mut output, &Palette::new(false), &report, &context).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("partially indexed"));
+        assert!(
+            !output
+                .lines()
+                .next()
+                .unwrap()
+                .contains(&"long-name-".repeat(8))
+        );
+        assert!(output.contains("Retry: cerul index 'video with spaces.mp4' --no-ocr"));
+        assert!(output.contains("cerul --workspace '/tmp/my workspace' search"));
+        assert!(output.contains(&shell_quote("worker's cup $(touch danger)")));
+        assert!(output.contains("--in /media/"));
+        assert!(output.contains("annotation · 00:02"));
+        assert!(!output.contains("describe a visual moment"));
+    }
+
+    #[test]
     fn configured_home_keeps_annotation_visible_and_status_locates_sidecars() {
         let dir = tempfile::tempdir().unwrap();
         let mut status = cerul::status::inspect(dir.path(), None).unwrap();
         status.episodes.push(cerul::status::EpisodeStatus {
+            understanding: Default::default(),
             duration_us: Some(150_000_000),
             episode_id: "demo/0".into(),
             media: PathBuf::from("/videos/demo.mp4"),
@@ -2181,6 +2215,9 @@ mod tests {
 
     fn hit() -> Hit {
         Hit {
+            evidence_scores: Vec::new(),
+            fusion_evidence: Vec::new(),
+            fusion_recipe: None,
             episode: "b52ef6450d471af5/0".into(),
             stream: "primary".into(),
             start_us: 12_000_000,
@@ -2426,6 +2463,7 @@ mod tests {
                 entries: entries
                     .iter()
                     .map(|(annotation, record)| cerul::status::TimelineEntry {
+                        revision: "fixture-revision".into(),
                         episode: "demo/0".into(),
                         stream: "primary".into(),
                         annotation: (*annotation).to_owned(),
@@ -2459,6 +2497,7 @@ mod tests {
     #[test]
     fn a_timeline_of_several_cameras_says_which_camera_each_record_came_from() {
         let entry = |stream: &str, start_us: i64| cerul::status::TimelineEntry {
+            revision: "fixture-revision".into(),
             episode: "d7f0/000000".into(),
             stream: stream.into(),
             annotation: "semantic.event".into(),

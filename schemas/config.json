@@ -10,6 +10,12 @@
     "perception": {
       "$ref": "#/$defs/Perception"
     },
+    "search": {
+      "$ref": "#/$defs/Search",
+      "default": {
+        "hybrid": true
+      }
+    },
     "transcription": {
       "$ref": "#/$defs/Endpoint"
     },
@@ -43,7 +49,7 @@
           "minimum": 0
         },
         "enabled": {
-          "description": "None means speech has not been configured; false is an explicit opt-out.",
+          "description": "False is an explicit opt-out. Unset speech is automatic; vision defaults on.",
           "type": [
             "boolean",
             "null"
@@ -78,6 +84,18 @@
       "required": [
         "base_url",
         "api_key_env"
+      ]
+    },
+    "Search": {
+      "type": "object",
+      "properties": {
+        "hybrid": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "hybrid"
       ]
     }
   }

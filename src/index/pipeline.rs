@@ -24,6 +24,7 @@ pub struct Options {
     pub embedding: embed::Options,
     pub no_audio: bool,
     pub no_ocr: bool,
+    pub no_understanding: bool,
     pub streams: String,
     pub only: Option<String>,
     pub jobs: usize,
@@ -38,6 +39,7 @@ impl Default for Options {
             embedding: Default::default(),
             no_audio: false,
             no_ocr: false,
+            no_understanding: false,
             streams: "primary".into(),
             only: None,
             jobs: 4,
@@ -59,6 +61,10 @@ pub struct EpisodeResult {
     pub episode_id: String,
     pub sidecar: PathBuf,
     pub streams: Vec<StreamResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggestions: Vec<super::suggestions::Suggestion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -67,6 +73,7 @@ pub enum SpeechStatus {
     NotConfigured,
     NoAudio,
     Complete,
+    NoSpeech,
     Failed,
     Planned,
 }
@@ -76,7 +83,21 @@ pub struct StreamResult {
     pub indexed: bool,
     pub speech: SpeechStatus,
     pub vector_rows: usize,
+    #[serde(default)]
+    pub description_rows: usize,
     pub errors: Vec<String>,
+    #[serde(default)]
+    pub understanding: UnderstandingStatus,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UnderstandingStatus {
+    #[default]
+    Disabled,
+    Planned,
+    Complete,
+    Incomplete,
 }
 
 pub(crate) fn selected(episode: &Episode, selector: Option<&str>) -> bool {
@@ -298,6 +319,8 @@ async fn run_inner(
             result.push(EpisodeResult {
                 episode_id: episode.episode_id.clone(),
                 sidecar,
+                suggestions: Vec::new(),
+                title: None,
                 streams: selected
                     .into_iter()
                     .map(|stream| {
@@ -311,7 +334,15 @@ async fn run_inner(
                             stream,
                             indexed: false,
                             vector_rows: 0,
+                            description_rows: 0,
                             errors: Vec::new(),
+                            understanding: if options.no_understanding
+                                || config.vision.enabled == Some(false)
+                            {
+                                UnderstandingStatus::Disabled
+                            } else {
+                                UnderstandingStatus::Planned
+                            },
                         })
                     })
                     .collect::<Result<Vec<_>>>()?,
@@ -350,6 +381,13 @@ async fn run_inner(
     )?;
     embedding.request_notice = options.request_notice.clone();
     transcription.request_notice = options.request_notice.clone();
+    let mut vision = Provider::from_env(
+        config.vision.clone(),
+        options.jobs,
+        options.rpm,
+        cancel.clone(),
+    )?;
+    vision.request_notice = options.request_notice.clone();
     let space = config.space_id()?;
     let dims = config
         .embedding
@@ -461,52 +499,38 @@ async fn run_inner(
             episode_id: episode.episode_id.clone(),
             sidecar: sidecar.clone(),
             streams: Vec::new(),
+            suggestions: Vec::new(),
+            title: None,
         };
         for stream in selected {
             interrupted(&cancel)?;
             let mut errors = Vec::new();
-            let mut screen = if options.no_ocr {
-                None
-            } else {
-                match stations::screen_text(
-                    &episode,
-                    &stream,
-                    &sidecar,
-                    options.embedding.recompute,
-                    options.jobs,
-                    events,
-                    &cancel,
-                ) {
-                    Ok(file) => Some(file),
-                    Err(error) => {
-                        errors.push(error.to_string());
-                        None
-                    }
+            let (screen_result, transcript_result) = text_stations(
+                &episode,
+                &stream,
+                &sidecar,
+                workspace,
+                &transcription,
+                options,
+                speech_blocked.get(&stream),
+                events,
+                &cancel,
+            )
+            .await;
+            let mut screen = match screen_result {
+                Ok(file) => file,
+                Err(error) => {
+                    interrupted(&cancel)?;
+                    errors.push(error.to_string());
+                    None
                 }
             };
-            let mut transcript = if options.no_audio {
-                None
-            } else if let Some(error) = speech_blocked.get(&stream) {
-                errors.push(format!("speech: {error}"));
-                None
-            } else {
-                match stations::transcript(
-                    &episode,
-                    &stream,
-                    &sidecar,
-                    workspace,
-                    &transcription,
-                    options.embedding.recompute,
-                    events,
-                )
-                .await
-                {
-                    Ok(file) => Some(file),
-                    Err(error) if cancel.is_cancelled() => return Err(error),
-                    Err(error) => {
-                        errors.push(error.to_string());
-                        None
-                    }
+            let mut transcript = match transcript_result {
+                Ok(file) => file,
+                Err(error) => {
+                    interrupted(&cancel)?;
+                    errors.push(error.to_string());
+                    None
                 }
             };
             let speech_completed = transcript.is_some();
@@ -638,16 +662,112 @@ async fn run_inner(
                 explicitly_disabled,
                 config.transcription.enabled,
             )? {
+                SpeechStatus::Planned
+                    if speech_completed
+                        && transcript.as_ref().is_some_and(|f| f.records.is_empty()) =>
+                {
+                    SpeechStatus::NoSpeech
+                }
                 SpeechStatus::Planned if speech_completed => SpeechStatus::Complete,
                 SpeechStatus::Planned => SpeechStatus::Failed,
                 status => status,
             };
+            let mut description_rows = 0;
+            let understanding = if options.no_understanding || config.vision.enabled == Some(false)
+            {
+                super::understanding::mark_status(&episode, &stream, &sidecar, "disabled")?;
+                UnderstandingStatus::Disabled
+            } else {
+                match super::understanding::run(
+                    &episode,
+                    &stream,
+                    &sidecar,
+                    workspace,
+                    &vision,
+                    options.embedding.recompute,
+                    transcript.as_ref(),
+                    screen.as_ref(),
+                    events,
+                )
+                .await
+                {
+                    Ok(product) => {
+                        if embedding_succeeded {
+                            match super::descriptions::run(
+                                &episode,
+                                &stream,
+                                &sidecar,
+                                workspace,
+                                config,
+                                &embedding,
+                                &product.scenes,
+                                options.embedding.recompute,
+                                events,
+                            )
+                            .await
+                            {
+                                Ok(count) => description_rows = count,
+                                Err(error) => {
+                                    interrupted(&cancel)?;
+                                    report.partial = true;
+                                    errors.push(format!("description index: {error}"));
+                                }
+                            }
+                        }
+                        if let Some(summary) =
+                            product.summary.as_ref().and_then(|f| f.records.first())
+                            && stream == episode.time.reference
+                        {
+                            result.title = summary
+                                .fields
+                                .get("title")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned);
+                        }
+                        if product.errors.is_empty() {
+                            UnderstandingStatus::Complete
+                        } else {
+                            report.partial = true;
+                            errors.extend(product.errors);
+                            UnderstandingStatus::Incomplete
+                        }
+                    }
+                    Err(error) => {
+                        interrupted(&cancel)?;
+                        report.partial = true;
+                        errors.push(format!("understanding: {error}"));
+                        UnderstandingStatus::Incomplete
+                    }
+                }
+            };
+            if embedding_succeeded && result.suggestions.len() < 3 {
+                for suggestion in super::suggestions::collect(
+                    &episode,
+                    &sidecar,
+                    &stream,
+                    transcript.as_ref(),
+                    screen.as_ref(),
+                ) {
+                    if !result
+                        .suggestions
+                        .iter()
+                        .any(|old| old.query.eq_ignore_ascii_case(&suggestion.query))
+                    {
+                        result.suggestions.push(suggestion);
+                    }
+                    if result.suggestions.len() == 3 {
+                        break;
+                    }
+                }
+            }
             result.streams.push(StreamResult {
                 speech,
                 stream,
                 indexed: embedding_succeeded,
                 vector_rows: count,
+                description_rows,
                 errors,
+                understanding,
             });
         }
         report.episodes.push(result);
@@ -655,7 +775,109 @@ async fn run_inner(
     if workspace.join("index").join(&space).is_dir() {
         super::records::RecordIndex::rebuild(workspace, &space).await?;
     }
+    let files = super::records::sidecars(workspace)?;
+    if let Err(error) = super::lexical::LexicalIndex::prepare(workspace, &files).await {
+        interrupted(&cancel)?;
+        report.partial = true;
+        if let Some(stream) = report
+            .episodes
+            .iter_mut()
+            .flat_map(|e| &mut e.streams)
+            .next()
+        {
+            stream.errors.push(format!("lexical index: {error}"));
+        }
+    }
     Ok(report)
+}
+
+/// OCR runs on a blocking worker while ASR waits on the endpoint. Forward all
+/// progress on the caller's task so library callbacks need not be Send.
+#[allow(clippy::too_many_arguments)]
+async fn text_stations(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    transcription: &Provider,
+    options: &Options,
+    speech_blocked: Option<&String>,
+    events: &mut dyn EventSink,
+    cancel: &CancellationToken,
+) -> (
+    Result<Option<AnnotationFile>>,
+    Result<Option<AnnotationFile>>,
+) {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let ocr = {
+        let (episode, stream, sidecar, workspace, options, cancel, sender) = (
+            episode.clone(),
+            stream.to_owned(),
+            sidecar.to_owned(),
+            workspace.to_owned(),
+            options.clone(),
+            cancel.clone(),
+            sender.clone(),
+        );
+        tokio::task::spawn_blocking(move || {
+            if options.no_ocr {
+                return Ok(None);
+            }
+            crate::media::with_sync_cancellation(cancel.clone(), || {
+                stations::screen_text_with_workspace(
+                    &episode,
+                    &stream,
+                    &sidecar,
+                    &workspace,
+                    options.embedding.recompute,
+                    options.jobs,
+                    &mut |event| {
+                        let _ = sender.send(event);
+                    },
+                    &cancel,
+                )
+                .map(Some)
+            })
+        })
+    };
+    let speech = async {
+        if options.no_audio {
+            return Ok(None);
+        }
+        if let Some(error) = speech_blocked {
+            anyhow::bail!("speech: {error}");
+        }
+        stations::transcript(
+            episode,
+            stream,
+            sidecar,
+            workspace,
+            transcription,
+            options.embedding.recompute,
+            &mut |event| {
+                let _ = sender.send(event);
+            },
+        )
+        .await
+        .map(Some)
+    };
+    let work = async { tokio::join!(ocr, speech) };
+    tokio::pin!(work);
+    let (screen, speech) = loop {
+        tokio::select! {
+            Some(event) = receiver.recv() => events.emit(event),
+            result = &mut work => break result,
+        }
+    };
+    while let Ok(event) = receiver.try_recv() {
+        events.emit(event);
+    }
+    (
+        screen
+            .map_err(anyhow::Error::from)
+            .and_then(|result| result),
+        speech,
+    )
 }
 
 #[cfg(test)]
@@ -668,6 +890,7 @@ mod tests {
         let mut config = Config::default();
         config.embedding.dims = Some(2);
         let options = Options {
+            no_understanding: true,
             no_audio: true,
             no_ocr: true,
             embedding: embed::Options {
@@ -742,6 +965,7 @@ mod tests {
         config.embedding.base_url = "http://127.0.0.1:9".into();
         config.embedding.dims = Some(2);
         let options = Options {
+            no_understanding: true,
             no_audio: true,
             no_ocr: true,
             streams: "all".into(),
@@ -873,6 +1097,7 @@ mod tests {
         config.transcription.enabled = Some(true);
         let workspace = dir.path().join("workspace");
         let mut options = Options {
+            no_understanding: true,
             no_ocr: true,
             ..Default::default()
         };
@@ -1039,6 +1264,7 @@ mod tests {
             &workspace,
             &config,
             &Options {
+                no_understanding: true,
                 no_ocr: true,
                 ..Default::default()
             },
@@ -1086,6 +1312,7 @@ mod tests {
                 &workspace,
                 &config,
                 &Options {
+                    no_understanding: true,
                     no_ocr: true,
                     ..Default::default()
                 },
@@ -1141,6 +1368,7 @@ mod tests {
             &workspace,
             &config,
             &Options {
+                no_understanding: true,
                 no_audio: true,
                 ..Default::default()
             },

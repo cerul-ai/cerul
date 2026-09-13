@@ -106,6 +106,7 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
                 let file = AnnotationFile::read(&path)?;
                 if file.header.stream != stream.id()
                     || !crate::index::stations::has_current_input(&episode, &file)?
+                    || !crate::index::understanding::current_dependencies(&directory, &file)?
                 {
                     continue;
                 }

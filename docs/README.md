@@ -20,6 +20,8 @@ reading command or compatibility details.
 
 ## Contributor guides
 
+- [Hybrid video retrieval proposal](design/hybrid-video-search.md) — independent evidence tracks, temporal alignment, fusion evaluation, and fallback behavior.
+
 - [Contributing](../CONTRIBUTING.md)
 - [Repository and documentation map](../ARCHITECTURE.md#documentation-and-supporting-files)
 - [Build from source](development/building.md)

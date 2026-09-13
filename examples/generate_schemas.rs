@@ -43,9 +43,35 @@ fn main() -> Result<()> {
             schema::<cerul::annotate::schema::Window<cerul::annotate::schema::Progress>>(),
         ),
         ("search-result", schema::<cerul::search::Report>()),
+        ("fusion-recipe", schema::<cerul::search::fusion::Recipe>()),
+        ("fusion-moment", schema::<cerul::search::fusion::Moment>()),
+        (
+            "semantic-scene",
+            schema::<cerul::index::understanding::Scene>(),
+        ),
+        (
+            "scene-corrections",
+            schema::<cerul::index::understanding::SceneCorrections>(),
+        ),
+        (
+            "semantic-section",
+            schema::<cerul::index::understanding::Section>(),
+        ),
+        (
+            "semantic-summary",
+            schema::<cerul::index::understanding::Summary>(),
+        ),
+        (
+            "scene-response",
+            schema::<cerul::index::understanding::SceneResponse>(),
+        ),
         ("remove-result", schema::<cerul::clean::Report>()),
         ("indexed-record", schema::<cerul::index::records::Row>()),
         ("index-result", schema::<cerul::index::pipeline::Report>()),
+        (
+            "description-index",
+            schema::<cerul::index::descriptions::State>(),
+        ),
         ("annotation", schema::<cerul::annotations::AnnotationFile>()),
         ("annotation-header", schema::<cerul::annotations::Header>()),
         ("annotation-record", schema::<cerul::annotations::Record>()),

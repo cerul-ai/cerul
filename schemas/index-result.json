@@ -37,6 +37,18 @@
           "items": {
             "$ref": "#/$defs/StreamResult"
           }
+        },
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Suggestion"
+          }
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -52,6 +64,7 @@
         "not_configured",
         "no_audio",
         "complete",
+        "no_speech",
         "failed",
         "planned"
       ]
@@ -59,6 +72,12 @@
     "StreamResult": {
       "type": "object",
       "properties": {
+        "description_rows": {
+          "type": "integer",
+          "format": "uint",
+          "default": 0,
+          "minimum": 0
+        },
         "errors": {
           "type": "array",
           "items": {
@@ -74,6 +93,10 @@
         "stream": {
           "type": "string"
         },
+        "understanding": {
+          "$ref": "#/$defs/UnderstandingStatus",
+          "default": "disabled"
+        },
         "vector_rows": {
           "type": "integer",
           "format": "uint",
@@ -86,6 +109,57 @@
         "speech",
         "vector_rows",
         "errors"
+      ]
+    },
+    "Suggestion": {
+      "type": "object",
+      "properties": {
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "exact": {
+          "description": "OCR examples use literal search; other examples use semantic search.",
+          "type": "boolean"
+        },
+        "input_hash": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "record_id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "exact",
+        "source",
+        "stream",
+        "record_id",
+        "start_us",
+        "end_us",
+        "input_hash"
+      ]
+    },
+    "UnderstandingStatus": {
+      "type": "string",
+      "enum": [
+        "disabled",
+        "planned",
+        "complete",
+        "incomplete"
       ]
     }
   }

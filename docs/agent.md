@@ -73,6 +73,18 @@ Exit 6 is not success. Some work finished and the rest did not; read `retry`.
   published module is safe to read or train on.
 - `log` carries a human-readable notice, including the one-per-endpoint notice
   before media is sent to a model.
+- `model_request` reports each HTTP attempt, including capability probes and
+  retries. It includes a process-local `request_id`, one-based `attempt`,
+  configured provider/base URL/model, action, `elapsed_ms`, `http_status`, and `usage`.
+  Retries share an ID; cache hits emit no request event. Elapsed time excludes
+  queueing and retry backoff. A missing status means no response was received;
+  HTTP 200 does not imply that the generated content passed validation.
+  Gemini embedding and generation token counts and input-modality breakdowns
+  are retained when reported. Missing, malformed, or unsupported usage is null,
+  not zero cost. Counts are provider reports, not invoices; thinking, cached,
+  and total tokens must not be blindly added together. Request bodies, keys,
+  generated text, and arbitrary response fields are never included. These
+  diagnostics do not appear in human-readable terminal output.
 
 The schema for these lives in [`schemas/event.json`](../schemas/event.json).
 

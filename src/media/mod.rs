@@ -486,6 +486,7 @@ mod tests {
 }
 
 pub mod extract;
+pub mod frames;
 
 pub mod proxy;
 

@@ -35,6 +35,20 @@ folders and LeRobot datasets, using your own model API key.
 - **Keep useful results.** Export clips and structured semantic annotations.
 - **Resume where you left off.** Completed work is cached; rerun after interruption.
 
+## Architecture direction
+
+Indexing encodes video, screen text, and optional speech into a shared multimodal
+space. Independent visual generation produces timed annotations for actions,
+interactions, and state changes, including embodied and egocentric recordings.
+
+![Proposed Cerul architecture: multimodal indexing and search, with an independent egocentric annotation pipeline](docs/assets/cerul-architecture.png)
+
+*Architecture with AI-generated illustrative frames. Default search combines
+independent video, speech, screen-text, and description candidates with gated
+full-text matches using max fusion and capped agreement. Original evidence and
+timestamps remain inspectable. Dataset writeback supports opt-in LeRobot
+subtasks. See [DESIGN.md](DESIGN.md) for implemented behavior.*
+
 ## Getting started
 
 Cerul is a command-line tool for searching videos and saving clips. The download
@@ -156,4 +170,9 @@ imply endorsement of third-party products.
 
 Speech transcription is optional. Run `cerul config` to choose Gemini, Groq,
 OpenAI, a custom OpenAI-compatible service, or Disabled. Multimodal search uses
-Gemini Embedding 2 and requires a Gemini key. See [configuration](docs/configuration.md).
+Gemini Embedding 2 at 3072 dimensions by default. Indexing also generates visual
+descriptions and up to three grounded search suggestions. Use
+`--no-understanding` to skip generation; `--no-audio` skips speech independently.
+Available Gemini keys enable speech automatically unless explicitly disabled.
+See [configuration](docs/configuration.md) for alternative endpoints and
+[video understanding](docs/video-search.md#inspect-video-understanding) for saved output.
