@@ -623,6 +623,14 @@ async fn run_inner(
                     let exhausted = (tracks.iter().all(|rows| rows.len() < budget)
                         && lexical_rows.len() < budget)
                         || budget == total;
+                    // A lower-ranked row can still win after cross-group agreement,
+                    // or change which temporal anchor receives derived evidence.
+                    // Until a safe bound covers both effects, exhaust every scoped
+                    // source before fusing. Do not repeatedly fuse partial batches.
+                    if hybrid && !exhausted {
+                        budget = budget.saturating_mul(2).min(total);
+                        continue;
+                    }
                     let below_threshold = !hybrid
                         && options.threshold.is_some_and(|threshold| {
                             tracks
@@ -710,63 +718,75 @@ async fn run_inner(
                                 annotation: Some(row.annotation),
                             });
                         }
-                        for moment in fusion::fuse(
-                            &fusion_candidates,
-                            &fusion::default_recipe(options.threshold),
-                        )? {
-                            for scope in &scopes[&(moment.episode.clone(), moment.stream.clone())] {
-                                if let Some(range) = scope
-                                    .range
-                                    .intersection(TimeRange::new(moment.start_us, moment.end_us)?)
-                                {
-                                    let mut found =
-                                        hit(&moment.episode, &moment.stream, range, &rows);
-                                    found.score = Some(moment.score as f32);
-                                    for evidence in &moment.evidence {
-                                        let candidate = &evidence.candidate;
-                                        let kind = match candidate.track {
-                                            fusion::Track::Video => Kind::Video,
-                                            fusion::Track::Speech => Kind::Speech,
-                                            fusion::Track::Screen => Kind::Screen,
-                                            fusion::Track::Description => Kind::Description,
-                                            fusion::Track::Lexical => {
-                                                if candidate.annotation.as_deref()
-                                                    == Some("transcript")
-                                                {
-                                                    Kind::Speech
-                                                } else {
-                                                    Kind::Screen
+                        for ((episode, stream), ranges) in &scopes {
+                            for scope in ranges {
+                                // The SQL OR prefilter admits candidates from all matched
+                                // intervals. Each interval must get its own evidence and
+                                // fusion scores before the displayed anchor is clipped.
+                                let local: Vec<_> = fusion_candidates
+                                    .iter()
+                                    .filter(|candidate| {
+                                        &candidate.episode == episode
+                                            && &candidate.stream == stream
+                                            && candidate.start_us < scope.range.end_us
+                                            && candidate.end_us > scope.range.start_us
+                                    })
+                                    .cloned()
+                                    .collect();
+                                for moment in fusion::fuse(
+                                    &local,
+                                    &fusion::default_recipe(options.threshold),
+                                )? {
+                                    if let Some(range) = scope.range.intersection(TimeRange::new(
+                                        moment.start_us,
+                                        moment.end_us,
+                                    )?) {
+                                        let mut found =
+                                            hit(&moment.episode, &moment.stream, range, &rows);
+                                        found.score = Some(moment.score as f32);
+                                        for evidence in &moment.evidence {
+                                            let candidate = &evidence.candidate;
+                                            let kind = match candidate.track {
+                                                fusion::Track::Video => Kind::Video,
+                                                fusion::Track::Speech => Kind::Speech,
+                                                fusion::Track::Screen => Kind::Screen,
+                                                fusion::Track::Description => Kind::Description,
+                                                fusion::Track::Lexical => {
+                                                    if candidate.annotation.as_deref()
+                                                        == Some("transcript")
+                                                    {
+                                                        Kind::Speech
+                                                    } else {
+                                                        Kind::Screen
+                                                    }
                                                 }
+                                            };
+                                            if found.matched.is_none() && evidence.contributes {
+                                                found.matched = Some(kind);
+                                                found.excerpt =
+                                                    candidate.text.clone().unwrap_or_default();
                                             }
-                                        };
-                                        if found.matched.is_none() && evidence.contributes {
-                                            found.matched = Some(kind);
-                                            found.excerpt =
-                                                candidate.text.clone().unwrap_or_default();
+                                            if candidate.track != fusion::Track::Lexical {
+                                                found.evidence_scores.push(EvidenceScore {
+                                                    vector_id: candidate.id.clone(),
+                                                    kind,
+                                                    start_us: candidate.start_us,
+                                                    end_us: candidate.end_us,
+                                                    raw_score: candidate.raw_score as f32,
+                                                    rank: candidate.rank,
+                                                });
+                                            }
                                         }
-                                        if candidate.track != fusion::Track::Lexical {
-                                            found.evidence_scores.push(EvidenceScore {
-                                                vector_id: candidate.id.clone(),
-                                                kind,
-                                                start_us: candidate.start_us,
-                                                end_us: candidate.end_us,
-                                                raw_score: candidate.raw_score as f32,
-                                                rank: candidate.rank,
-                                            });
-                                        }
+                                        found.fusion_evidence = moment.evidence.clone();
+                                        found.fusion_recipe = Some(fusion::DEFAULT_RECIPE.into());
+                                        hits.push(found);
                                     }
-                                    found.fusion_evidence = moment.evidence.clone();
-                                    found.fusion_recipe = Some(fusion::DEFAULT_RECIPE.into());
-                                    hits.push(found);
                                 }
                             }
                         }
                         hits = ranked_dedup(hits);
                     }
-                    if (if hybrid { hits.len() } else { unique.len() }) >= options.limit
-                        || exhausted
-                        || below_threshold
-                    {
+                    if (!hybrid && unique.len() >= options.limit) || exhausted || below_threshold {
                         break;
                     }
                     budget = budget.saturating_mul(2).min(total);
@@ -968,6 +988,173 @@ mod tests {
                 fields: serde_json::from_value(fields).unwrap(),
             }],
         }
+    }
+    fn hybrid_fixture(root: &Path) -> (PathBuf, PathBuf, Episode, Config, String) {
+        let source = root.join("source.mp4");
+        media::run(
+            media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=red:size=64x64:rate=1:duration=30",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let workspace = root.join("workspace");
+        let episode = discover::ordinary_episode(&source).unwrap();
+        let sidecar = discover::publish_episode(&workspace, &episode, None).unwrap();
+        let mut config = Config::default();
+        config.embedding.dims = Some(2);
+        config.embedding.base_url = "http://127.0.0.1:1".into();
+        let space = config.space_id().unwrap();
+        storage::write_json(
+            &workspace.join("cache/queries").join(format!(
+                "{}.json",
+                storage::cache_key(&(&space, "needle")).unwrap()
+            )),
+            &vec![1_f32, 0.],
+        )
+        .unwrap();
+        (workspace, sidecar, episode, config, space)
+    }
+    fn scored_row(
+        episode: &Episode,
+        space: &str,
+        kind: Kind,
+        start_us: i64,
+        end_us: i64,
+        cosine: f32,
+    ) -> VectorRow {
+        VectorRow {
+            id: format!("{}-{start_us}", kind.as_str()),
+            episode: episode.episode_id.clone(),
+            stream: "primary".into(),
+            kind,
+            start_us,
+            end_us,
+            vector: vec![cosine, (1. - cosine * cosine).sqrt()],
+            text: format!("{} evidence", kind.as_str()),
+            still: false,
+            space_id: space.into(),
+            params_hash: "fixture".into(),
+        }
+    }
+    #[tokio::test]
+    async fn hybrid_recovers_agreement_beyond_initial_candidate_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let (workspace, sidecar, episode, config, space) = hybrid_fixture(dir.path());
+        let mut rows = Vec::new();
+        for (group, kind) in [Kind::Video, Kind::Speech].into_iter().enumerate() {
+            for i in 0..32 {
+                let start = (group as i64 * 32 + i) * 200_000;
+                rows.push(scored_row(
+                    &episode,
+                    &space,
+                    kind,
+                    start,
+                    start + 100_000,
+                    0.82,
+                ));
+            }
+            rows.push(scored_row(
+                &episode, &space, kind, 26_000_000, 27_000_000, 0.80,
+            ));
+        }
+        vectors::write(
+            &sidecar.join("embeddings").join(format!("{space}.parquet")),
+            &rows,
+            2,
+        )
+        .unwrap();
+        let report = run(
+            &workspace,
+            &config,
+            &Options {
+                query: Some("needle".into()),
+                limit: 10,
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.hits[0].start_us, 26_000_000);
+        assert!((report.hits[0].score.unwrap() - 0.92).abs() < 0.0001);
+        assert_eq!(report.hits[0].fusion_evidence.len(), 2);
+        assert!(
+            report.hits[0]
+                .fusion_evidence
+                .iter()
+                .all(|e| e.contributes && e.candidate.rank == 33)
+        );
+    }
+    #[tokio::test]
+    async fn hybrid_fuses_only_evidence_in_each_disjoint_filter_interval() {
+        let dir = tempfile::tempdir().unwrap();
+        let (workspace, sidecar, episode, config, space) = hybrid_fixture(dir.path());
+        let mut events = file(&episode, "semantic.event", json!({"verb":"regrasp"}));
+        events.records[0].start_us = 0;
+        events.records[0].end_us = 1_000_000;
+        let mut late = events.records[0].clone();
+        late.id = "late".into();
+        late.start_us = 20_000_000;
+        late.end_us = 21_000_000;
+        events.records.push(late);
+        events
+            .publish(&sidecar.join("semantic.event.jsonl"), 30_000_000, None)
+            .unwrap();
+        let mut ocr = file(&episode, "screen_text", json!({"text":"needle"}));
+        ocr.records[0].start_us = 15_000_000;
+        ocr.records[0].end_us = 30_000_000;
+        ocr.publish(&sidecar.join("screen_text.jsonl"), 30_000_000, None)
+            .unwrap();
+        vectors::write(
+            &sidecar.join("embeddings").join(format!("{space}.parquet")),
+            &[scored_row(
+                &episode,
+                &space,
+                Kind::Video,
+                0,
+                30_000_000,
+                0.4,
+            )],
+            2,
+        )
+        .unwrap();
+        let report = run(
+            &workspace,
+            &config,
+            &Options {
+                query: Some("needle".into()),
+                filters: vec!["semantic.event.verb=regrasp".into()],
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.hits.len(), 2);
+        let early = report.hits.iter().find(|h| h.start_us == 0).unwrap();
+        assert_eq!(early.end_us, 1_000_000);
+        assert_eq!(early.excerpt, "video evidence");
+        assert_eq!(early.fusion_evidence.len(), 1);
+        assert!((early.score.unwrap() - 0.7).abs() < 0.0001);
+        let late = report
+            .hits
+            .iter()
+            .find(|h| h.start_us == 20_000_000)
+            .unwrap();
+        assert_eq!(late.end_us, 21_000_000);
+        assert_eq!(late.excerpt, "needle");
+        assert_eq!(late.fusion_evidence.len(), 2);
+        assert!(late.score > early.score);
+        assert_eq!(late.fusion_evidence[0].candidate.start_us, 15_000_000);
     }
     #[tokio::test]
     async fn busy_workspace_precedes_vector_availability_errors() {

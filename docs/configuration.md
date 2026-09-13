@@ -218,3 +218,11 @@ Set `hybrid = false`, or pass `--set search.hybrid=false`, to restore three-trac
 raw-max ranking. Existing vectors are reused in either mode. JSON retains raw
 vector scores in `evidence_scores`, and all admitted evidence, raw units, ranks,
 original intervals, normalized values and contributing flags in `fusion_evidence`.
+
+Hybrid search currently expands candidate budgets until every scoped source is
+exhausted before final ranking, so agreement from lower-ranked evidence can
+change the top results. Large libraries may require more time and memory; use
+`--in` or annotation filters to narrow the scope. Each disjoint filter interval
+is fused independently: later text cannot provide an excerpt or agreement bonus
+to an earlier interval that it does not overlap. Evidence retains its original
+source timestamps even when displayed result boundaries are clipped.
