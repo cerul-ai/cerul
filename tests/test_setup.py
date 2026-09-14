@@ -77,6 +77,20 @@ class SetupTests(unittest.TestCase):
             self.assertNotIn(b"Preview only", output)
             self.assertNotIn(b"Ready", output)
             self.assertNotIn(b"ASR model", output)
+            self.assertNotIn(b"cerul index missing-video.mp4", output)
+            self.assertFalse((home / ".cerul").exists())
+
+    def test_compact_home_opens_help_without_media_or_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            output = self.interact(
+                home, [(b"Choose an action", b"\x1b[B\x1b[B\x1b[B\r")],
+                argv=["cerul"],
+            )
+            self.assertIn(b"commands and examples", output)
+            self.assertIn(b"Common workflows:", output)
+            self.assertIn(b"cerul help <command>", output)
+            self.assertNotIn(b"key saved", output)
             self.assertFalse((home / ".cerul").exists())
 
     def test_disabled_choice_is_saved_without_requesting_another_key(self):

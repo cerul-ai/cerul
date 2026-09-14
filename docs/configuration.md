@@ -106,9 +106,9 @@ Capability values are true for supported, false for explicitly unsupported,
 and null for unknown (including missing credentials and network errors).
 A perception endpoint advertising tasks does not add processing support to this CLI.
 
-Before the first media request to each endpoint in a command, Cerul prints a
-notice. `--yes` suppresses that notice. This is a notice, not an interactive
-confirmation prompt. Configure endpoints before running a processing command.
+With `-v` or `--json`, the first media request to each endpoint includes a
+notice. Default human output omits routine notices; `--yes` suppresses the notice
+in all modes. Configure endpoints before running a processing command.
 
 ## Provider rate limits and transcription
 

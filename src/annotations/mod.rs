@@ -112,11 +112,14 @@ impl AnnotationFile {
             "unsupported annotation schema"
         );
         ensure!(
-            matches!(h.name.as_str(), "transcript" | "screen_text")
-                || h.name
-                    .strip_prefix("semantic.")
-                    .is_some_and(|name| SEMANTIC_ITEMS.contains(&name)
-                        || crate::index::understanding::ITEMS.contains(&name)),
+            matches!(
+                h.name.as_str(),
+                "transcript" | "screen_text" | "grounding.hand"
+            ) || h
+                .name
+                .strip_prefix("semantic.")
+                .is_some_and(|name| SEMANTIC_ITEMS.contains(&name)
+                    || crate::index::understanding::ITEMS.contains(&name)),
             "unsupported annotation name"
         );
         ensure!(
@@ -148,6 +151,17 @@ impl AnnotationFile {
                 );
             }
             match h.name.as_str() {
+                "grounding.hand" => {
+                    crate::annotate::hands::Frame::from_record(record)?;
+                    ensure!(
+                        index == 0 || self.records[index - 1].end_us == record.start_us,
+                        "hand frames must be contiguous and ordered"
+                    );
+                    ensure!(
+                        index + 1 != self.records.len() || record.end_us == coverage.end_us,
+                        "hand frame coverage must reach the end of the stream"
+                    );
+                }
                 "transcript" => {
                     required_text(record, "text")?;
                     optional_string(record, "lang")?;
@@ -235,7 +249,7 @@ impl AnnotationFile {
                 _ => bail!("unsupported annotation"),
             }
         }
-        if matches!(h.name.as_str(), "semantic.subtask" | "semantic.task") {
+        if h.name == "semantic.subtask" || (h.name == "semantic.task" && !self.records.is_empty()) {
             ensure!(
                 expected_subtask_start == coverage.end_us,
                 "tasks or subtasks do not cover the whole episode"
@@ -318,6 +332,9 @@ mod tests {
         file.records[1].start_us = 50;
         file.validate(100, None).unwrap();
         file.records.clear();
+        file.validate(100, None).unwrap();
+        file.header.name = "semantic.subtask".into();
+        file.header.record_schema = "semantic.subtask/1".into();
         assert!(file.validate(100, None).is_err());
     }
     #[test]

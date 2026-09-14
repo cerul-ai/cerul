@@ -87,19 +87,11 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
                 continue;
             }
             let directory = stream_directory(&entry.sidecar, stream.id(), &episode.time.reference);
-            let entries = match fs::read_dir(&directory) {
-                Ok(entries) => entries,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.into()),
-            };
-            for entry in entries {
-                let entry = entry?;
-                if !entry.file_type()?.is_file() {
-                    continue;
-                }
-                let path = entry.path();
-                if path.extension().is_none_or(|ext| ext != "jsonl")
-                    || path.file_name().is_some_and(|name| name == "log.jsonl")
+            for path in crate::annotate::layout::files(&directory)? {
+                // Dense hand frames are read explicitly by status and rendering.
+                if path
+                    .file_stem()
+                    .is_some_and(|name| name == crate::annotate::hands::NAME)
                 {
                     continue;
                 }
@@ -110,7 +102,9 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
                 {
                     continue;
                 }
-                if file.header.name.starts_with("semantic.") {
+                if file.header.name.starts_with("semantic.")
+                    || file.header.name == crate::annotate::hands::NAME
+                {
                     let coverage =
                         episode
                             .video_coverage(&file.header.stream)?

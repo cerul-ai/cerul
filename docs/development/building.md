@@ -32,6 +32,10 @@ pkg-config --version
 The current media pipeline uses the `libx264` encoder. A custom ffmpeg build
 must provide it as well as the input decoders needed for your media. Check with
 `ffmpeg -hide_banner -encoders` if using a nonstandard build.
+Source builds reuse `cerul-ffmpeg` and `cerul-ffprobe` from an existing Cerul
+installation on PATH before looking for system tools. Set `CERUL_FFMPEG` and
+`CERUL_FFPROBE` to choose explicit executables, especially when Conda or another
+environment places an older FFmpeg first on PATH.
 
 ## Install missing build dependencies
 

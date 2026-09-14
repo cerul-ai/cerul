@@ -8,6 +8,7 @@ use crate::{
     storage::{self, Checkpoints},
 };
 use anyhow::{Context, Result, ensure};
+use futures::{StreamExt, stream as futures_stream};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -468,38 +469,40 @@ pub async fn transcript(
             done: 0,
             total: windows.len() as u64,
         });
-        for (index, window) in windows.iter().enumerate() {
-            let checkpoint = match &generation {
-                Some(generation) => storage::cache_key(&(&key, window, generation))?,
-                None => storage::cache_key(&(&key, window))?,
-            };
-            let cached = if !recompute || generation.is_some() {
-                checkpoints.load::<Vec<Record>>(&checkpoint)?
-            } else {
-                None
-            };
-            let mut segment_records = match cached {
-                Some(records) => records,
-                None => {
-                    probes::check(
-                        provider,
-                        probes::Capability::Transcription,
-                        workspace,
-                        false,
-                    )
-                    .await?;
+        let work = futures_stream::iter(windows.iter().enumerate().map(|(index, window)| {
+            let (generation, key, checkpoints, source) = (&generation, &key, &checkpoints, &source);
+            async move {
+                let checkpoint = match &generation {
+                    Some(generation) => storage::cache_key(&(&key, window, generation))?,
+                    None => storage::cache_key(&(&key, window))?,
+                };
+                let cached = if !recompute || generation.is_some() {
+                    checkpoints.load::<Vec<Record>>(&checkpoint)?
+                } else {
+                    None
+                };
+                let mut segment_records = match cached {
+                    Some(records) => records,
+                    None => {
+                        probes::check(
+                            provider,
+                            probes::Capability::Transcription,
+                            workspace,
+                            false,
+                        )
+                        .await?;
 
-                    let temporary = tempfile::tempdir()?;
-                    let audio = temporary.path().join("audio.wav");
-                    media::extract::audio(
-                        &source,
-                        SourceRange::new(
-                            range_us[0] + window.start_us,
-                            range_us[0] + window.end_us,
-                        )?,
-                        &audio,
-                    )?;
-                    let records = provider
+                        let temporary = tempfile::tempdir()?;
+                        let audio = temporary.path().join("audio.wav");
+                        media::extract::audio(
+                            source,
+                            SourceRange::new(
+                                range_us[0] + window.start_us,
+                                range_us[0] + window.end_us,
+                            )?,
+                            &audio,
+                        )?;
+                        let records = provider
                         .transcribe(fs::read(audio)?, window.end_us - window.start_us)
                         .await
                         .and_then(|response| {
@@ -525,33 +528,47 @@ pub async fn transcript(
                                 anyhow::anyhow!(message)
                             }
                         })?;
-                    checkpoints.save(&checkpoint, &records)?;
-                    records
+                        checkpoints.save(&checkpoint, &records)?;
+                        records
+                    }
+                };
+                for record in &mut segment_records {
+                    record.start_us = episode
+                        .source_to_episode(stream, range_us[0] + window.start_us + record.start_us)?
+                        .max(0);
+                    record.end_us = episode
+                        .source_to_episode(stream, range_us[0] + window.start_us + record.end_us)?
+                        .min(duration);
+                    record.id = storage::cache_key(&(
+                        &key,
+                        record.start_us,
+                        record.end_us,
+                        &record.fields,
+                    ))?;
                 }
-            };
-            for record in &mut segment_records {
-                record.start_us = episode
-                    .source_to_episode(stream, range_us[0] + window.start_us + record.start_us)?
-                    .max(0);
-                record.end_us = episode
-                    .source_to_episode(stream, range_us[0] + window.start_us + record.end_us)?
-                    .min(duration);
-                record.id =
-                    storage::cache_key(&(&key, record.start_us, record.end_us, &record.fields))?;
+                Ok::<_, anyhow::Error>(segment_records)
             }
+        }))
+        .buffer_unordered(provider.concurrency());
+        tokio::pin!(work);
+        let mut completed = 0;
+        while let Some(segment_records) = work.next().await {
+            let segment_records = segment_records?;
             records.extend(
                 segment_records
                     .into_iter()
                     .filter(|r| r.end_us > r.start_us),
             );
+            completed += 1;
             events.emit(Event::Progress {
                 episode: episode.episode_id.clone(),
                 station: "transcript".into(),
-                done: index as u64 + 1,
+                done: completed,
                 total: windows.len() as u64,
             });
         }
     }
+    records.sort_by_key(|r| (r.start_us, r.end_us, r.id.clone()));
     let file = AnnotationFile {
         header: header(
             episode,

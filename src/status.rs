@@ -109,7 +109,8 @@ pub struct Timeline {
 }
 #[derive(Debug, Clone)]
 pub struct TimelineOptions {
-    /// Semantic item or full annotation name; `None` reads every published item.
+    /// Semantic item or full annotation name. `None` reads semantic records;
+    /// hand frames require an explicit hand, hands, or grounding.hand selection.
     pub kind: Option<String>,
     pub limit: usize,
 }
@@ -132,6 +133,7 @@ pub fn summarize_record(annotation: &str, record: &crate::annotations::Record) -
         .strip_prefix("semantic.")
         .unwrap_or(annotation);
     match item {
+        "grounding.hand" => crate::annotate::export::text(record),
         "scene" => text("description"),
         "section" => text("title"),
         "summary" => format!("{} — {}", text("title"), text("summary")),
@@ -214,6 +216,9 @@ pub fn timeline(
     options: &TimelineOptions,
 ) -> Result<Timeline> {
     let wanted = options.kind.as_ref().map(|kind| {
+        if matches!(kind.as_str(), "hand" | "hands" | "grounding.hand") {
+            return crate::annotate::hands::NAME.to_owned();
+        }
         let item = kind.strip_prefix("semantic.").unwrap_or(kind);
         format!("semantic.{item}")
     });
@@ -249,11 +254,14 @@ pub fn timeline(
                 stream.id(),
                 &episode.time.reference,
             );
-            for name in file_names(&directory, ".jsonl")? {
-                if !name.starts_with("semantic.") || name.contains("conflicts") {
+            for path in crate::annotate::layout::files(&directory)? {
+                let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+                if (!name.starts_with("semantic.") && name != crate::annotate::hands::NAME)
+                    || name.contains("conflicts")
+                {
                     continue;
                 }
-                let file = AnnotationFile::read(&directory.join(format!("{name}.jsonl")))?;
+                let file = AnnotationFile::read(&path)?;
                 // A file whose inputs changed describes media that no longer
                 // exists in that form; showing its records would mislead.
                 if file.header.stream != stream.id()
@@ -275,6 +283,11 @@ pub fn timeline(
                 );
                 annotations.push(name.clone());
                 if wanted.as_ref().is_some_and(|kind| kind != &name) {
+                    continue;
+                }
+                // Keep dense hand tracks in the inventory without letting them
+                // consume the default semantic timeline's record limit.
+                if name == crate::annotate::hands::NAME && wanted.is_none() {
                     continue;
                 }
                 for record in file.records {
@@ -353,18 +366,21 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
                 stream.id(),
                 &episode.time.reference,
             );
-            for name in file_names(&directory, ".jsonl")? {
+            for path in crate::annotate::layout::files(&directory)? {
+                let name = path.file_stem().unwrap().to_string_lossy().into_owned();
                 if name == "log" {
                     continue;
                 }
-                let file = AnnotationFile::read(&directory.join(format!("{name}.jsonl")))?;
+                let file = AnnotationFile::read(&path)?;
                 if file.header.stream != stream.id()
                     || !crate::index::stations::has_current_input(&episode, &file)?
                     || !crate::index::understanding::current_dependencies(&directory, &file)?
                 {
                     continue;
                 }
-                if file.header.name.starts_with("semantic.") {
+                if file.header.name.starts_with("semantic.")
+                    || file.header.name == crate::annotate::hands::NAME
+                {
                     let coverage = episode
                         .video_coverage(stream.id())?
                         .context("annotation stream has no episode coverage")?;

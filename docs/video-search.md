@@ -151,21 +151,80 @@ configured embedding endpoint.
 
 After choosing Index and a path in the interactive guide, processing starts
 immediately. Explicit `--dry-run` remains available for inspecting planned work.
-Live terminal output shows the current stage, a progress bar, and an estimated
-remaining time for that stage after enough work has completed. Preparation and
-single-request stages show an indeterminate estimate rather than a fabricated ETA.
-Redirected output uses plain lines; `--json` keeps structured progress events.
+Live indexing uses one progress bar across all selected videos, cameras and
+stages. The filename and phase sit above a high-contrast block bar, which expands
+to 60 cells on wide terminals. Elapsed time and remaining ETA sit together beside
+the percentage; narrow terminals use `elapsed / remaining`. The current operation appears as a status label; changing stages does not
+reset the percentage. The terminal labels its percentage with `~`: it eases large
+completion jumps and estimates movement only within the current active work unit.
+It never estimates completion of a future stage. A spinner and elapsed time remain
+visible during slow requests. The success receipt waits for actual final publication;
+partial runs never claim successful completion. JSON `index_progress.done` retains
+confirmed weighted work, while `ceiling` bounds the terminal's active-work estimate.
 
-The completion message uses a generated title when available and shortens long
-file names otherwise. It never renames your files. Each episode stores zero to
-three generated suggestions with source record IDs and revisions. Visual
-suggestions cite scene records; speech and screen suggestions cite their own
-tracks. Commands preserve workspace/model overrides and scope to that video.
-The examples show supported content; they do not guarantee a retrieval rank.
+Independent scene windows, speech windows, description vectors and overview groups
+run concurrently. OCR and scene analysis start alongside speech. Description
+vectors start as soon as scenes publish; the overview waits for scenes and text,
+then overlaps vector work. All model stages share `--jobs` (default 4) and `--rpm`;
+raising concurrency does not multiply the limit per stage. Frame extraction is
+shared, and publication/index bookkeeping stays ordered.
 
-If understanding is unavailable or explicitly skipped, Cerul uses extractive
-examples from current annotations, speech, or OCR. Extractive OCR examples use
-`--text`. With no usable evidence, it shows one generic visual-search command.
+Scene analysis and overview generation have separate weights. Summarizing reserves
+at least a quarter of their combined work budget, rather than treating a potentially
+slow overview as one more short scene window.
+
+ETA covers the remaining invocation. Once the video inventory is known, a rough
+prior based on work size and configured concurrency is available before the first
+API response. Successful measured stages refine local timing hints under
+`<workspace>/runtime/index-timing-<profile>.json`; profiles separate model/endpoints,
+chunk settings and concurrency, and contain no credentials or media paths.
+ETA follows the longest remaining dependency path, including parallel OCR, speech,
+scene analysis and downstream work, instead of adding concurrent stage times. Unmeasured reuse and failed stages do
+not train timings. Successful scene timings are saved at scene completion, independently of the
+following overview. Timing files are optional caches, never authoritative data.
+The estimate counts down between updates and is revised as work completes. If a
+request exceeds the prediction, `ETA updating` indicates the estimate is overdue;
+the approximate bar remains bounded within active work. API latency, retries, cache reuse and data
+complexity can still make these approximate estimates inaccurate.
+
+Stage labels describe the work: Screen text is local OCR; Speech transcribes
+audio; Search index embeds video windows for semantic retrieval; Understanding
+creates scene descriptions; Summarizing builds the overview and sections;
+Descriptions embeds scene text; Saving
+index prepares the final searchable records and local text index. Disabled or
+inapplicable stages are omitted from the plan. `--json` includes an additive
+`index_progress` event for the whole run and preserves individual stage events.
+Optional search suggestions with invalid types or source references are discarded
+before overview publication; summary and section evidence still require strict
+validation. Invalid optional recommendations alone do not make an index partial.
+
+Completed bars disappear before the final receipt is written. Routine model
+notices and station summaries are hidden by default; `-v` enables diagnostics.
+Warnings and errors remain visible. Redirected output contains a plain final
+receipt; `--json` retains the structured progress and diagnostic events.
+
+The completion message names the source file and shows up to three distinct,
+copyable search commands. It prefers current visual suggestions from the overview,
+then fills remaining places with descriptions of other observed scenes. Each
+example keeps its source record and time range; extractive choices span the
+available timeline and avoid repeating the same scene. No model call is needed to
+select examples, including for an existing index.
+
+Default examples describe actions or scenes. They do not mix in OCR logos, prices,
+isolated words or short transcript fragments just to reach three commands. If
+visual examples are unavailable, current subtask descriptions or substantive
+transcript phrases provide a fallback. With no useful evidence, the CLI shows one
+generic visual-search command. Original OCR and speech remain searchable; use
+`--text` for literal words. The overview retains its original generated suggestions
+for inspection; recommendation filtering does not rewrite authoritative records.
+
+Long names are shortened; source files are never renamed. Commands preserve
+workspace/model overrides and search the whole workspace. `--in` is optional and
+only restricts an explicitly scoped search. Examples show supported content; they
+do not guarantee a retrieval rank. Next-step hints put the description above the
+command. Each command occupies its own line without a prompt prefix or trailing
+explanation, so copying the line produces a runnable command.
+
 A partial result keeps completed work and prints the original command to retry.
 
 ## Inspect video understanding
@@ -208,3 +267,17 @@ from `status --timeline --type scene --json`). Re-indexing applies the edits wit
 changing their IDs or intervals. Generation never writes this correction file.
 When a new generation conflicts or re-segments the scene, Cerul reports that the
 edit needs rebasing and withholds the disputed replacement.
+
+## Command help
+
+Run `cerul help` for the command overview, `cerul help index` for indexing,
+`cerul help search` for searching, or `cerul help annotate` for annotation modes.
+`cerul <command> --help` provides the same command reference. Help includes
+usage, examples, prerequisites, and relevant options, and works without media
+tools, a key, or an initialized workspace.
+
+All directories share the default `~/.cerul` workspace. After indexing, run
+`cerul search "describe a moment"` from any directory to search that workspace;
+there is no need to repeat the video's path. Use `--workspace DIR` when you
+intentionally want a separate search workspace. Source media and authoritative
+sidecars stay in their existing locations.

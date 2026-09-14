@@ -1,8 +1,8 @@
 ---
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
-generated-by: cerul 0.0.10
-generated-sha256: a6ff32afc3689dba25208ea9b7d9d547ca84984379aa34a426cc8825c5af3c2b
+generated-by: cerul 0.0.11
+generated-sha256: 0e6de57b531aba77f76ebbb4d5ff298300ab6b301967d18b13524d982a9e27d6
 ---
 
 # Cerul
@@ -48,6 +48,8 @@ the work finished and the rest did not.
 Events on stderr:
 
 - `progress` counts units of work for one station.
+- `annotation_progress` reports annotation work units, cached units and phase;
+  percentage is completed planned work, not model-internal progress.
 - `checkpoint` marks a window that is saved and will be reused after an
   interruption, so a rerun resumes rather than repeating it.
 - `published` marks a validated annotation file that now exists, with its record
@@ -104,20 +106,29 @@ replace the task and action annotations below.
 **Annotate actions.** No indexing step is needed.
 
 ```sh
-cerul --json --dry-run annotate ./video.mp4 --semantic subtask,event,interaction,state
-cerul --json annotate ./video.mp4 --semantic subtask,event,interaction,state
+cerul --json --dry-run annotate ./video.mp4 --embodied
+cerul --json annotate ./video.mp4 --embodied
 cerul --json status ./video.mp4 --timeline
 ```
 
-Ordinary videos default to `task,subtask,flag`; list the items explicitly to get
-the rest. Available items: task, subtask, event, interaction, state, flag,
-progress. Pose, depth, segmentation, and 3D trajectories are not implemented and
-must not be offered.
+Every input format defaults to `task,subtask,flag`. Use `--embodied` for
+demonstration prompts and `subtask,event,interaction,state`, or list `--semantic`
+items explicitly. Available items: task, subtask, event, interaction, state, flag,
+progress. `--embodied --hands` adds local human-hand keypoints; add
+`--semantic none` for offline hand-only inference. Hands require embodied mode
+and are never enabled automatically. Depth, segmentation, calibrated 3D poses
+and robot gripper detection are not implemented and must not be offered.
+
+Each episode exports `annotations.json` and `summary.md` with Cerul provenance.
+Internal typed sidecars remain authoritative. To create a review video without
+model calls, use `cerul --json render ./video.mp4 --out ./video.annotated.mp4`.
+Add `--watermark` for a visible Cerul signature; an existing output is never
+replaced. Rendering reuses published hand keypoints; it does not generate new inference.
 
 **Annotate a LeRobot dataset.** Pass the dataset root that contains `meta/`.
 
 ```sh
-cerul --json annotate ./dataset --semantic --only 0
+cerul --json annotate ./dataset --embodied --only 0
 cerul --json status ./dataset --timeline
 ```
 
@@ -148,6 +159,7 @@ returns published annotation records in time order, with `--type` and `--limit`.
 Generated from this build's argument definitions.
 These options work on every command:
 
+  --no-auto-deps              Check media tools without downloading or selecting automatic repairs
   --json                      Machine-readable output: final JSON on stdout, NDJSON events on stderr
   --workspace <DIR>           Where indexes and caches live (default ~/.cerul)
   --dry-run                   Show what would happen without writing anything or calling models
@@ -170,8 +182,8 @@ Index videos so they can be searched (screen text, speech, visual search)
   --skip-still                Skip windows where the picture does not change
   --streams <STREAMS>         Streams to index, comma-separated (default primary)
   --only <ONLY>               Only these episodes (ids or local indexes), comma-separated
-  --jobs <JOBS>               Parallel model requests (default 4)
-  --rpm <RPM>                 Cap on model requests per minute
+  --jobs <JOBS>               Maximum model requests in flight across indexing stages (default 4)
+  --rpm <RPM>                 Shared cap on model requests per minute across indexing stages
   --sidecar-dir <DIR>         Store sidecars here instead of beside the videos
 
 ### cerul search
@@ -198,7 +210,7 @@ Show indexed videos, model configuration, and storage
   <PATH>                      Only report videos under this path
   --providers                 Verify configured model endpoints with small test requests (cached for seven days)
   --timeline                  Read the published annotations in time order instead of the summary
-  --type <ITEM>               Only one semantic item, for example event
+  --type <ITEM>               One semantic item (for example event), or hand to expand hand frames
   --limit <N>                 Most annotation records to show per video (default 50)
 
 ### cerul open
@@ -213,6 +225,7 @@ Manage the saved Gemini API key
 
   cerul auth set                   Enter and verify a Gemini API key, replacing any saved one
   cerul auth remove                Delete the saved Gemini API key
+  cerul auth help                  Print this message or the help of the given subcommand(s)
 
 ### cerul config
 
@@ -221,10 +234,12 @@ Configure the required Gemini key and optional default speech transcription
 
 ### cerul annotate
 
-Generate semantic annotations (tasks, events, states) for videos
+Generate semantic labels and optional local hands for embodied videos
 
   <PATHS>...                  Videos, directories, or LeRobot datasets
-  --semantic <ITEMS>          Semantic items to generate, comma-separated (default set when no value is given)
+  --semantic <ITEMS>          Semantic items, comma-separated; use none with --hands for offline hand annotation
+  --embodied                  Annotate embodied demonstrations (subtask, event, interaction, state)
+  --hands                     Add local human-hand keypoints to an embodied demonstration (CPU, no API calls)
   --write-lerobot             Write subtask annotations back into the LeRobot dataset
   --out <DIR>                 New output LeRobot dataset (requires --write-lerobot)
   --ontology <FILE>           Custom ontology file
@@ -234,6 +249,15 @@ Generate semantic annotations (tasks, events, states) for videos
   --rpm <RPM>                 Cap on model requests per minute
   --streams <STREAMS>         Streams to annotate, comma-separated (default primary)
   --only <ONLY>               Only these episodes (ids or local indexes), comma-separated
+
+### cerul render
+
+Render published semantic labels and hand skeletons without model calls
+
+  <PATH>                      Annotated video, or an exported annotations.json for a dataset episode
+  --out <MP4>                 New review video (must not already exist)
+  --stream <STREAM>           Camera id (defaults to the primary camera)
+  --watermark                 Burn a visible Cerul signature into the caption panel
 
 ### cerul remove
 
@@ -258,3 +282,20 @@ Print or install the agent skill that teaches this CLI to a coding agent
   --dir <DIR>                 Install into this skills directory instead of an agent's own
   --print                     Write the skill to stdout instead of installing it
   --force                     Replace an installed skill even when it was changed after it was written
+
+### cerul help
+
+Print this message or the help of the given subcommand(s)
+
+  cerul help index                 Index videos so they can be searched (screen text, speech, visual search)
+  cerul help search                Find moments by description, exact words, or a reference image
+  cerul help status                Show indexed videos, model configuration, and storage
+  cerul help open                  Open a result from the last search in a video player, at its moment
+  cerul help auth                  Manage the saved Gemini API key
+  cerul help config                Configure the required Gemini key and optional default speech transcription
+  cerul help annotate              Generate semantic labels and optional local hands for embodied videos
+  cerul help render                Render published semantic labels and hand skeletons without model calls
+  cerul help remove                Remove indexed videos, or free the disk they and their caches use
+  cerul help upgrade               Install the newest published release of Cerul over this one
+  cerul help skill                 Print or install the agent skill that teaches this CLI to a coding agent
+  cerul help help                  Print this message or the help of the given subcommand(s)

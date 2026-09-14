@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -254,21 +255,29 @@ fn short_name(name: &str) -> String {
 }
 
 /// A stage estimate needs measured work; cached initial positions are not throughput.
-fn remaining(done: u64, total: u64, baseline: u64, elapsed: Duration) -> String {
+fn remaining(done: u64, total: u64, baseline: u64, elapsed: Duration, waiting: Duration) -> String {
     let measured = done.saturating_sub(baseline);
     if done >= total && total > 0 {
-        return String::new();
+        return "00:00".into();
     }
-    if measured < 2 || elapsed.as_secs() < 2 {
-        return "estimating…".into();
+    if measured == 0 || elapsed.as_secs() < 1 {
+        return "--:--".into();
     }
-    let seconds =
-        (elapsed.as_secs_f64() / measured as f64 * total.saturating_sub(done) as f64).ceil() as u64;
-    if seconds < 60 {
-        format!("~{seconds}s left")
-    } else {
-        format!("~{}m left", seconds.div_ceil(60))
+    // Learn throughput only from completed work. Between samples, count down
+    // that estimate instead of treating an in-flight unit as ever-slower work.
+    let seconds = elapsed.as_secs_f64() / measured as f64 * total.saturating_sub(done) as f64
+        - waiting.as_secs_f64();
+    if seconds <= 0. {
+        return "--:--".into();
     }
+    format!(
+        "~{}",
+        clock(
+            (seconds.ceil() as u64)
+                .saturating_mul(1_000_000)
+                .min(i64::MAX as u64) as i64
+        )
+    )
 }
 
 pub fn clock(us: i64) -> String {
@@ -287,6 +296,7 @@ fn station_label(station: &str) -> String {
         "transcript" => "Speech".into(),
         "embed" => "Search index".into(),
         "understanding" => "Understanding".into(),
+        "overview" => "Summarizing".into(),
         "description" => "Descriptions".into(),
         other => {
             let name = other.strip_prefix("semantic.").unwrap_or(other);
@@ -298,49 +308,161 @@ fn station_label(station: &str) -> String {
         }
     }
 }
-fn station_unit(station: &str, count: u64) -> String {
-    let (one, many) = match station {
-        "screen_text" => ("frame", "frames"),
-        "transcript" => ("segment", "segments"),
-        "embed" => ("batch", "batches"),
-        "understanding" => ("step", "steps"),
-        _ => ("window", "windows"),
-    };
-    format!("{count} {}", if count == 1 { one } else { many })
+
+struct SmoothIndex {
+    shown: f64,
+    confirmed: f64,
+    ceiling: f64,
+    total: f64,
+    duration: f64,
+    updated: Instant,
+    ticked: Instant,
+}
+impl SmoothIndex {
+    fn new(now: Instant) -> Self {
+        Self {
+            shown: 0.,
+            confirmed: 0.,
+            ceiling: 0.,
+            total: 1.,
+            duration: 1.,
+            updated: now,
+            ticked: now,
+        }
+    }
+    fn sample(&mut self, now: Instant) -> f64 {
+        let now = now.max(self.ticked);
+        let elapsed = now.duration_since(self.updated).as_secs_f64();
+        let target = self.confirmed
+            + (self.ceiling - self.confirmed) * 0.9 * (1. - (-elapsed / self.duration).exp());
+        let step = now.duration_since(self.ticked).as_secs_f64() * self.total * 0.15;
+        self.shown = self.shown.max(target.min(self.shown + step));
+        self.ticked = now;
+        (self.shown / self.total).min(0.999)
+    }
+    fn update(&mut self, done: u64, ceiling: u64, total: u64, eta: f64, now: Instant) {
+        let now = now.max(self.ticked);
+        self.sample(now);
+        if self.confirmed != done as f64 || self.ceiling != ceiling as f64 {
+            self.updated = now;
+        }
+        self.confirmed = done as f64;
+        self.ceiling = ceiling.max(done) as f64;
+        self.total = total.max(1) as f64;
+        self.duration =
+            (eta * (self.ceiling - self.confirmed) / (self.total - self.confirmed).max(1.)).max(1.);
+    }
 }
 
-/// Renders progress events. Live bars on a terminal, one line per finished
-/// station otherwise, so redirected output never contains cursor movement.
+fn index_style(
+    estimate: Arc<Mutex<SmoothIndex>>,
+    columns: u16,
+    eta_seconds: f64,
+    sampled: Instant,
+) -> ProgressStyle {
+    let wide = columns >= 72;
+    let width = usize::from(columns.saturating_sub(if wide { 46 } else { 30 })).clamp(8, 60);
+    let template = if wide {
+        "  {spinner} Indexing · {wide_msg}\n  [{smooth_bar:.cyan}] {smooth_percent:>4}  {spent} elapsed · ETA {remaining}"
+    } else {
+        "  {spinner} Indexing · {wide_msg}\n  [{smooth_bar:.cyan}] {smooth_percent:>4}  {spent} / {remaining}"
+    };
+    let bar_estimate = estimate.clone();
+    let percent_estimate = estimate.clone();
+    ProgressStyle::with_template(template)
+        .expect("static template")
+        .progress_chars("━╸─")
+        .with_key(
+            "smooth_bar",
+            move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                let ratio = bar_estimate.lock().unwrap().sample(Instant::now());
+                let filled = (ratio * width as f64).floor() as usize;
+                let _ = write!(out, "{}{}", "█".repeat(filled), "░".repeat(width - filled));
+            },
+        )
+        .with_key(
+            "smooth_percent",
+            move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                let ratio = percent_estimate.lock().unwrap().sample(Instant::now());
+                let _ = write!(out, "~{}%", (ratio * 100.).floor() as u64);
+            },
+        )
+        .with_key(
+            "spent",
+            |state: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                let _ = out.write_str(&clock(
+                    (state.elapsed().as_secs() as i64).saturating_mul(1_000_000),
+                ));
+            },
+        )
+        .with_key(
+            "remaining",
+            move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                let left = eta_seconds - sampled.elapsed().as_secs_f64();
+                let text = if left > 0. {
+                    format!("~{}", clock((left.ceil() as i64).saturating_mul(1_000_000)))
+                } else {
+                    "updating".into()
+                };
+                let _ = out.write_str(&text);
+            },
+        )
+}
+/// Terminal-only progress; durable results are printed once by the final receipt.
 pub struct Progress {
     palette: Palette,
     quiet: bool,
+    verbose: bool,
     workspace: PathBuf,
     multi: Option<MultiProgress>,
     bars: HashMap<(String, String), ProgressBar>,
     estimates: HashMap<(String, String), (Instant, u64)>,
-    /// Finished station summaries per episode, in completion order.
-    finished: HashMap<String, Vec<(String, String)>>,
-    /// The episode whose stations are currently on screen.
-    active: Option<String>,
     spinner: Option<ProgressBar>,
+    indexing: bool,
+    index_estimate: Arc<Mutex<SmoothIndex>>,
     names: HashMap<String, String>,
-    /// Episode ids already looked up, so a refresh happens once per new video.
     resolved: std::collections::HashSet<String>,
 }
+
+fn progress_style(started: Instant, baseline: u64, cached: u64, columns: u16) -> ProgressStyle {
+    let sampled_at = Instant::now();
+    let measured_elapsed = sampled_at.duration_since(started);
+    let template = if columns >= 72 {
+        "  {prefix:14!} [{bar:18.cyan/black}] {percent:>3}%  ETA {remaining}  {wide_msg}"
+    } else {
+        "{prefix:8!} [{bar:8.cyan/black}] {percent:>3}% ETA {remaining}"
+    };
+    ProgressStyle::with_template(template)
+        .expect("static template")
+        .progress_chars("━╸─")
+        .with_key(
+            "remaining",
+            move |state: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                let _ = out.write_str(&remaining(
+                    state.pos().saturating_sub(cached),
+                    state.len().unwrap_or(0).saturating_sub(cached),
+                    baseline.saturating_sub(cached),
+                    measured_elapsed,
+                    sampled_at.elapsed(),
+                ));
+            },
+        )
+}
+
 impl Progress {
-    pub fn new(workspace: &Path, quiet: bool, palette: Palette) -> Self {
+    pub fn new(workspace: &Path, quiet: bool, verbose: bool, palette: Palette) -> Self {
         let animate = !quiet && io::stderr().is_terminal();
-        let multi = animate.then(|| MultiProgress::with_draw_target(ProgressDrawTarget::stderr()));
         Self {
             palette,
             quiet,
+            verbose,
             workspace: workspace.to_owned(),
-            multi,
+            multi: animate.then(|| MultiProgress::with_draw_target(ProgressDrawTarget::stderr())),
             bars: HashMap::new(),
             estimates: HashMap::new(),
-            finished: HashMap::new(),
-            active: None,
             spinner: None,
+            indexing: false,
+            index_estimate: Arc::new(Mutex::new(SmoothIndex::new(Instant::now()))),
             names: HashMap::new(),
             resolved: std::collections::HashSet::new(),
         }
@@ -349,8 +471,6 @@ impl Progress {
         if let Some(name) = self.names.get(episode) {
             return short_name(name);
         }
-        // A video joins the registry as its turn begins, so an unknown id means
-        // the cached copy predates it. Refresh once per id, never per event.
         if self.resolved.insert(episode.to_owned())
             && let Ok(entries) = discover::read_registry(&self.workspace)
         {
@@ -361,78 +481,26 @@ impl Progress {
         }
         self.names
             .get(episode)
-            .cloned()
-            .map(|name| short_name(&name))
+            .map(|name| short_name(name))
             .unwrap_or_else(|| short_name(episode))
     }
-    /// Replaces one episode's station bars with a single line, so indexing many
-    /// videos keeps the live area the size of the video being worked on.
-    fn collapse(&mut self, episode: &str) {
-        self.estimates.retain(|(id, _), _| id != episode);
-        let Some(multi) = self.multi.clone() else {
-            return;
-        };
-        let mut removed = false;
-        self.bars.retain(|(id, _), bar| {
-            if id == episode {
-                multi.remove(bar);
-                removed = true;
-                return false;
-            }
-            true
-        });
-        let summaries = self.finished.remove(episode).unwrap_or_default();
-        // The final index report already states which videos are searchable.
-        if summaries.iter().all(|(station, _)| {
-            matches!(
-                station.as_str(),
-                "screen_text" | "transcript" | "embed" | "understanding" | "description"
-            )
-        }) {
-            return;
-        }
-        if !removed || summaries.is_empty() {
-            return;
-        }
-        let name = self
-            .names
-            .get(episode)
-            .cloned()
-            .unwrap_or_else(|| episode.to_owned());
-        let line = summaries
-            .iter()
-            .map(|(_, text)| text.clone())
-            .collect::<Vec<_>>()
-            .join(&self.palette.dim("  ·  "));
-        let summary = format!(
-            "{} {}   {line}",
-            self.palette.ok("✓"),
-            self.palette.bold(&name)
-        );
-        // Printing above live bars relies on their redraw to end the line, so the
-        // last summary of a run must write its own newline instead.
-        if self.bars.is_empty() {
-            eprintln!("{summary}");
-        } else {
-            let _ = multi.println(summary);
-        }
-    }
-
-    /// Marks work whose duration cannot be predicted, such as one model request.
+    /// Unknown work stays explicitly unestimated instead of advancing a fake percentage.
     pub fn start_spinner(&mut self, message: &str) {
+        self.stop_spinner();
         let Some(multi) = &self.multi else { return };
-        let bar = multi.add(ProgressBar::new_spinner());
-        bar.set_style(
-            ProgressStyle::with_template("  {spinner:.cyan} {msg} {elapsed}")
-                .expect("static template"),
-        );
-        bar.set_message(self.palette.dim(message));
+        let bar = ProgressBar::hidden();
+        bar.set_style(ProgressStyle::with_template("  {wide_msg}").expect("static template"));
+        bar.set_message(message.to_owned());
+        let bar = multi.add(bar);
         bar.enable_steady_tick(Duration::from_millis(100));
         self.spinner = Some(bar);
     }
     pub fn stop_spinner(&mut self) {
         if let Some(bar) = self.spinner.take() {
             bar.finish_and_clear();
+            if let Some(multi) = &self.multi {
+                multi.remove(&bar);
+            }
         }
     }
     pub fn println(&self, line: &str) {
@@ -446,62 +514,185 @@ impl Progress {
             _ => eprintln!("{line}"),
         }
     }
+    fn update(&mut self, episode: String, station: String, done: u64, total: u64, cached: u64) {
+        if self.quiet {
+            return;
+        }
+        self.stop_spinner();
+        let name = self.name(&episode);
+        let label = if station == "annotate" {
+            "Annotating".into()
+        } else {
+            station_label(&station)
+        };
+        let key = (episode, station);
+        if done == 0 {
+            self.estimates.remove(&key);
+        }
+        let baseline = if key.1 == "annotate" { 0 } else { done };
+        let (started, baseline) = *self
+            .estimates
+            .entry(key.clone())
+            .or_insert((Instant::now(), baseline));
+        if let Some(multi) = &self.multi {
+            let first = !self.bars.contains_key(&key);
+            let bar = self.bars.entry(key.clone()).or_insert_with(|| {
+                let bar = ProgressBar::hidden();
+                bar.set_style(progress_style(
+                    started,
+                    baseline,
+                    cached,
+                    console::Term::stderr().size().1,
+                ));
+                bar.set_prefix(label.clone());
+                bar.set_message(name.clone());
+                bar.set_length(total.max(1));
+                multi.add(bar)
+            });
+            bar.set_style(progress_style(
+                started,
+                baseline,
+                cached,
+                console::Term::stderr().size().1,
+            ));
+            bar.set_prefix(label.clone());
+            bar.set_message(name.clone());
+            bar.set_length(total.max(1));
+            bar.set_position(done.min(total));
+            if first {
+                bar.enable_steady_tick(Duration::from_millis(100));
+            }
+            if done >= total {
+                bar.finish_and_clear();
+                multi.remove(bar);
+                self.bars.remove(&key);
+                self.estimates.remove(&key);
+            }
+        }
+        if self.verbose && done >= total {
+            self.println(&format!("✓ {name} · {label}"));
+        }
+    }
+    fn index_progress(
+        &mut self,
+        episode: String,
+        phase: String,
+        amounts: (u64, u64, u64),
+        eta_seconds: f64,
+        finished: bool,
+    ) {
+        let (done, ceiling, total) = amounts;
+        self.indexing = true;
+        self.stop_spinner();
+        if self.quiet {
+            return;
+        }
+        let name = if episode.is_empty() {
+            String::new()
+        } else {
+            self.name(&episode)
+        };
+        let phase = phase
+            .split('+')
+            .map(|station| match station {
+                "prepare" | "preparing" => "Preparing".into(),
+                "finalize" => "Saving index".into(),
+                _ => station_label(station),
+            })
+            .collect::<Vec<_>>()
+            .join(" / ");
+        let message = if name.is_empty() {
+            phase
+        } else {
+            format!("{name} · {phase}")
+        };
+        let Some(multi) = &self.multi else {
+            return;
+        };
+        let key = (String::new(), "index".into());
+        if finished {
+            if let Some(bar) = self.bars.remove(&key) {
+                bar.finish_and_clear();
+                multi.remove(&bar);
+            }
+            return;
+        }
+        let sampled = Instant::now();
+        self.index_estimate
+            .lock()
+            .unwrap()
+            .update(done, ceiling, total, eta_seconds, sampled);
+        let style = index_style(
+            self.index_estimate.clone(),
+            console::Term::stderr().size().1,
+            eta_seconds,
+            sampled,
+        );
+        let first = !self.bars.contains_key(&key);
+        let bar = self.bars.entry(key).or_insert_with(|| {
+            let bar = ProgressBar::hidden();
+            bar.set_style(style.clone());
+            bar.set_length(total);
+            bar.set_message(message.clone());
+            multi.add(bar)
+        });
+        bar.set_style(style);
+        bar.set_message(message);
+        bar.set_position(done);
+        if first {
+            bar.enable_steady_tick(Duration::from_millis(100));
+        }
+    }
+
     pub fn handle(&mut self, event: Event) {
         match event {
-            Event::Log { level, msg } => {
-                let line = match level.as_str() {
-                    "warn" | "warning" => format!("{} {msg}", self.palette.warn("!")),
-                    "error" => format!("{} {msg}", self.palette.err("✗")),
-                    _ => self.palette.dim(&format!("→ {msg}")),
-                };
-                self.println(&line);
-            }
-            // A checkpoint moves no counter of its own: the progress event for the
-            // same window already drew it. It exists so a machine reader can tell
-            // durable work from work still only in memory.
-            Event::Checkpoint { .. } | Event::ModelRequest { .. } => {}
-            Event::Published {
+            Event::IndexProgress {
                 episode,
-                annotation,
-                records,
+                source,
+                phase,
+                done,
+                ceiling,
+                total,
+                eta_seconds,
+                finished,
+            } => {
+                if let Some(source) = source {
+                    self.names.insert(episode.clone(), file_name(&source));
+                }
+                self.index_progress(
+                    episode,
+                    phase,
+                    (done, ceiling, total),
+                    eta_seconds,
+                    finished,
+                );
+            }
+            Event::Progress { .. } if self.indexing => {}
+            Event::Log { level, msg } => {
+                match level.as_str() {
+                    "warn" | "warning" => {
+                        self.println(&format!("{} {msg}", self.palette.warn("!")))
+                    }
+                    "error" => self.println(&format!("{} {msg}", self.palette.err("✗"))),
+                    _ if self.verbose => self.println(&self.palette.dim(&msg)),
+                    // Dependency preparation has no station events yet. Keep its
+                    // status in place instead of appending a transcript of downloads.
+                    _ if self.bars.is_empty()
+                        && (msg.contains("media tools") || msg.contains("media tool")) =>
+                    {
+                        self.start_spinner(&msg)
+                    }
+                    _ => {}
+                }
+            }
+            Event::AnnotationProgress {
+                episode,
+                done,
+                total,
+                cached,
                 ..
             } => {
-                if self.quiet {
-                    return;
-                }
-                let label = station_label(&annotation);
-                let unit = format!("{records} record{}", if records == 1 { "" } else { "s" });
-                {
-                    let summary = format!("{} {unit}", label.to_lowercase());
-                    let summaries = self.finished.entry(episode.clone()).or_default();
-                    match summaries.iter_mut().find(|(name, _)| name == &annotation) {
-                        Some(slot) => slot.1 = summary,
-                        None => summaries.push((annotation.clone(), summary)),
-                    }
-                }
-                let message = format!(
-                    "{} {:<13} {}",
-                    self.palette.ok("✓"),
-                    label,
-                    self.palette.dim(&format!("{unit} · published"))
-                );
-                match self.bars.get(&(episode.clone(), annotation.clone())) {
-                    Some(bar) => {
-                        bar.set_style(
-                            ProgressStyle::with_template("    {prefix:<20!} {msg}")
-                                .expect("static template"),
-                        );
-                        bar.set_message(message);
-                        bar.finish();
-                    }
-                    None => {
-                        let name = self.name(&episode);
-                        self.println(&format!(
-                            "  {} {name}  {label}  {unit} · published",
-                            self.palette.ok("✓")
-                        ));
-                    }
-                }
+                self.update(episode, "annotate".into(), done, total, cached);
             }
             Event::Progress {
                 episode,
@@ -509,107 +700,57 @@ impl Progress {
                 done,
                 total,
             } => {
-                if self.quiet {
-                    return;
-                }
-                self.stop_spinner();
-                // Episodes are indexed one at a time, so the previous one is done.
-                if self.active.as_deref() != Some(episode.as_str()) {
-                    if let Some(previous) = self.active.take() {
-                        self.collapse(&previous);
-                    }
-                    self.active = Some(episode.clone());
-                }
-                let name = self.name(&episode);
-                let label = station_label(&station);
-                match &self.multi {
-                    Some(multi) => {
-                        let key = (episode.clone(), station.clone());
-                        if done == 0 {
-                            self.estimates.remove(&key);
-                        }
-                        let (started, baseline) = self
-                            .estimates
-                            .entry(key.clone())
-                            .or_insert((Instant::now(), done));
-                        let eta = remaining(done, total, *baseline, started.elapsed());
-                        let bar = self.bars.entry(key).or_insert_with(|| {
-                            let bar = multi.add(ProgressBar::new(total.max(1)));
-                            bar.set_style(
-                                ProgressStyle::with_template(
-                                    "  {spinner:.cyan} {prefix:<13} {bar:20.cyan/black} {pos}/{len} {wide_msg}",
-                                )
-                                .expect("static template")
-                                .progress_chars("━╸─"),
-                            );
-                            bar.set_prefix(label.clone());
-                            bar.enable_steady_tick(Duration::from_millis(100));
-                            bar
-                        });
-                        if done == 0 {
-                            bar.reset();
-                        }
-                        bar.set_message(eta);
-                        bar.set_length(total.max(1));
-                        bar.set_position(done.min(total.max(1)));
-                        if done >= total {
-                            let unit = station_unit(&station, total);
-                            let summaries = self.finished.entry(episode.clone()).or_default();
-                            if !summaries.iter().any(|(name, _)| name == &station) {
-                                summaries.push((
-                                    station.clone(),
-                                    format!("{} {unit}", label.to_lowercase()),
-                                ));
-                            }
-                            bar.finish_and_clear();
-                        }
-                    }
-                    None => {
-                        if done >= total {
-                            eprintln!("  ✓ {name}  {label}  {}", station_unit(&station, total));
-                        }
-                    }
-                }
+                self.update(episode, station, done, total, 0);
             }
+            Event::Published {
+                episode,
+                annotation,
+                records,
+                ..
+            } if self.verbose => {
+                let name = self.name(&episode);
+                self.println(&format!("✓ {name} · {annotation} · {records} records"));
+            }
+            _ => {}
         }
     }
+    /// Detach every draw target before stdout prints the receipt. Calling this
+    /// twice cannot redraw or erase result lines from a previous finish.
     pub fn finish(&mut self) {
         self.stop_spinner();
-        if let Some(active) = self.active.take() {
-            self.collapse(&active);
-        }
-        for bar in self.bars.values() {
-            if !bar.is_finished() {
-                bar.abandon();
+        for (_, bar) in self.bars.drain() {
+            bar.finish_and_clear();
+            if let Some(multi) = &self.multi {
+                multi.remove(&bar);
             }
         }
-        if let Some(multi) = &self.multi {
+        self.estimates.clear();
+        if let Some(multi) = self.multi.take() {
             let _ = multi.clear();
         }
     }
 }
 
 fn next_steps(out: &mut dyn Write, palette: &Palette, items: &[(&str, &str)]) -> io::Result<()> {
-    let width = items
-        .iter()
-        .map(|(cmd, _)| measure_text_width(cmd))
-        .max()
-        .unwrap_or(0);
-    for (cmd, note) in items {
-        let pad = " ".repeat(width - measure_text_width(cmd) + 4);
-        writeln!(
-            out,
-            "  {}{pad}{}",
-            palette.cmd(cmd),
-            palette.dim(note).trim_end()
-        )?;
+    for (i, (cmd, note)) in items.iter().enumerate() {
+        if i > 0 {
+            writeln!(out)?;
+        }
+        if !note.is_empty() {
+            writeln!(out, "  {}", palette.dim(note))?;
+        }
+        writeln!(out, "  {}", palette.cmd(cmd))?;
     }
     Ok(())
 }
 
 /// The closing block of a result: what to run now that this finished. Three
 /// commands is the most anyone reads, so callers pass their best three.
-fn next_block(out: &mut dyn Write, palette: &Palette, items: &[(&str, &str)]) -> io::Result<()> {
+pub fn next_block(
+    out: &mut dyn Write,
+    palette: &Palette,
+    items: &[(&str, &str)],
+) -> io::Result<()> {
     if items.is_empty() {
         return Ok(());
     }
@@ -638,6 +779,9 @@ fn facts(out: &mut dyn Write, palette: &Palette, rows: &[(&str, String)]) -> io:
 /// The `--semantic` value a person types, from the annotation's internal name.
 fn item_name(annotation: &str) -> &str {
     let item = annotation.rsplit('/').next().unwrap_or(annotation);
+    if item == "grounding.hand" {
+        return "hand frames";
+    }
     item.strip_prefix("semantic.").unwrap_or(item)
 }
 
@@ -658,70 +802,21 @@ pub fn shell_command(argv: &[String]) -> String {
         .join(" ")
 }
 
-/// A path as a person would type it: `~` while that stays unambiguous, and the
-/// full quoted path once the characters would otherwise change what runs.
-pub fn shell_path(path: &Path) -> String {
-    let display = tilde(path);
-    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./=:,@+~".contains(c);
-    if display.chars().all(safe) {
-        display
-    } else {
-        shell_quote(&path.to_string_lossy())
-    }
-}
-
 /// A compact launch pad; detailed configuration and inventories live in status.
 pub fn home(
     out: &mut dyn Write,
     palette: &Palette,
     status: &Status,
-    models: &ModelSummary,
+    _models: &ModelSummary,
 ) -> io::Result<()> {
+    let count = status.episodes.len();
     writeln!(
         out,
-        "{}  {}",
+        "{} · {count} video{}",
         palette.bold(&format!("cerul {}", status.version)),
-        palette.dim("· Search and annotate video")
+        if count == 1 { "" } else { "s" }
     )?;
-    if status.episodes.is_empty() {
-        writeln!(out, "\n{}", palette.bold("Get started"))?;
-    } else {
-        let count = status.episodes.len();
-        writeln!(
-            out,
-            "{} video{} indexed · {}",
-            count,
-            if count == 1 { "" } else { "s" },
-            models.key.summary(palette)
-        )?;
-    }
-    if !models.key.available() {
-        writeln!(
-            out,
-            "{}",
-            palette.dim(
-                "Index asks for your Gemini key when needed; cerul auth set saves it ahead of time."
-            )
-        )?;
-    }
-    writeln!(out)?;
-    next_steps(
-        out,
-        palette,
-        &[
-            ("cerul index ./video.mp4", "make searchable"),
-            ("cerul search \"a person holding a cup\"", "find moments"),
-            (
-                "cerul annotate ./video.mp4 --semantic",
-                "label actions · no index step needed",
-            ),
-        ],
-    )?;
-    writeln!(
-        out,
-        "\n{}",
-        palette.dim("cerul status · cerul config · cerul annotate --help · cerul --help")
-    )
+    writeln!(out, "{}", palette.dim("cerul help · commands and examples"))
 }
 
 pub fn tilde(path: &Path) -> String {
@@ -769,7 +864,7 @@ pub fn status(
         let mut names: Vec<String> = episode
             .annotations
             .iter()
-            .filter(|name| name.contains("semantic."))
+            .filter(|name| name.contains("semantic.") || name.ends_with("grounding.hand"))
             .map(|name| item_name(name).to_owned())
             .collect();
         names.sort();
@@ -1155,17 +1250,19 @@ pub fn auth(out: &mut dyn Write, palette: &Palette, key: &KeyState) -> io::Resul
         writeln!(out)?;
         writeln!(
             out,
-            "Get a key at https://aistudio.google.com/apikey, then run {} or export ${}.",
-            palette.cmd("cerul auth set"),
+            "Get a key at https://aistudio.google.com/apikey, then save it below or set ${}.",
             key.env
         )?;
+        next_steps(out, palette, &[("cerul auth set", "Save your key")])?;
     } else {
         writeln!(out)?;
-        writeln!(
+        next_steps(
             out,
-            "{}",
-            palette
-                .dim("cerul auth set replaces the key · cerul auth remove deletes the saved one")
+            palette,
+            &[
+                ("cerul auth set", "Replace your key"),
+                ("cerul auth remove", "Remove the saved key"),
+            ],
         )?;
     }
     Ok(())
@@ -1205,19 +1302,11 @@ pub fn open(
     Ok(())
 }
 
-pub fn index_plan(out: &mut dyn Write, palette: &Palette, paths: &[PathBuf]) -> io::Result<()> {
-    let subject = if paths.len() == 1 {
-        short_name(&file_name(&paths[0]))
-    } else {
-        format!("{} inputs", paths.len())
-    };
-    writeln!(out, "{} {subject}", palette.bold("Indexing"))
-}
-
 pub struct IndexContext {
     pub names: BTreeMap<String, PathBuf>,
     pub retry: Vec<String>,
     pub search_prefix: Vec<String>,
+    pub elapsed: Duration,
 }
 
 pub fn index(
@@ -1261,7 +1350,7 @@ pub fn index(
             e.streams.iter().all(|s| s.errors.is_empty()) && e.streams.iter().any(|s| s.indexed)
         });
     for episode in &report.episodes {
-        let name = short_name(&episode.title.clone().unwrap_or_else(|| name_of(episode)));
+        let name = short_name(&name_of(episode));
         let errors: Vec<&String> = episode.streams.iter().flat_map(|s| &s.errors).collect();
         let indexed = episode.streams.iter().any(|s| s.indexed);
         if errors.is_empty() && indexed {
@@ -1304,70 +1393,50 @@ pub fn index(
             "{} {} ready to search   {}",
             palette.ok("✓"),
             palette.bold(&format!("{ready} videos")),
-            palette.dim("indexes saved beside your videos")
+            palette.dim("in your workspace")
         )?;
     }
+    writeln!(
+        out,
+        "  {} elapsed",
+        clock(context.elapsed.as_micros().min(i64::MAX as u128) as i64)
+    )?;
     if report.partial {
         writeln!(
             out,
-            "\nRetry: {}",
+            "\nRetry\n  {}",
             palette.cmd(&shell_command(&context.retry))
         )?;
     }
     if ready > 0 {
-        let mut examples: Vec<(String, String)> = Vec::new();
-        for episode in &report.episodes {
-            for suggestion in &episode.suggestions {
+        let mut seen = std::collections::BTreeSet::new();
+        let suggestions: Vec<_> = report
+            .episodes
+            .iter()
+            .flat_map(|episode| &episode.suggestions)
+            .filter(|item| {
+                let query = item.query.split_whitespace().collect::<Vec<_>>().join(" ");
+                !query.is_empty() && seen.insert(query.to_lowercase())
+            })
+            .take(3)
+            .collect();
+        writeln!(out)?;
+        if suggestions.is_empty() {
+            let mut argv = context.search_prefix.clone();
+            argv.push("describe a moment".into());
+            writeln!(out, "{}", palette.cmd(&shell_command(&argv)))?;
+        } else {
+            for suggestion in suggestions {
                 let mut argv = context.search_prefix.clone();
                 if suggestion.exact {
                     argv.push("--text".into());
                 }
                 argv.push(suggestion.query.clone());
-                if let Some(path) = context.names.get(&episode.episode_id) {
-                    argv.extend(["--in".into(), path.to_string_lossy().into_owned()]);
-                }
-                let source = match suggestion.source.as_str() {
-                    "transcript" => "speech",
-                    "screen_text" => "screen text",
-                    "semantic.scene" => "visual",
-                    _ => "annotation",
-                };
-                examples.push((
-                    shell_command(&argv),
-                    format!("{source} · {}", clock(suggestion.start_us)),
-                ));
-                if examples.len() == 3 {
-                    break;
-                }
-            }
-            if examples.len() == 3 {
-                break;
-            }
-        }
-        if examples.is_empty() {
-            let mut argv = context.search_prefix.clone();
-            argv.push("describe a visual moment".into());
-            writeln!(out, "\n{}", palette.cmd(&shell_command(&argv)))?;
-        } else {
-            writeln!(out, "\n{}", palette.bold("Try searching"))?;
-            for (command, evidence) in examples {
-                writeln!(out, "  {}", palette.dim(&evidence))?;
-                writeln!(out, "  {}", palette.cmd(&command))?;
+                writeln!(out, "{}", palette.cmd(&shell_command(&argv)))?;
             }
         }
         let speech: Vec<_> = report.episodes.iter().flat_map(|e| &e.streams).collect();
-        if speech.iter().all(|s| {
-            matches!(
-                s.speech,
-                index::pipeline::SpeechStatus::NoAudio | index::pipeline::SpeechStatus::NoSpeech
-            )
-        }) {
-            writeln!(
-                out,
-                "{}",
-                palette.dim("No speech found; search still uses video and available screen text.")
-            )?;
-        } else if speech
+        if speech
             .iter()
             .any(|s| matches!(s.speech, index::pipeline::SpeechStatus::NotConfigured))
         {
@@ -1601,10 +1670,7 @@ pub fn search(
         .enumerate()
         .find(|(_, hit)| hit.media.is_some())
     {
-        steps.push((
-            format!("cerul open {}", number + 1),
-            "play that moment in your player",
-        ));
+        steps.push((format!("cerul open {}", number + 1), "Play this moment"));
     }
     match (&context.saved_to, &context.query) {
         (Some(directory), _) => {
@@ -1622,7 +1688,7 @@ pub fn search(
             let flag = if context.text { " --text" } else { "" };
             steps.push((
                 format!("cerul search{flag} {} --save ./clips", shell_quote(query)),
-                "save these moments as clips",
+                "Save matching clips",
             ));
         }
         (None, None) => {}
@@ -1774,8 +1840,47 @@ pub fn annotate(
             (0, _) => (palette.err("✗"), format!("Could not annotate {name}")),
             _ => (palette.warn("!"), format!("Annotated {name} partially")),
         };
-        writeln!(out, "{mark} {}", palette.bold(&title))?;
-        writeln!(out)?;
+        let export = report
+            .exports
+            .iter()
+            .find(|export| export.episode == *episode);
+        let records: usize = modules
+            .iter()
+            .filter(|module| module.complete)
+            .map(|module| module.records)
+            .sum();
+        let records = export.map(|export| export.records).unwrap_or(records);
+        let hand_frames: usize = export
+            .map(|e| {
+                e.tracks
+                    .iter()
+                    .filter(|t| t.annotation == "grounding.hand")
+                    .map(|t| t.records)
+                    .sum()
+            })
+            .unwrap_or_else(|| {
+                modules
+                    .iter()
+                    .filter(|m| m.complete && m.annotation == "grounding.hand")
+                    .map(|m| m.records)
+                    .sum()
+            });
+        if hand_frames > 0 && records == hand_frames {
+            writeln!(
+                out,
+                "{mark} {} · {hand_frames} hand frames",
+                palette.bold(&title)
+            )?;
+        } else if hand_frames > 0 {
+            writeln!(
+                out,
+                "{mark} {} · {} labels · {hand_frames} hand frames",
+                palette.bold(&title),
+                records - hand_frames
+            )?;
+        } else {
+            writeln!(out, "{mark} {} · {records} records", palette.bold(&title))?;
+        }
         // Cameras of one episode share a file name, so the stream has to appear
         // whenever more than one of them was annotated.
         let streams: BTreeSet<&str> = modules.iter().map(|m| m.stream.as_str()).collect();
@@ -1786,67 +1891,53 @@ pub fn annotate(
                 item_name(&module.annotation).to_owned()
             }
         };
-        let width = modules
+        let counts = if let Some(export) = export {
+            let cameras: BTreeSet<_> = export.tracks.iter().map(|track| &track.stream).collect();
+            export
+                .tracks
+                .iter()
+                .map(|track| {
+                    let name = item_name(&track.annotation);
+                    if cameras.len() > 1 {
+                        format!("{} {} · {}", track.records, track.stream, name)
+                    } else {
+                        format!("{} {}", track.records, name)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" · ")
+        } else {
+            modules
+                .iter()
+                .filter(|module| module.complete)
+                .map(|module| format!("{} {}", module.records, label(module)))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+        if published != modules.len() && !counts.is_empty() {
+            writeln!(out, "  {counts}")?;
+        }
+        for module in modules.iter().filter(|module| !module.complete) {
+            writeln!(
+                out,
+                "  ! {} · {}",
+                label(module),
+                module.error.as_deref().unwrap_or("not started")
+            )?;
+        }
+        if let Some(export) = report
+            .exports
             .iter()
-            .map(|module| measure_text_width(&label(module)))
-            .max()
-            .unwrap_or(0);
-        let counts: Vec<String> = modules
+            .find(|export| export.episode == *episode)
+        {
+            writeln!(out, "  Annotations: {}", tilde(&export.annotations))?;
+            writeln!(out, "  Summary:     {}", tilde(&export.summary))?;
+        } else if let Some(path) = modules
             .iter()
-            .map(|module| {
-                if module.complete {
-                    format!(
-                        "{} record{}",
-                        module.records,
-                        if module.records == 1 { "" } else { "s" }
-                    )
-                } else {
-                    String::new()
-                }
-            })
-            .collect();
-        let count_width = counts
-            .iter()
-            .map(|count| measure_text_width(count))
-            .max()
-            .unwrap_or(0);
-        let mixed = published != modules.len();
-        for (module, count) in modules.iter().zip(&counts) {
-            let glyph = if mixed {
-                let mark = match (&module.error, module.complete) {
-                    (_, true) => palette.ok("✓"),
-                    (Some(_), _) => palette.err("✗"),
-                    _ => palette.dim("·"),
-                };
-                format!("{mark} ")
-            } else {
-                String::new()
-            };
-            let text = label(module);
-            let pad = " ".repeat(width - measure_text_width(&text) + 3);
-            match (&module.error, module.complete) {
-                (_, true) => {
-                    let gap = " ".repeat(count_width - measure_text_width(count) + 3);
-                    let path = module
-                        .path
-                        .as_deref()
-                        .map(tilde)
-                        .unwrap_or_else(|| "published".into());
-                    writeln!(
-                        out,
-                        "  {glyph}{text}{pad}{count}{gap}{}",
-                        palette.dim(&path)
-                    )?;
-                }
-                (Some(error), _) => writeln!(
-                    out,
-                    "  {glyph}{text}{pad}{}",
-                    palette.warn(&format!("stopped · {error}"))
-                )?,
-                (None, false) => {
-                    writeln!(out, "  {glyph}{text}{pad}{}", palette.dim("not started"))?
-                }
-            }
+            .find_map(|module| module.path.as_ref())
+            .and_then(|path| path.parent())
+        {
+            writeln!(out, "  Results: {}", tilde(path))?;
         }
     }
     for writeback in &report.writebacks {
@@ -1881,41 +1972,6 @@ pub fn annotate(
             }
         }
     }
-    if !report.dry_run {
-        // A dataset's episodes share their video shards, so pointing at one
-        // shard would read back a fraction of what this run produced. The input
-        // the person named is what covers all of it.
-        let media = report
-            .modules
-            .iter()
-            .find(|module| module.complete)
-            .map(|module| match module.dataset {
-                true => Some(&module.source),
-                false => names.get(&module.episode).or(Some(&module.source)),
-            });
-        let mut steps: Vec<(String, &str)> = Vec::new();
-        if let Some(Some(path)) = media {
-            steps.push((
-                format!("cerul status {} --timeline", shell_path(path)),
-                "read the labels in order",
-            ));
-        }
-        if report
-            .modules
-            .iter()
-            .any(|module| module.complete && item_name(&module.annotation) == "event")
-        {
-            steps.push((
-                "cerul search --filter 'semantic.event.verb=grasp'".into(),
-                "find one action across videos",
-            ));
-        }
-        let steps: Vec<(&str, &str)> = steps
-            .iter()
-            .map(|(command, note)| (command.as_str(), *note))
-            .collect();
-        next_block(out, palette, &steps)?;
-    }
     if report.partial {
         writeln!(out)?;
         let anything = report.modules.iter().any(|module| module.complete);
@@ -1940,14 +1996,6 @@ pub fn annotate(
                     .dim("Finished windows are saved; re-run the same command to resume the rest.")
             )?,
         }
-    }
-    if !report.dry_run && report.modules.iter().any(|module| module.complete) {
-        writeln!(out)?;
-        writeln!(
-            out,
-            "{}",
-            palette.dim("Labels are model-generated; review them before training on them.")
-        )?;
     }
     Ok(())
 }
@@ -2000,6 +2048,11 @@ pub fn timeline(
                 "  {}",
                 palette.dim(&match kind {
                     Some(kind) => format!("no {kind} records"),
+                    None if episode
+                        .annotations
+                        .iter()
+                        .any(|name| name == "grounding.hand") =>
+                        "no semantic records; use --type hand to view hand frames".into(),
                     None => "no records".into(),
                 })
             )?;
@@ -2103,26 +2156,250 @@ mod tests {
     use super::*;
     use cerul::search::{Hit, Report};
 
+    #[derive(Clone, Debug, Default)]
+    struct RecordedTerminal(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+    impl indicatif::TermLike for RecordedTerminal {
+        fn width(&self) -> u16 {
+            100
+        }
+        fn move_cursor_up(&self, _: usize) -> io::Result<()> {
+            self.write_str("<up>")
+        }
+        fn move_cursor_down(&self, _: usize) -> io::Result<()> {
+            self.write_str("<down>")
+        }
+        fn move_cursor_right(&self, _: usize) -> io::Result<()> {
+            self.write_str("<right>")
+        }
+        fn move_cursor_left(&self, _: usize) -> io::Result<()> {
+            self.write_str("<left>")
+        }
+        fn clear_line(&self) -> io::Result<()> {
+            self.write_str("<clear>")
+        }
+        fn write_line(&self, text: &str) -> io::Result<()> {
+            self.write_str(&format!("{text}\n"))
+        }
+        fn write_str(&self, text: &str) -> io::Result<()> {
+            self.0.lock().unwrap().push(text.into());
+            Ok(())
+        }
+        fn flush(&self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn terminal_progress_has_percentage_and_eta_and_finish_cannot_erase_receipts() {
+        use indicatif::TermLike;
+        let terminal = RecordedTerminal::default();
+        let dir = tempfile::tempdir().unwrap();
+        let mut progress = Progress::new(dir.path(), false, false, Palette::new(false));
+        progress.multi = Some(MultiProgress::with_draw_target(
+            ProgressDrawTarget::term_like(Box::new(terminal.clone())),
+        ));
+        progress.update("demo".into(), "understanding".into(), 0, 2, 0);
+        progress.estimates.insert(
+            ("demo".into(), "understanding".into()),
+            (Instant::now() - Duration::from_secs(5), 0),
+        );
+        progress.update("demo".into(), "understanding".into(), 1, 2, 0);
+        let bar = progress.bars.values().next().unwrap();
+        bar.disable_steady_tick();
+        bar.tick();
+        let output = terminal.0.lock().unwrap().join("");
+        assert!(output.contains("50%"), "{output}");
+        assert!(output.contains("ETA ~00:0"), "{output}");
+        assert!(output.contains('[') && output.contains(']'), "{output}");
+        progress.finish();
+        terminal.write_line("✓ demo.mp4 ready to search").unwrap();
+        let before = terminal.0.lock().unwrap().clone();
+        progress.finish();
+        drop(progress);
+        assert_eq!(*terminal.0.lock().unwrap(), before);
+        // The narrow layout must use the same working percentage/ETA keys.
+        let bar = ProgressBar::with_draw_target(
+            Some(2),
+            ProgressDrawTarget::term_like(Box::new(terminal.clone())),
+        );
+        bar.set_style(progress_style(
+            Instant::now() - Duration::from_secs(5),
+            0,
+            0,
+            50,
+        ));
+        bar.set_position(1);
+        assert!(terminal.0.lock().unwrap().last().is_some());
+        bar.finish_and_clear();
+    }
+
+    #[test]
+    fn estimated_index_progress_smooths_jumps_without_claiming_future_work() {
+        let start = Instant::now();
+        let mut estimate = SmoothIndex::new(start);
+        estimate.update(0, 500, 10_000, 100., start);
+        let first = estimate.sample(start + Duration::from_secs(1));
+        assert!(first > 0. && first < 0.05);
+        estimate.update(8000, 9000, 10_000, 40., start + Duration::from_secs(1));
+        let next = estimate.sample(start + Duration::from_secs(2));
+        assert!(next >= first && next < 0.25); // No immediate jump to 80%.
+        let waiting = estimate.sample(start + Duration::from_secs(60));
+        assert!((0.8..0.9).contains(&waiting));
+        let overdue = estimate.sample(start + Duration::from_secs(300));
+        assert!(overdue >= waiting && overdue < 0.9);
+        estimate.update(8500, 9500, 10_000, 30., start + Duration::from_secs(300));
+        assert!(estimate.sample(start + Duration::from_secs(301)) >= overdue);
+        assert!(estimate.sample(start + Duration::from_secs(600)) < 0.95);
+    }
+
+    #[test]
+    fn index_layout_draws_a_visible_bar_with_adjacent_times_at_each_width() {
+        for (columns, width) in [(48, 18), (80, 34), (100, 54), (140, 60)] {
+            let terminal = RecordedTerminal::default();
+            let now = Instant::now();
+            let mut estimate = SmoothIndex::new(now);
+            estimate.update(600, 1000, 10_000, 532., now);
+            estimate.shown = 600.;
+            let bar = ProgressBar::with_draw_target(
+                Some(10_000),
+                ProgressDrawTarget::term_like(Box::new(terminal.clone())),
+            );
+            bar.set_style(index_style(
+                Arc::new(Mutex::new(estimate)),
+                columns,
+                532.,
+                now,
+            ));
+            bar.set_message("moshi.mp4 · Screen text / Speech");
+            bar.tick();
+            let output = terminal.0.lock().unwrap().join("");
+            let start = output.find('[').unwrap() + 1;
+            let end = output[start..].find(']').unwrap() + start;
+            let cells = &output[start..end];
+            assert_eq!(cells.chars().count(), width, "{output}");
+            assert!(cells.contains('█') && cells.contains('░'), "{output}");
+            assert!(output.contains("~6%"), "{output}");
+            let times = if columns >= 72 {
+                "00:00 elapsed · ETA ~08:52"
+            } else {
+                "00:00 / ~08:52"
+            };
+            assert!(output.contains(times), "{output}");
+            assert!(output.contains("moshi.mp4"), "{output}");
+            bar.finish_and_clear();
+        }
+    }
+
+    #[test]
+    fn indexing_keeps_one_bar_and_has_an_initial_total_eta() {
+        let terminal = RecordedTerminal::default();
+        let dir = tempfile::tempdir().unwrap();
+        let mut progress = Progress::new(dir.path(), false, false, Palette::new(false));
+        progress.multi = Some(MultiProgress::with_draw_target(
+            ProgressDrawTarget::term_like(Box::new(terminal.clone())),
+        ));
+        for (phase, done) in [
+            ("prepare", 0),
+            ("screen_text+transcript", 1200),
+            ("embed", 4200),
+            ("understanding", 7000),
+            ("finalize", 9800),
+        ] {
+            progress.handle(Event::IndexProgress {
+                episode: "internal-dataset/0".into(),
+                source: Some("/fixture/video.mp4".into()),
+                phase: phase.into(),
+                done,
+                ceiling: (done + 1000).min(9999),
+                total: 10_000,
+                eta_seconds: 80.,
+                finished: false,
+            });
+            progress.handle(Event::Progress {
+                episode: "video.mp4".into(),
+                station: "embed".into(),
+                done: 0,
+                total: 1,
+            });
+            assert_eq!(progress.bars.len(), 1);
+            let bar = progress.bars.values().next().unwrap();
+            bar.disable_steady_tick();
+            bar.tick();
+        }
+        let output = terminal.0.lock().unwrap().join("");
+        assert!(output.contains("Indexing"), "{output}");
+        assert!(output.contains("~0%"), "{output}");
+        assert!(output.contains("~01:20"), "{output}");
+        assert!(output.contains("video.mp4"), "{output}");
+        assert!(!output.contains("internal-dataset"), "{output}");
+        assert!(!output.contains("--:--"), "{output}");
+        progress.handle(Event::IndexProgress {
+            episode: String::new(),
+            source: None,
+            phase: "finalize".into(),
+            done: 10_000,
+            ceiling: 10_000,
+            total: 10_000,
+            eta_seconds: 0.,
+            finished: true,
+        });
+        assert!(progress.bars.is_empty());
+        progress.finish();
+    }
+
     #[test]
     fn eta_requires_measured_work_and_names_stay_bounded() {
-        assert_eq!(remaining(1, 10, 0, Duration::from_secs(5)), "estimating…");
         assert_eq!(
-            remaining(80, 100, 80, Duration::from_secs(10)),
-            "estimating…"
+            remaining(0, 2, 0, Duration::from_secs(5), Duration::ZERO),
+            "--:--"
         );
-        assert_eq!(remaining(4, 10, 0, Duration::from_secs(8)), "~12s left");
-        assert_eq!(remaining(10, 10, 0, Duration::from_secs(20)), "");
+        assert_eq!(
+            remaining(1, 2, 0, Duration::from_secs(5), Duration::ZERO),
+            "~00:05"
+        );
+        assert_eq!(
+            remaining(80, 100, 80, Duration::from_secs(10), Duration::ZERO),
+            "--:--"
+        );
+        assert_eq!(
+            remaining(4, 10, 0, Duration::from_secs(8), Duration::ZERO),
+            "~00:12"
+        );
+        assert_eq!(
+            remaining(10, 10, 0, Duration::from_secs(20), Duration::ZERO),
+            "00:00"
+        );
+        assert_eq!(
+            remaining(1, 2, 0, Duration::from_secs(5), Duration::from_secs(2)),
+            "~00:03"
+        );
+        assert_eq!(
+            remaining(1, 2, 0, Duration::from_secs(5), Duration::from_secs(6)),
+            "--:--"
+        );
         assert!(measure_text_width(&short_name(&"示例".repeat(80))) <= 48);
     }
 
     #[test]
-    fn index_examples_are_scoped_quoted_and_partial_results_offer_retry() {
-        let report: index::pipeline::Report = serde_json::from_value(serde_json::json!({
+    fn index_examples_search_the_workspace_and_partial_results_offer_retry() {
+        let mut report: index::pipeline::Report = serde_json::from_value(serde_json::json!({
             "episodes": [{"episode_id":"example", "sidecar":"/media/example.cerul",
                 "streams":[{"stream":"video", "indexed":true, "speech":"failed", "vector_rows":3, "errors":["speech unavailable"]}],
                 "suggestions":[{"query":"worker's cup $(touch danger)","exact":false,"source":"semantic.subtask","stream":"video","record_id":"step-1","start_us":2000000,"end_us":5000000,"input_hash":"current"}]
             }], "partial":true,"dry_run":false
         })).unwrap();
+        let seed = report.episodes[0].suggestions[0].clone();
+        for (query, exact) in [
+            ("WORKER'S  CUP $(touch danger)", false),
+            ("washing green peppers", false),
+            ("Invoice 123", true),
+            ("fourth distinct example", false),
+        ] {
+            let mut suggestion = seed.clone();
+            suggestion.query = query.into();
+            suggestion.exact = exact;
+            report.episodes[0].suggestions.push(suggestion);
+        }
         let context = IndexContext {
             names: BTreeMap::from([(
                 "example".into(),
@@ -2140,11 +2417,13 @@ mod tests {
                 "/tmp/my workspace".into(),
                 "search".into(),
             ],
+            elapsed: Duration::from_secs(95),
         };
         let mut output = Vec::new();
         index(&mut output, &Palette::new(false), &report, &context).unwrap();
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("partially indexed"));
+        assert!(output.contains("\n  01:35 elapsed\n"));
         assert!(
             !output
                 .lines()
@@ -2152,12 +2431,38 @@ mod tests {
                 .unwrap()
                 .contains(&"long-name-".repeat(8))
         );
-        assert!(output.contains("Retry: cerul index 'video with spaces.mp4' --no-ocr"));
+        assert!(output.contains("Retry\n  cerul index 'video with spaces.mp4' --no-ocr"));
         assert!(output.contains("cerul --workspace '/tmp/my workspace' search"));
         assert!(output.contains(&shell_quote("worker's cup $(touch danger)")));
-        assert!(output.contains("--in /media/"));
-        assert!(output.contains("annotation · 00:02"));
+        assert!(!output.contains("--in"));
+        assert!(!output.contains("annotation · 00:02"));
+        assert_eq!(
+            output
+                .lines()
+                .filter(|line| line.starts_with("cerul --workspace"))
+                .count(),
+            3
+        );
+        assert!(output.contains("search 'washing green peppers'"));
+        assert!(output.contains("search --text 'Invoice 123'"));
+        assert!(!output.contains("WORKER'S"));
+        assert!(!output.contains("fourth distinct example"));
         assert!(!output.contains("describe a visual moment"));
+
+        // A batch has one invocation clock, regardless of individual outcomes.
+        report.partial = false;
+        report.episodes[0].streams[0].errors.clear();
+        report.episodes.push(report.episodes[0].clone());
+        let mut output = Vec::new();
+        index(&mut output, &Palette::new(false), &report, &context).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("2 videos ready to search"));
+        assert_eq!(output.matches("01:35 elapsed").count(), 1);
+
+        report.dry_run = true;
+        let mut output = Vec::new();
+        index(&mut output, &Palette::new(false), &report, &context).unwrap();
+        assert!(!String::from_utf8(output).unwrap().contains("elapsed"));
     }
 
     #[test]
@@ -2171,7 +2476,7 @@ mod tests {
             media: PathBuf::from("/videos/demo.mp4"),
             sidecar: PathBuf::from("/videos/demo.mp4.cerul"),
             media_present: true,
-            annotations: vec!["semantic.subtask".into()],
+            annotations: vec!["semantic.subtask".into(), "grounding.hand".into()],
             embedding_spaces: Vec::new(),
             embeddings: Vec::new(),
         });
@@ -2193,16 +2498,16 @@ mod tests {
         let mut out = Vec::new();
         home(&mut out, &palette, &status, &models).unwrap();
         let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("1 video indexed"));
-        assert!(text.contains("key saved"));
-        assert!(text.contains("cerul annotate ./video.mp4 --semantic"));
-        assert!(text.contains("cerul annotate --help"));
+        assert!(text.contains("1 video"));
+        assert!(text.contains("cerul help"));
+        assert_eq!(text.lines().count(), 2);
         // The overview is a table; the files belong to the view a person asked
         // for by naming a path.
         let mut out = Vec::new();
         super::status(&mut out, &palette, &status, &models, false, false).unwrap();
         let overview = String::from_utf8(out).unwrap();
         assert!(overview.contains("demo.mp4"), "{overview}");
+        assert!(overview.contains("hand frames"), "{overview}");
         assert!(!overview.contains("/videos/demo.mp4.cerul"), "{overview}");
         let mut out = Vec::new();
         super::status(&mut out, &palette, &status, &models, false, true).unwrap();
@@ -2263,6 +2568,19 @@ mod tests {
         // numbered result and `cerul open` are what actually play the moment.
         assert!(!text.contains("Open video"), "{text}");
         assert!(text.contains("cerul open 1"), "{text}");
+        let commands: Vec<_> = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("cerul "))
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                "cerul open 1",
+                "cerul search 'a person holding a cup' --save ./clips"
+            ]
+        );
+        assert!(text.contains("Play this moment\n  cerul open 1"));
         // No colour, hyperlink, or image control sequences without support.
         assert!(!text.contains('\u{1b}'), "{text}");
     }
@@ -2343,9 +2661,10 @@ mod tests {
     }
 
     #[test]
-    fn the_annotation_receipt_names_every_published_file_and_what_to_run_next() {
+    fn the_annotation_receipt_keeps_one_summary_and_result_location() {
         let report = annotate::pipeline::Report {
             modules: vec![module("subtask", 12, None), module("event", 18, None)],
+            exports: Vec::new(),
             writebacks: Vec::new(),
             partial: false,
             dry_run: false,
@@ -2358,18 +2677,11 @@ mod tests {
         assert!(text.contains("Annotated demo.mp4"), "{text}");
         // The episode hash is an internal name; a person needs the file.
         assert!(!text.contains("demo/0"), "{text}");
-        assert!(text.contains("subtask"), "{text}");
-        assert!(text.contains("12 records"), "{text}");
-        assert!(
-            text.contains("/videos/demo.mp4.cerul/semantic.event.jsonl"),
-            "{text}"
-        );
-        assert!(
-            text.contains("cerul status /videos/demo.mp4 --timeline"),
-            "{text}"
-        );
-        assert!(text.contains("cerul search --filter"), "{text}");
-        assert!(text.contains("review them before training"), "{text}");
+        assert!(text.contains("30 records"), "{text}");
+        assert_eq!(text.lines().count(), 2, "{text}");
+        assert!(text.contains("Results: /videos/demo.mp4.cerul"), "{text}");
+        assert!(!text.contains("--timeline"), "{text}");
+        assert!(!text.contains("semantic.event.jsonl"), "{text}");
     }
 
     #[test]
@@ -2384,6 +2696,7 @@ mod tests {
                     ..module("state", 0, None)
                 },
             ],
+            exports: Vec::new(),
             writebacks: Vec::new(),
             partial: true,
             dry_run: false,
@@ -2395,8 +2708,8 @@ mod tests {
         annotate(&mut out, &Palette::new(false), &report, &names, Some(retry)).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("partially"), "{text}");
-        assert!(text.contains("12 records"), "{text}");
-        assert!(text.contains("stopped · gemini rate limit (429)"), "{text}");
+        assert!(text.contains("12 subtask"), "{text}");
+        assert!(text.contains("event · gemini rate limit (429)"), "{text}");
         assert!(text.contains("not started"), "{text}");
         assert!(text.contains(retry), "{text}");
         // Recomputing would throw away the windows that did finish.
@@ -2543,7 +2856,7 @@ mod tests {
     }
 
     #[test]
-    fn a_dataset_receipt_points_at_the_dataset_rather_than_a_shared_shard() {
+    fn a_dataset_receipt_names_the_episode_and_its_results() {
         let module = annotate::pipeline::ModuleResult {
             episode: "d7f0/000001".into(),
             stream: "observation.images.front".into(),
@@ -2559,6 +2872,7 @@ mod tests {
         };
         let report = annotate::pipeline::Report {
             modules: vec![module],
+            exports: Vec::new(),
             writebacks: Vec::new(),
             partial: false,
             dry_run: false,
@@ -2575,7 +2889,7 @@ mod tests {
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("egodemo · episode 000001"), "{text}");
         assert!(
-            text.contains("cerul status /data/egodemo --timeline"),
+            text.contains("Results: /data/egodemo/.cerul/episodes/1"),
             "{text}"
         );
         assert!(!text.contains("file-000.mp4"), "{text}");

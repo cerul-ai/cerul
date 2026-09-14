@@ -4,6 +4,61 @@
   "title": "Event",
   "oneOf": [
     {
+      "description": "Whole indexing invocation, including all selected videos and streams.\nETA is an approximate duration from priors, local history and observed work.",
+      "type": "object",
+      "properties": {
+        "ceiling": {
+          "description": "Upper bound for a human estimate within active work; done stays measured.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 0,
+          "minimum": 0
+        },
+        "done": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "episode": {
+          "type": "string"
+        },
+        "eta_seconds": {
+          "type": "number",
+          "format": "double"
+        },
+        "event": {
+          "type": "string",
+          "const": "index_progress"
+        },
+        "finished": {
+          "type": "boolean"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "event",
+        "episode",
+        "phase",
+        "done",
+        "total",
+        "eta_seconds",
+        "finished"
+      ]
+    },
+    {
       "description": "Per-attempt diagnostics, with unknown usage retained as null.",
       "type": "object",
       "properties": {
@@ -72,6 +127,45 @@
         "action",
         "attempt",
         "elapsed_ms"
+      ]
+    },
+    {
+      "description": "Completed annotation work units, including reused units separately.",
+      "type": "object",
+      "properties": {
+        "cached": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "done": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "episode": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "annotation_progress"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "event",
+        "episode",
+        "phase",
+        "done",
+        "total",
+        "cached"
       ]
     },
     {

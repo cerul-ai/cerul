@@ -24,6 +24,7 @@ fn stopped(error: &str) -> cerul::annotate::pipeline::Retry {
             dataset: false,
             path: None,
         }],
+        exports: Vec::new(),
         writebacks: Vec::new(),
         partial: true,
         dry_run: false,

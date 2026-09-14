@@ -1,6 +1,6 @@
 [package]
 name = "cerul"
-version = "0.0.10"
+version = "0.0.11"
 edition = "2024"
 license = "Apache-2.0"
 description = "Searchable video and annotation data, using your own model endpoints"
@@ -14,8 +14,10 @@ include = [
     "/packaging/licenses/*.txt", "/scripts/build-*.sh", "/scripts/test-*.py", "/scripts/check-docs.py", "/scripts/package-media-source.sh", "/schemas/*.json", "/prompts/*.md", "/skills/cerul/SKILL.md", "/docs/assets/*.png",
     "/models/det.onnx", "/models/rec.onnx", "/models/characters.txt",
     "/models/LICENSE", "/models/README.md",
+    "/models/hands/*.onnx", "/models/hands/LICENSE", "/models/hands/README.md",
     "/tests/*.rs", "/tests/*.py", "/scripts/evaluate-retrieval.py",
     "/tests/fixtures/README.md", "/tests/fixtures/ocr-text.png",
+    "/tests/fixtures/hand-opencv.png",
 ]
 
 [dependencies]
@@ -44,6 +46,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tract-onnx = "0.23.6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 imageproc = { version = "0.27", default-features = false }
+lzma-rs = "0.3"
+tar = "0.4"
 
 tempfile = "3"
 rpassword = "7"

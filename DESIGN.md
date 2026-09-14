@@ -10,13 +10,13 @@ installation instructions are in the [documentation](docs/README.md).
 | Area | Decision |
 | --- | --- |
 | Language | Rust, one crate with a library and one binary. ffmpeg subprocesses, four endpoint types, LanceDB, and embedded OCR. No PyTorch, GPU runtime, Python runtime, or plugins. |
-| Commands | `index`, `search`, `status`, `open`, `auth`, `annotate`, `remove`. HTTP and MCP serving are not implemented. |
+| Commands | `index`, `search`, `status`, `open`, `auth`, `annotate`, `render`, `remove`. HTTP and MCP serving are not implemented. |
 | Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
 | Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
 | Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, query instruction template, and applicable document template. The same model name at different endpoints is a different space. Queries must match exactly. |
 | Endpoints | Embedding defaults to Gemini Embedding 2 at 3072 dimensions. Embedding, vision, and optional transcription support configurable `kind = gemini \| openai` endpoints with user keys. `perception` is reserved and processing is not implemented. Missing perception must not block indexing/search. |
 | Default models | Required Gemini embedding: `gemini-embedding-2` at 3072 dimensions. Vision: `gemini-3.8-flash`. Optional ASR preset: `gemini-3.5-transcribe`. |
-| OCR | Embedded PP-OCRv6 small, approximately 31 MB of weights, CPU inference through `tract-onnx`, enabled by default. This is the only embedded model and the only exception to endpoint-based inference. |
+| OCR | Embedded PP-OCRv6 small, approximately 31 MB of weights, CPU inference through `tract-onnx`, enabled by default. Optional embodied hand annotation also embeds two CPU ONNX models (about 8 MB); these local models are the exceptions to endpoint-based inference. |
 | Retrieval | One compatible multimodal space with independent video, transcript, screen-text, and description rows. Default search retrieves each track separately plus original OCR/ASR full-text candidates, then uses fixed affine max with capped independent-evidence agreement. JSON retains original scores, ranks, intervals, and the recipe version. `[search] hybrid = false` restores the three-track raw-max baseline. Exact strings use `--text` substring matching. Annotation filtering precedes every candidate source. |
 | Annotations | Three fixed families: `semantic`, `grounding`, `world`. Subtypes may grow. All derived records are annotations. |
 | Time | Integer microseconds, half-open intervals, episode-relative time derived from PTS. |
@@ -27,7 +27,7 @@ installation instructions are in the [documentation](docs/README.md).
 | Versions | Increment `v0.0.x` without alpha/beta suffixes. Cargo.toml, packaging/dist.toml, and release tags must agree. Version numbers identify releases, not roadmap milestones. |
 | Distribution | GitHub Releases with a cargo-dist shell installer. Homebrew formula and npm wrapper artifacts are generated; registry/tap publication is separate. See [release artifacts](docs/development/releases.md). |
 | Telemetry | None. |
-| Scope | Video retrieval and semantic annotation require only third-party model credentials. `status --providers` probes only the implemented endpoints; the reserved perception endpoint is contacted solely when configured explicitly. Pose, depth, and segmentation depend on later perception services and must not be advertised as available. |
+| Scope | Video retrieval and semantic annotation require only third-party model credentials. `status --providers` probes only the implemented endpoints; the reserved perception endpoint is contacted solely when configured explicitly. Human-hand image keypoints are available locally only with `--embodied --hands`. Depth, segmentation, calibrated 3D pose and gripper detection are not implemented. |
 
 ## 2. Reader guides
 
@@ -42,9 +42,9 @@ and command-specific help for the executable argument reference.
 
 Global options: `--json`, `--workspace`, `--recompute`, `--dry-run`, `--yes`, `-q`, `-v`. Configuration overrides use repeated `--set KEY=TOML_VALUE`.
 
-The start page exposes both search and annotation workflows, even after setup. An annotation invocation without arguments displays usage with concrete video and LeRobot examples, supported types, and output locations; JSON argument errors remain machine-readable. See the [annotation guide](docs/annotation.md).
+The compact start page links to `cerul help`; its interactive menu offers Index, Search, Annotate, and Help. An annotation invocation without arguments displays usage with concrete video and LeRobot examples, supported types, and output locations; JSON argument errors remain machine-readable. See the [annotation guide](docs/annotation.md).
 
-Without `--json` the CLI renders text for people: a start page for a bare `cerul` that walks through setup until the first video is searchable, live progress on a terminal (one line per finished station when redirected), one card per matched video listing its moments, and errors with a recovery hint on stderr. Cards carry the file name, match percentage, time range, excerpt, and an OSC 8 link; terminals with the iTerm2 or Kitty graphics protocol also show a still frame. When a player that accepts a start time is installed the link opens the moment rather than the file. Model requests whose duration cannot be predicted show a spinner. `index` prints the stations it will run before the first request, and collapses each finished video into one line so the live area stays the size of the video being worked on. Colour, links, and images follow the terminal and `NO_COLOR`, so redirected output stays plain. `cerul auth` reports the saved Gemini key status; `cerul auth set` and `cerul auth remove` manage it. Rendering lives in the binary only; the library never touches a terminal.
+Without `--json` the CLI renders text for people: a compact start page for a bare `cerul`, one overall indexing progress bar with a percentage and approximate total ETA on a terminal (only the final receipt when redirected), one card per matched video listing its moments, and errors with a recovery hint on stderr. Cards carry the file name, match percentage, time range, excerpt, and an OSC 8 link; terminals with the iTerm2 or Kitty graphics protocol also show a still frame. When a player that accepts a start time is installed the link opens the moment rather than the file. Before an index inventory is available, duration is unknown. Once planned, a rough ETA is available before the first model response and is refined by local timing hints and measured work; ETA follows the longest remaining dependency path. Independent speech and scene windows, overview groups and description vectors run concurrently under one invocation-wide model concurrency/rate budget. OCR, speech and scenes overlap; descriptions start from published scenes and overview waits for scenes plus text. Publication/bookkeeping remain ordered. Work across videos/streams shares one fixed weighted plan, with a separate overview allocation. Confirmed JSON counters advance only on observed work. The terminal labels its smoothed percentage with `~`, eases large jumps and estimates movement only within an active-unit ceiling; a spinner indicates waiting. Filename and phase occupy the first line; a visible block bar expands to 60 cells on the second, with elapsed time and remaining ETA adjacent. Successful scene timing is learned when scenes complete and excludes the overview interval. Final index publication is included. Overdue estimates display `ETA updating`. Annotation retains its aggregate work counter. Finished bars are detached before result output. Routine notices and station summaries require `-v`; warnings and errors remain visible. Index receipts retain one measured elapsed time for the full indexing invocation, excluding dependency setup and credential prompts, including partial results. Dry runs omit elapsed time. Receipts show the source filename and up to three distinct workspace-wide search examples; `--in` is optional. `cerul help` and `cerul help <command>` document use cases and invocation examples. Colour, links, and images follow the terminal and `NO_COLOR`, so redirected output stays plain. `cerul auth` reports the saved Gemini key status; `cerul auth set` and `cerul auth remove` manage it. Rendering lives in the binary only; the library never touches a terminal.
 
 In JSON mode, stdout contains exactly one final JSON object. Each stderr line is a JSON event, for example:
 
@@ -102,17 +102,36 @@ last search is remembered in workspace `cache/last-search.json`. Players are
 tried in order: mpv, IINA, VLC, ffplay, then the system handler, which cannot
 start at a timestamp and says so.
 
-### `annotate <path>... --semantic [items] --grounding [items] --world [items]`
+### `annotate <path>... --semantic [items] --embodied --hands`
 
 | Options | Behavior/default |
 | --- | --- |
-| `--semantic` | LeRobot: task, subtask, event, interaction, state, flag, progress. Ordinary video: task, subtask, flag; the other four are explicit selections. |
-| `--grounding` | Reserved; rejected as unsupported. |
+| `--semantic` | Optional explicit types; default task, subtask, flag for every input format. |
+| `--embodied` | Demonstration prompts and default subtask, event, interaction, state. Explicit types override the default set. Mode and prompt recipe participate in cache identity. |
+| `--hands` | Optional local human-hand keypoints. Requires `--embodied`; never enabled by mode alone. `--semantic none` makes this an offline hand-only run. |
+| `--grounding` | Generic selector remains reserved; use `--hands` for the implemented local subtype. |
 | `--world` | Reserved; rejected as unsupported. |
-| `--streams`, `--only`, `--ontology FILE`, `--window 30s`, `--fps 2` | LeRobot defaults to `cerul.verbs.v1` with verb validation. Ordinary videos have unrestricted verbs unless an ontology is supplied. |
+| `--streams`, `--only`, `--ontology FILE`, `--window 30s`, `--fps 2` | Verbs are unrestricted unless an ontology is supplied, regardless of input format. |
 | `--write-lerobot`, `--out DIR` | No dataset mutation by default. Writeback accepts only an existing compatible v3.1 dataset. |
 
-Each subtype is a module: frames → timestamped contact sheet → schema-constrained model response → staging → validation → annotation publication → records index update. Invalid modules publish nothing; independent modules can still succeed.
+Each semantic subtype is a module: frames → timestamped contact sheet → schema-constrained model response → staging → validation → annotation publication → records index update. Invalid modules publish nothing; independent modules can still succeed.
+
+### `render <video-or-annotations.json> --out FILE`
+
+Render published semantic labels and human-hand skeletons into a new MP4 with no model calls. Hand coordinates are applied to the original display image; no missing detections are interpolated. The caption
+panel preserves the source image; source timestamps and audio are rebased by the
+same clip origin. `--stream` selects a camera from a dataset bundle; non-unit
+time scaling is rejected. The output records Cerul version/generation metadata;
+`--watermark` opts into a visible Cerul signature. Existing outputs are never
+overwritten. Source hashes and per-track provenance are validated before rendering.
+
+Annotation completion publishes a portable `annotations.json` and readable
+`summary.md` per episode. The bundle includes source identity, a single Cerul
+generator marker and full per-track provenance. Both views carry a content
+generation; each is atomically replaced and a rerun repairs interrupted pairs.
+Sidecars remain authoritative. `annotation_progress` reports planned work,
+completed units, cached units and phase; success is only complete after export
+and record-index publication.
 
 ### `search [query]`
 
@@ -136,7 +155,7 @@ Results: `hits[]` containing episode, stream, start_us, end_us, optional frame_r
 
 Return a workspace overview or an episode's annotation inventory. Running `cerul` without a command is equivalent to status.
 
-Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes embedding, vision, and enabled transcription, plus perception only when explicitly configured, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not imply that this version implements grounding/world.
+Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes embedding, vision, and enabled transcription, plus perception only when explicitly configured, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not enable additional grounding/world processing. Local hand annotation does not contact this endpoint.
 
 ## 4. Configuration and models
 
@@ -151,7 +170,7 @@ secret values. Provider adapters must preserve these request contracts:
 | Vision | `generateContent` with responseSchema. | `/v1/chat/completions` with image_url and json_schema. |
 | Transcription | Native word timestamps for `gemini-3.5-transcribe`; prompted segments for other Gemini models. | `/v1/audio/transcriptions`, verbose_json, segment timestamps. |
 
-Probe the remote calls actually needed, not command names. Index probes embedding only for pending vectors and transcription only for pending audio. Annotate probes selected vision/perception capabilities. Semantic search probes embedding only on a query-vector cache miss. Cached queries, filters alone, exact text, sidecar rebuilds, ordinary status, and cleanup make no probe calls.
+Probe the remote calls actually needed, not command names. Index probes embedding only for pending vectors and transcription only for pending audio. Semantic annotation probes vision only when pending model work requires it; local hand annotation never probes an endpoint. Semantic search probes embedding only on a query-vector cache miss. Cached queries, filters alone, exact text, sidecar rebuilds, ordinary status, and cleanup make no probe calls.
 
 Embedding probes send a sentence, image, and two-second video and check dimensions/modalities. Vision requests `{"ok":true}` from a 64×64 image. Transcription uses one second of silence. Perception reads `/capabilities`. Explicitly unsupported required capabilities fail with code 3 before processing media. Temporary network failures allow local probe/frame/OCR stations to finish, mark remote work incomplete, and return code 6; a later run fills the gaps.
 
@@ -194,7 +213,7 @@ my_dataset/
   index/<space_id>/records.lance
 ~~~
 
-Embedding Parquet rows contain stream, kind, start_us, end_us, vector, and params_hash. The adjacent JSON records kind/base_url/model/dims/query_template and optional document_template for status inspection. Legacy metadata without a document template retains its original space ID; newly prefixed Gemini documents use a new space. Primary annotations remain at the sidecar root; non-primary annotations cannot overwrite them.
+Embedding Parquet rows contain stream, kind, start_us, end_us, vector, and params_hash. The adjacent JSON records kind/base_url/model/dims/query_template and optional document_template for status inspection. Legacy metadata without a document template retains its original space ID; newly prefixed Gemini documents use a new space. Semantic annotation files now publish under each stream directory's `.internal/annotations/`, with recovery products under `.internal/recovery/`. Legacy root-level files remain readable and migrate after durable replacement. Index-produced tracks retain their existing paths. Non-primary annotations cannot overwrite primary annotations.
 
 Proxy metadata stores the recipe and output hash; missing/corrupt files are rebuilt. Contact proxy metadata additionally preserves original source-relative PTS for each sampled frame. It must not substitute the proxy encoder's frame clock.
 
@@ -227,14 +246,14 @@ An annotation JSONL file starts with a header containing $cerul=annotation/1, na
 | Family | Record subtypes and fields |
 | --- | --- |
 | semantic | task{text}; subtask{text,index}, with continuous coverage; event{verb,objects[],actor,outcome}; interaction{hand,object,contact}; state{object,attribute,before,after}; flag{kind,note}; progress{value,done}. |
-| grounding (reserved; not generated) | Coordinates normalized to [0,1] with frame_w/h. box{t_us,label,xyxy,track_id?}; affordance{t_us,label,points,action_hint}; trace{points[[t_us,x,y]],subject,label}; keypoint; mask{rle}. |
+| grounding | `hand` is implemented: one record per observed frame with dimensions and zero to two hands, each carrying a local track ID, handedness/score, presence confidence and 21 nullable normalized XY keypoints. No per-joint confidence or calibrated 3D is inferred. Other subtypes remain reserved: Coordinates normalized to [0,1] with frame_w/h. box{t_us,label,xyxy,track_id?}; affordance{t_us,label,points,action_hint}; trace{points[[t_us,x,y]],subject,label}; keypoint; mask{rle}. |
 | world (reserved; not generated) | Frames use T_<a>_from_<b>, units m or relative, xyzw quaternions, valid flags, null for missing values. camera{t_us,T_world_from_camera[7],intrinsics?,scale,valid}; hand{t_us,side,joints[21][3],valid}; object; depth{t_us,path,scale}; points. |
 
 **Index unit:** a 30-second video-stream interval in episode time, with up to three rows of kind video, speech, or screen. Write vectors to sidecars before indexing.
 
 Chunks columns: id, episode, stream, kind, start_us, end_us, vector[3072] for the default space, text, still, space_id, params_hash. Records columns: episode, stream, annotation, id, start_us, end_us, fields. Both tables are rebuildable from sidecars.
 
-Default `cerul.verbs.v1` vocabulary: reach, grasp, regrasp, lift, carry, place, release, push, pull, open, close, insert, rotate, pour, wipe.
+Reference `cerul.verbs.v1` vocabulary (not enforced implicitly): reach, grasp, regrasp, lift, carry, place, release, push, pull, open, close, insert, rotate, pour, wipe.
 
 ## 7. Required behavior
 
@@ -245,7 +264,7 @@ Default `cerul.verbs.v1` vocabulary: reach, grasp, regrasp, lift, carry, place, 
 - **Frames and proxies:** Indexing caches content-addressed 1 fps source samples (maximum 1080-pixel long edge), shared by OCR, embedding proxies, and understanding. Sampling emits pixels and integer-microsecond source PTS from one decode, without a preliminary full-frame timestamp scan. Streams with negative origins decode from the beginning because input seeking can discard their negative prefix. Cache 480p, 1 fps H.264 proxies with no audio. Original source timestamps are retained in the sample manifest. Contact sheets default to 2 fps but honor --fps, sampling source frames before encoding and preserving their original PTS separately. Sampling and both proxy recipes version these changes; the next index or annotation run refreshes dependent checkpoints. Existing published sidecars remain available for offline search and index rebuilds.
 - **Scheduling:** OCR and ASR run concurrently; base embeddings wait for both. A failed remote station retains completed local evidence.
 - **Embedding:** one video row and bounded text rows per unit. Deduplicate whitespace-equivalent OCR lines only in derived retrieval text; preserve case, punctuation, and raw sidecars. Split oversized text without inventing finer timestamps. Gemini Embedding 2 text documents use `title: none | text: {text}`. Measure the actual encoded body against the endpoint limit; reduce bitrate then split, failing explicitly if still oversized. Persist vectors before Lance. Log failures and retry only missing units.
-- **Understanding:** default-on 30-second silent windows produce typed scenes, then a bounded hierarchical overview produces sections, title, coverage, and at most three grounded suggestions. Gemini uses video; compatible image-only vision endpoints receive timestamped JPEG frames. Actual sample times are retained. `--no-understanding` or `vision.enabled = false` records an explicit skip. Missing or failed vision does not discard searchable base vectors. Scene IDs identify source/stream/interval; generation revisions are separate. Corrections are a separate revision layer, never overwritten by generation.
+- **Understanding:** default-on 30-second silent windows produce typed scenes, then a bounded hierarchical overview produces sections, title, coverage, and at most three grounded suggestions. Invalid optional suggestions are discarded without rejecting valid overview content; summary and section references remain strictly validated. Gemini uses video; compatible image-only vision endpoints receive timestamped JPEG frames. Actual sample times are retained. `--no-understanding` or `vision.enabled = false` records an explicit skip. Missing or failed vision does not discard searchable base vectors. Scene IDs identify source/stream/interval; generation revisions are separate. Corrections are a separate revision layer, never overwritten by generation.
 - **Derived storage:** scene, section, and summary records use `annotation/1`; dependent references pin record revisions. Description vectors are separately published under `embeddings/descriptions/<space>/<generation>.parquet` with per-stream `description.<space>.json` manifests. They preserve each scene's original interval and enter default retrieval through a separate `descriptions` Lance table alongside `chunks`. Workspace `lexical/` is a rebuildable FTS cache of original OCR/ASR with a tokenizer recipe independent of embedding space. Both projections rebuild without model calls. A versioned description projection manifest refreshes changed or stale streams; unchanged searches reuse the table.
 - **Overview publication:** validate section and summary together before replacing either file. Both headers bind the pair's record content through `params.overview_generation`; readers verify the matching peer and the content hash as well as source dependencies. An interruption between file replacements hides the incomplete pair until cached overview output restores it, even for recomputes on unchanged source records. Legacy overviews without this fence remain on disk and can be republished from cached output without model calls.
 - **Cache identity:** episode_id, stream, stream_sha256, range_us, time mapping, station, space_id or model, params_hash, station version. Identity distinguishes datasets; content hashes detect replacement; ranges distinguish episodes sharing a shard.
@@ -320,9 +339,24 @@ measured work. Completion output keeps full paths in copyable commands and JSON,
 while shortening display names.
 
 Index reports may include up to three source-referenced suggestions per episode.
-They use the current generated summary when available and extractive evidence
-otherwise; collecting saved suggestions makes no model calls. Missing speech,
+They prefer current visual summary queries and distinct scene descriptions,
+then fall back to substantive subtask or speech phrases when visual examples are
+unavailable. OCR tokens and fragmentary speech do not fill a visual list. Local
+selection retains source/time provenance, samples across the available timeline,
+and makes no model calls or authoritative-record changes. Missing speech,
 disabled ASR, no audio, successful empty transcription, and failures remain
 distinguishable. The [hybrid retrieval plan](docs/design/hybrid-video-search.md)
 records the initial default fusion and follow-up evaluation work. Automatic ANN
 selection remains disabled pending representative performance measurements.
+
+### Media dependency preflight
+
+CLI media processing validates FFmpeg/ffprobe versions and an H.264/AAC codec
+round-trip before processing or model calls. Compatible local tools require no
+network request. Missing or incompatible tools trigger automatic preparation of a
+pinned, checksum-verified Cerul media bundle in `<workspace>/runtime/media`, with
+licenses, bounded extraction, cancellation, a repair lock, and atomic publication.
+Selection is scoped to the operation and propagated into media CPU workers; the
+running CLI and system/package-manager installations are not replaced. Library
+operations do not download dependencies implicitly. `--no-auto-deps` disables
+fallback and installation; dry runs only check selected tool versions.

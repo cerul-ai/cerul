@@ -87,11 +87,20 @@ pub fn hex(bytes: impl AsRef<[u8]>) -> String {
 
 pub struct Checkpoints {
     directory: PathBuf,
+    legacy: Option<PathBuf>,
 }
 impl Checkpoints {
     pub fn new(sidecar: &Path) -> Self {
         Self {
             directory: sidecar.join("staging/checkpoints"),
+            legacy: None,
+        }
+    }
+    /// Semantic-only checkpoints use the private layout while retaining legacy resume.
+    pub fn semantic(sidecar: &Path) -> Self {
+        Self {
+            directory: sidecar.join(".internal/checkpoints"),
+            legacy: Some(sidecar.join("staging/checkpoints")),
         }
     }
     fn path(&self, key: &str) -> Result<PathBuf> {
@@ -104,11 +113,22 @@ impl Checkpoints {
         write_json(&self.path(key)?, value)
     }
     pub fn load<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
-        match fs::read(self.path(key)?) {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()), // Torn/corrupt checkpoints are recomputed.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+        let current = self.path(key)?;
+        let bytes = match fs::read(&current) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(legacy) = &self.legacy else {
+                    return Ok(None);
+                };
+                match fs::read(legacy.join(format!("{key}.json"))) {
+                    Ok(bytes) => bytes,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Ok(serde_json::from_slice(&bytes).ok())
     }
 }
 

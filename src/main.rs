@@ -23,25 +23,72 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 use tokio_util::sync::CancellationToken;
 
 const ADVANCED: &str = "Advanced";
 const GLOBAL: &str = "Global";
 const EXAMPLES: &str = "\
-Examples:
-  cerul index ./demo.mp4                 index a video (screen text, speech, search)
-  cerul search \"a person holding a cup\"  find moments by description
-  cerul search --text \"ERROR 500\"        exact words on screen or in speech
-  cerul search \"...\" --save ./clips      export matching clips as MP4
-  cerul open 2                           play the second result at its moment
-  cerul annotate ./demo.mp4 --semantic    label tasks, steps, and quality flags
-  cerul annotate --help                   video and LeRobot annotation examples
-  cerul status                           what is indexed and which models are used
+Common workflows:
+  Add to your search workspace
+  cerul index ./video.mp4
+  Search all indexed videos
+  cerul search \"a person holding a cup\"
+  General semantic labels
+  cerul annotate ./video.mp4
+  Embodied labels + local hands
+  cerul annotate ./video.mp4 --embodied --hands
+  Export an annotated video
+  cerul render ./video.mp4 --out ./review.mp4
+  Inspect the workspace
+  cerul status
 
-Speech and semantic search use Gemini; run `cerul auth set` once to save a key.
-Add --json to any command for machine-readable output.
-Shell completion: cerul completions <shell>.";
+Help: cerul help <command> or cerul <command> --help
+All folders share ~/.cerul by default; --workspace DIR selects another workspace.
+Model API usage is billed by your provider; cerul auth set saves your key.
+Use -v for diagnostic output, --json for scripts, --dry-run to preview work.";
+
+const INDEX_HELP: &str = "\
+Examples:
+  Index one video
+  cerul index ./video.mp4
+  Index a folder
+  cerul index ./videos
+  Index a LeRobot dataset
+  cerul index ./dataset
+  Skip speech transcription
+  cerul index ./video.mp4 --no-audio
+  Preview without processing
+  cerul index ./video.mp4 --dry-run
+
+Then search your workspace:
+  cerul search \"describe a moment\"
+No path is needed when searching. --workspace DIR selects a separate library.
+Screen text runs locally; embeddings, speech, and descriptions use configured APIs.
+Compatible completed work is reused. --recompute processes it again.
+Independent model work shares --jobs (default 4) and --rpm across stages.
+The final receipt keeps total indexing time, excluding setup and prompts.
+One bar covers the whole run; ~ marks estimated progress within active work. Summarizing has its own budget. ETA uses rough estimates, local timings and measured work; API latency can change it. --json exposes confirmed progress.";
+
+const SEARCH_HELP: &str = "\
+Examples:
+  Search the whole workspace
+  cerul search \"washing vegetables\"
+  Exact screen text or speech
+  cerul search --text \"ERROR 500\"
+  Search by reference image
+  cerul search --image ./reference.jpg
+  Restrict to one video
+  cerul search \"washing vegetables\" --in ./video.mp4
+  Export matching clips
+  cerul search \"washing vegetables\" --save ./clips
+  Open result 2
+  cerul open 2
+
+Run index first. Quote a multi-word query as one argument.
+--in is optional; source videos remain in their original locations.
+--text searches local evidence; semantic queries use your configured embedding API.";
 
 const ANNOTATE_EXAMPLES: &str = "\
 Examples:
@@ -50,19 +97,22 @@ Examples:
   cerul annotate ./video.mp4 --semantic subtask,event,interaction,state
       Label action steps, events, contacts, and state changes in a demonstration.
   cerul annotate ./dataset --semantic --only 0
-      Label the first LeRobot episode using all seven semantic types.
+      Label the first LeRobot episode with the general defaults. Add --embodied for demonstrations.
   cerul annotate ./video.mp4 --semantic --dry-run
       Preview the work without writing files or calling models.
+  cerul annotate ./video.mp4 --embodied --hands --semantic none
+      Track human hands locally on CPU, with no model key required.
 
 Types: task, subtask, event, interaction, state, flag, progress.
-Defaults: videos use task,subtask,flag; LeRobot uses all seven types.
-Outputs: semantic.<type>.jsonl sidecars beside the media; cerul status shows paths.
+Defaults: task,subtask,flag for every format; --embodied selects subtask,event,interaction,state.
+Outputs: annotations.json and summary.md; internal semantic.<type>.jsonl sidecars retain provenance.
 LeRobot: annotations live in .cerul/episodes/<episode_index>/ inside the dataset.
 --out is a new LeRobot dataset copy and requires --write-lerobot; it is not a
 JSONL export directory. See the LeRobot guide for supported writeback versions.
 
-Uses your configured vision endpoint (Gemini by default): cerul auth set.
-Pose, depth, and 3D trajectories are not supported in this version.
+Semantic labels use your configured vision endpoint (Gemini by default): cerul auth set.
+--hands requires --embodied and is never enabled automatically. Add --semantic none for hands only.
+Depth, calibrated 3D poses, and robot gripper detection are not supported.
 Guide: https://github.com/cerul-ai/cerul/blob/main/docs/annotation.md";
 
 #[derive(Parser)]
@@ -72,9 +122,12 @@ Guide: https://github.com/cerul-ai/cerul/blob/main/docs/annotation.md";
     about = "Search and annotate your videos",
     long_about = "Search and annotate your videos.\n\nFind moments from a description, export clips, or label actions and states in videos and LeRobot demonstrations.",
     after_help = EXAMPLES,
-    disable_help_subcommand = true
+    disable_help_subcommand = false
 )]
 struct Cli {
+    /// Check media tools without downloading or selecting automatic repairs.
+    #[arg(long, global = true, help_heading = ADVANCED)]
+    no_auto_deps: bool,
     /// Machine-readable output: final JSON on stdout, NDJSON events on stderr.
     #[arg(long, global = true, help_heading = GLOBAL)]
     json: bool,
@@ -110,10 +163,15 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Index videos so they can be searched (screen text, speech, visual search).
+    #[command(long_about = "Add videos or a dataset to the current search workspace. Later searches cover every indexed video in that workspace, regardless of your current folder.", after_help = INDEX_HELP)]
     Index(IndexArgs),
     /// Find moments by description, exact words, or a reference image.
+    #[command(long_about = "Search all indexed videos in the current workspace. Use --in only when you want to restrict the search to a video or folder.", after_help = SEARCH_HELP)]
     Search(SearchArgs),
     /// Show indexed videos, model configuration, and storage.
+    #[command(
+        after_help = "Examples:\n  List indexed videos\n  cerul status\n  Inspect one video\n  cerul status ./video.mp4\n  Read annotations\n  cerul status ./video.mp4 --timeline\n  Check configured endpoints (may call APIs)\n  cerul status --providers"
+    )]
     Status {
         /// Only report videos under this path.
         path: Option<PathBuf>,
@@ -123,7 +181,7 @@ enum Command {
         /// Read the published annotations in time order instead of the summary.
         #[arg(long)]
         timeline: bool,
-        /// Only one semantic item, for example event.
+        /// One semantic item (for example event), or hand to expand hand frames.
         #[arg(long, value_name = "ITEM", requires = "timeline")]
         r#type: Option<String>,
         /// Most annotation records to show per video.
@@ -131,25 +189,57 @@ enum Command {
         limit: usize,
     },
     /// Open a result from the last search in a video player, at its moment.
+    #[command(
+        after_help = "Example: cerul open 2\nOpens result 2 from the last search; the default is result 1."
+    )]
     Open {
         /// Result number shown by the last search.
         #[arg(default_value_t = 1, value_name = "N")]
         number: usize,
     },
     /// Manage the saved Gemini API key.
+    #[command(
+        after_help = "Examples:\n  cerul auth          show key status\n  cerul auth set      enter and save your key\n  cerul auth remove   delete the saved key"
+    )]
     Auth(AuthArgs),
     /// Configure the required Gemini key and optional default speech transcription.
+    #[command(
+        after_help = "Run cerul config in a terminal to configure model endpoints and speech transcription. Run cerul auth set to save a model key. Use --workspace DIR to choose a separate workspace."
+    )]
     Config,
-    /// Generate semantic annotations (tasks, events, states) for videos.
+    /// Generate semantic labels and optional local hands for embodied videos.
     #[command(
         arg_required_else_help = true,
         long_about = "Label tasks, action steps, events, interactions, and states in videos or LeRobot demonstrations. Run directly on your media; indexing is not required.",
         before_help = ANNOTATE_EXAMPLES
     )]
     Annotate(AnnotateArgs),
+    /// Render published semantic labels and hand skeletons without model calls.
+    #[command(
+        after_help = "Example: cerul render ./video.mp4 --out ./review.mp4\nRequires published annotations. Adds semantic captions and available hand skeletons, with no model calls. Use --watermark for a visible Cerul signature; output must be a new file."
+    )]
+    Render {
+        /// Annotated video, or an exported annotations.json for a dataset episode.
+        path: PathBuf,
+        /// New review video (must not already exist).
+        #[arg(long, value_name = "MP4")]
+        out: PathBuf,
+        /// Camera id (defaults to the primary camera).
+        #[arg(long)]
+        stream: Option<String>,
+        /// Burn a visible Cerul signature into the caption panel.
+        #[arg(long)]
+        watermark: bool,
+    },
     /// Remove indexed videos, or free the disk they and their caches use.
+    #[command(
+        after_help = "Examples:\n  Forget indexed results; keep the source video\n  cerul remove ./video.mp4\n  Clear regenerable caches\n  cerul remove --cache\nAdd --dry-run to preview changes."
+    )]
     Remove(RemoveArgs),
     /// Install the newest published release of Cerul over this one.
+    #[command(
+        after_help = "Run cerul upgrade to check and install the latest published CLI. Confirmation is required before replacement; --yes skips that prompt. Compatible media dependencies are prepared automatically during processing."
+    )]
     Upgrade,
     /// Print or install the agent skill that teaches this CLI to a coding agent.
     Skill(SkillArgs),
@@ -218,9 +308,15 @@ struct AnnotateArgs {
     /// Videos, directories, or LeRobot datasets.
     #[arg(required = true)]
     paths: Vec<PathBuf>,
-    /// Semantic items to generate, comma-separated (default set when no value is given).
+    /// Semantic items, comma-separated; use none with --hands for offline hand annotation.
     #[arg(long,num_args=0..=1,default_missing_value="default", value_name = "ITEMS")]
     semantic: Option<String>,
+    /// Annotate embodied demonstrations (subtask, event, interaction, state).
+    #[arg(long)]
+    embodied: bool,
+    /// Add local human-hand keypoints to an embodied demonstration (CPU, no API calls).
+    #[arg(long, requires = "embodied")]
+    hands: bool,
     /// Write subtask annotations back into the LeRobot dataset.
     #[arg(long)]
     write_lerobot: bool,
@@ -339,10 +435,10 @@ struct IndexArgs {
     /// Only these episodes (ids or local indexes), comma-separated.
     #[arg(long, help_heading = ADVANCED)]
     only: Option<String>,
-    /// Parallel model requests.
+    /// Maximum model requests in flight across indexing stages.
     #[arg(long, default_value_t = 4, help_heading = ADVANCED)]
     jobs: usize,
-    /// Cap on model requests per minute.
+    /// Shared cap on model requests per minute across indexing stages.
     #[arg(long, help_heading = ADVANCED)]
     rpm: Option<u32>,
     /// Store sidecars here instead of beside the videos.
@@ -760,6 +856,7 @@ enum Outcome {
     Index(pipeline::Report, render::IndexContext),
     Search(cerul::search::Report, render::SearchContext),
     Annotate(cerul::annotate::pipeline::Report, BTreeMap<String, PathBuf>),
+    Render(cerul::annotate::video::Report),
 }
 impl Outcome {
     fn json(&self) -> Result<Value> {
@@ -795,10 +892,21 @@ impl Outcome {
                 value
             }
             Outcome::Annotate(report, _) => serde_json::to_value(report)?,
+            Outcome::Render(report) => serde_json::to_value(report)?,
         })
     }
     fn render(&self, out: &mut dyn Write, palette: &Palette) -> io::Result<()> {
         match self {
+            Outcome::Render(report) => writeln!(
+                out,
+                "{} {}",
+                if report.rendered {
+                    "Rendered"
+                } else {
+                    "Would render"
+                },
+                report.output.display()
+            ),
             Outcome::Home(status, models) => render::home(out, palette, status, models),
             Outcome::Status {
                 status,
@@ -833,12 +941,10 @@ impl Outcome {
                 match action {
                     Some("set") => {
                         writeln!(out, "{} Gemini key saved.", palette.ok("✓"))?;
-                        writeln!(out)?;
-                        writeln!(
+                        render::next_block(
                             out,
-                            "Next: {}   {}",
-                            palette.cmd("cerul index ./video.mp4"),
-                            palette.dim("index a video, then search it")
+                            palette,
+                            &[("cerul index ./video.mp4", "Index a video, then search it")],
                         )?;
                     }
                     Some("removed") => {
@@ -1084,6 +1190,24 @@ fn readable(paths: &[PathBuf]) -> Result<()> {
     }
     Ok(())
 }
+
+async fn prepare_media(
+    cli: &Cli,
+    workspace: &Path,
+    sink: &Sink,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let events = sink.clone();
+    cerul::media::dependencies::prepare(
+        workspace,
+        !cli.no_auto_deps,
+        cli.dry_run,
+        cancel,
+        &mut |event| events.emit(event),
+    )
+    .await
+    .map_err(|error| category(3, error))
+}
 fn names(workspace: &Path) -> BTreeMap<String, PathBuf> {
     discover::read_registry(workspace)
         .map(|entries| {
@@ -1147,7 +1271,8 @@ async fn execute(
                     let item = kind.strip_prefix("semantic.").unwrap_or(kind);
                     anyhow::ensure!(
                         cerul::annotations::SEMANTIC_ITEMS.contains(&item)
-                            || cerul::index::understanding::ITEMS.contains(&item),
+                            || cerul::index::understanding::ITEMS.contains(&item)
+                            || matches!(kind.as_str(), "hand" | "hands" | "grounding.hand"),
                         CliError(
                             2,
                             format!(
@@ -1156,6 +1281,7 @@ async fn execute(
                                     .iter()
                                     .chain(cerul::index::understanding::ITEMS)
                                     .copied()
+                                    .chain(["hand", "hands", "grounding.hand"])
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             )
@@ -1286,6 +1412,27 @@ async fn execute(
             };
             Ok((Outcome::Auth(credentials::state(endpoint), action), 0))
         }
+        Some(Command::Render {
+            path,
+            out,
+            stream,
+            watermark,
+        }) => {
+            readable(std::slice::from_ref(path))?;
+            prepare_media(cli, &workspace, sink, &cancel).await?;
+            sink.spinner("Rendering published annotations");
+            let report = cerul::annotate::video::render(
+                path,
+                &workspace,
+                out,
+                stream.as_deref(),
+                *watermark,
+                cli.dry_run,
+                &cancel,
+            )?;
+            sink.finish();
+            Ok((Outcome::Render(report), 0))
+        }
         Some(Command::Annotate(args)) => {
             if args.grounding.is_some() || args.world.is_some() {
                 return Err(ProviderError {
@@ -1294,21 +1441,16 @@ async fn execute(
                 }
                 .into());
             }
-            anyhow::ensure!(
-                args.semantic.is_some(),
-                CliError(
-                    2,
-                    "choose labels with --semantic, for example: cerul annotate ./video.mp4 --semantic subtask,event,interaction,state; see cerul annotate --help".into()
-                )
-            );
             let config = config(cli).map_err(|e| category(2, e))?;
             let items = match args.semantic.as_deref() {
-                Some("default") => Vec::new(),
+                Some("default" | "none") | None => Vec::new(),
                 Some(value) => value.split(',').map(str::to_owned).collect(),
-                None => unreachable!(),
             };
             let options = cerul::annotate::pipeline::Options {
                 items,
+                embodied: args.embodied,
+                hands: args.hands,
+                no_semantic: args.semantic.as_deref() == Some("none"),
                 write_lerobot: args.write_lerobot,
                 out: args.out.clone(),
                 streams: args.streams.clone(),
@@ -1324,7 +1466,7 @@ async fn execute(
             };
             options.validate().map_err(|e| category(2, e))?;
             readable(&args.paths)?;
-            cerul::media::check_dependencies().map_err(|e| category(3, e))?;
+            prepare_media(cli, &workspace, sink, &cancel).await?;
             let events = sink.clone();
             let mut report = cerul::annotate::pipeline::run(
                 &args.paths,
@@ -1376,6 +1518,9 @@ async fn execute(
                 request_notice: (!cli.yes).then(|| sink.notice(MEDIA_NOTICE)),
             };
             options.validate().map_err(|e| category(2, e))?;
+            if !cli.dry_run && (options.save.is_some() || options.preview) {
+                prepare_media(cli, &workspace, sink, &cancel).await?;
+            }
             sink.spinner("Searching…");
             let report = cerul::search::run(&workspace, &config, &options, cancel).await;
             sink.finish();
@@ -1557,8 +1702,8 @@ async fn execute(
                 CliError(2, "chunk must be at most 32s".into())
             );
             readable(&args.paths)?;
-            cerul::media::check_dependencies().map_err(|e| category(3, e))?;
             let mut resolved = config(cli).map_err(|e| category(2, e))?;
+            prepare_media(cli, &workspace, sink, &cancel).await?;
             if !args.no_audio && resolved.transcription.enabled.is_none() {
                 let pending = pipeline::pending_transcription(
                     &args.paths,
@@ -1590,12 +1735,14 @@ async fn execute(
                 }
             }
             let config = resolved;
-            if sink.mode == Mode::Human && !cli.quiet && !cli.dry_run {
-                let palette = Palette::new(console::colors_enabled_stderr());
-                let _ = render::index_plan(&mut io::stderr(), &palette, &args.paths);
-            }
+            let started = Instant::now();
             if !cli.dry_run {
-                sink.spinner("Preparing video…");
+                let subject = if args.paths.len() == 1 {
+                    render::file_name(&args.paths[0])
+                } else {
+                    format!("{} inputs", args.paths.len())
+                };
+                sink.spinner(&format!("Indexing {subject}"));
             }
             let events = sink.clone();
             let report = pipeline::run(
@@ -1624,6 +1771,7 @@ async fn execute(
                 &mut |value| events.emit(value),
             )
             .await?;
+            let elapsed = started.elapsed();
             sink.finish();
             let code = if report.partial { 6 } else { 0 };
             let mut search_prefix = vec!["cerul".into()];
@@ -1641,6 +1789,7 @@ async fn execute(
                         names: names(&workspace),
                         retry: invocation.to_vec(),
                         search_prefix,
+                        elapsed,
                     },
                 ),
                 code,
@@ -1667,9 +1816,13 @@ fn hint(code: u8, error: &anyhow::Error, env: &str) -> Option<String> {
             "run `cerul auth set` to save a Gemini key, or export {env}"
         ));
     }
-    if message.contains("ffmpeg") || message.contains("ffprobe") {
+    if message.contains("ffmpeg >= 6.0")
+        || message.contains("ffprobe >= 6.0")
+        || message.contains("cannot run ffmpeg")
+        || message.contains("cannot run ffprobe")
+    {
         return Some(
-            "reinstall with `curl -fsSL https://cerul.ai/install.sh | sh`, or put ffmpeg 6+ on PATH"
+            "set CERUL_FFMPEG and CERUL_FFPROBE to compatible FFmpeg 6+ executables; source builds can also reuse cerul-ffmpeg and cerul-ffprobe on PATH"
                 .into(),
         );
     }
@@ -1774,6 +1927,7 @@ async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::pr
         progress: Arc::new(Mutex::new(render::Progress::new(
             &workspace_hint,
             cli.quiet,
+            cli.verbose > 0,
             Palette::new(mode == Mode::Human && console::colors_enabled_stderr()),
         ))),
     };
@@ -1860,8 +2014,7 @@ async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::pr
         }
         _ => Ok(()),
     };
-    // The home screen keeps its own output and the menu is offered underneath
-    // it, so running `cerul` still shows everything it always showed.
+    // Offer the action menu underneath the compact home summary.
     if entry == guide::Entry::Typed
         && code == 0
         && written.is_ok()

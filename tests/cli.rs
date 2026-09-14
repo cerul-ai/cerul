@@ -263,15 +263,38 @@ fn annotation_help_teaches_the_workflow_without_loading_configuration() {
 fn annotate_default_plan_and_m2_rejection_are_explicit() {
     let dir = tempfile::tempdir().unwrap();
     video(dir.path());
-    let output = cli(
-        dir.path(),
-        &[
+    for args in [
+        vec!["--json", "annotate", "sample.mp4", "--hands", "--dry-run"],
+        vec![
             "--json",
             "annotate",
             "sample.mp4",
             "--semantic",
+            "none",
             "--dry-run",
         ],
+    ] {
+        assert_eq!(cli(dir.path(), &args).status.code(), Some(2));
+    }
+    for (extra, count) in [
+        (vec!["--embodied", "--hands"], 5),
+        (vec!["--embodied", "--hands", "--semantic", "none"], 1),
+    ] {
+        let mut args = vec!["--json", "annotate", "sample.mp4", "--dry-run"];
+        args.extend(extra);
+        let output = cli(dir.path(), &args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let value = final_json(&output);
+        assert_eq!(value["modules"].as_array().unwrap().len(), count);
+        assert_eq!(value["modules"][0]["annotation"], "grounding.hand");
+    }
+    let output = cli(
+        dir.path(),
+        &["--json", "annotate", "sample.mp4", "--dry-run"],
     );
     assert!(
         output.status.success(),
@@ -298,8 +321,7 @@ fn annotate_default_plan_and_m2_rejection_are_explicit() {
             "--json",
             "annotate",
             "sample.mp4",
-            "--semantic",
-            "subtask,event,interaction,state",
+            "--embodied",
             "--dry-run",
         ],
     );
@@ -373,13 +395,12 @@ fn ctrl_c_stops_media_subprocess_and_exits_cancelled() {
     )
     .unwrap();
     fs::set_permissions(&probe, fs::Permissions::from_mode(0o755)).unwrap();
-    let mut paths = vec![bin];
-    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     let mut child = Command::new(env!("CARGO_BIN_EXE_cerul"))
         .current_dir(dir.path())
         .env_clear()
         .env("HOME", dir.path())
-        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env("CERUL_FFPROBE", &probe)
         .env("CERUL_TEST_MARKER", &marker)
         .args(["--json", "index", "sample.mp4"])
         .stdout(Stdio::piped())
@@ -437,7 +458,15 @@ fn search_rejects_invalid_kind_and_missing_save_tools_before_workspace_writes() 
     for (args, code) in [
         (vec!["--json", "search", "--filter", "kind=video"], 2),
         (
-            vec!["--json", "search", "cup", "--text", "--save", "clips"],
+            vec![
+                "--json",
+                "--no-auto-deps",
+                "search",
+                "cup",
+                "--text",
+                "--save",
+                "clips",
+            ],
             3,
         ),
     ] {
@@ -564,14 +593,8 @@ fn human_mode_renders_text_and_json_mode_stays_machine_readable() {
     assert!(home.status.success());
     let text = String::from_utf8_lossy(&home.stdout);
     assert!(text.starts_with("cerul 0."), "{text}");
-    assert!(text.contains("Get started"), "{text}");
-    assert!(
-        text.contains("cerul annotate ./video.mp4 --semantic"),
-        "{text}"
-    );
-    assert!(text.contains("cerul auth set"), "{text}");
-    assert!(text.contains("cerul index ./video.mp4"), "{text}");
-    assert!(text.contains("cerul auth set"), "{text}");
+    assert!(text.contains("cerul help"), "{text}");
+    assert_eq!(text.lines().count(), 2, "{text}");
     assert!(serde_json::from_str::<Value>(&text).is_err());
     assert!(home.stderr.is_empty());
 
@@ -878,6 +901,172 @@ fn printing_and_redirecting_the_skill_need_no_home_directory() {
 }
 
 #[test]
+#[cfg(unix)]
+fn media_dependency_errors_identify_overrides_without_recommending_cli_reinstall() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("old-ffmpeg");
+    std::fs::write(
+        dir.path().join("unused.mp4"),
+        b"not decoded by dependency checks",
+    )
+    .unwrap();
+    std::fs::write(&old, "#!/bin/sh\necho 'ffmpeg version 4.2.2 Copyright'\n").unwrap();
+    std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for tool in [&old, &dir.path().join("missing-ffmpeg")] {
+        let output = Command::new(env!("CARGO_BIN_EXE_cerul"))
+            .current_dir(dir.path())
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", dir.path())
+            .env("CERUL_FFMPEG", tool)
+            .args(["annotate", "unused.mp4", "--dry-run"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(3));
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(tool.to_str().unwrap()), "{error}");
+        assert!(error.contains("CERUL_FFMPEG"), "{error}");
+        assert!(!error.contains("install.sh"), "{error}");
+        if tool == &old {
+            assert!(error.contains("4.2.2"), "{error}");
+        }
+    }
+}
+
+#[test]
+fn timeline_keeps_semantics_visible_and_expands_hands_only_on_request() {
+    use cerul::annotations::{AnnotationFile, Header, Model, Record};
+    use serde_json::json;
+    let dir = tempfile::tempdir().unwrap();
+    video(dir.path());
+    let source = dir.path().join("sample.mp4");
+    let workspace = dir.path().join(".cerul");
+    let episode = cerul::index::discover::ordinary_episode(&source).unwrap();
+    let sidecar = cerul::index::discover::publish_episode(&workspace, &episode, None).unwrap();
+    let coverage = episode.video_coverage("primary").unwrap().unwrap();
+    let step = (coverage.end_us - coverage.start_us) / 100;
+    let publish = |name: &str, records| {
+        let file = AnnotationFile {
+            header: Header {
+                schema: "annotation/1".into(),
+                name: name.into(),
+                episode: episode.episode_id.clone(),
+                stream: "primary".into(),
+                model: Model {
+                    kind: "test".into(),
+                    name: "fixture".into(),
+                    base_url: None,
+                },
+                params: json!({}),
+                created: "2026-01-01T00:00:00Z".into(),
+                cerul_version: "test".into(),
+                input_hash: cerul::index::stations::station_key(
+                    &episode,
+                    "primary",
+                    name,
+                    &json!({}),
+                )
+                .unwrap(),
+                record_schema: format!("{name}/1"),
+            },
+            records,
+        };
+        file.publish_in_range(
+            &sidecar.join(format!(".internal/annotations/{name}.jsonl")),
+            coverage,
+            None,
+        )
+        .unwrap();
+    };
+    publish(
+        "grounding.hand",
+        (0..100)
+            .map(|i| Record {
+                id: format!("hand-{i}"),
+                start_us: coverage.start_us + i * step,
+                end_us: if i == 99 {
+                    coverage.end_us
+                } else {
+                    coverage.start_us + (i + 1) * step
+                },
+                confidence: None,
+                fields: serde_json::from_value(
+                    json!({"frame_width":64,"frame_height":64,"hands":[]}),
+                )
+                .unwrap(),
+            })
+            .collect(),
+    );
+    publish(
+        "semantic.event",
+        [0, 90]
+            .into_iter()
+            .map(|i| Record {
+                id: format!("event-{i}"),
+                start_us: coverage.start_us + i * step,
+                end_us: coverage.start_us + (i + 1) * step,
+                confidence: None,
+                fields: serde_json::from_value(json!({"verb":"grasp"})).unwrap(),
+            })
+            .collect(),
+    );
+    let read = |extra: &[&str]| {
+        let mut args = vec!["--json", "status", source.to_str().unwrap(), "--timeline"];
+        args.extend_from_slice(extra);
+        let output = cli(dir.path(), &args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(output.stderr.is_empty());
+        final_json(&output)["episodes"][0].clone()
+    };
+    let default = read(&[]);
+    assert_eq!(
+        default["annotations"],
+        json!(["grounding.hand", "semantic.event"])
+    );
+    assert_eq!(default["total"], 2);
+    assert_eq!(default["entries"].as_array().unwrap().len(), 2);
+    assert_eq!(default["entries"][1]["record"]["id"], "event-90");
+    assert_eq!(read(&["--type", "event"]), default);
+    for alias in ["hand", "hands", "grounding.hand"] {
+        let hands = read(&["--type", alias]);
+        assert_eq!(hands["annotations"], default["annotations"]);
+        assert_eq!(hands["total"], 100);
+        assert_eq!(hands["entries"].as_array().unwrap().len(), 50);
+        assert!(
+            hands["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["annotation"] == "grounding.hand")
+        );
+    }
+    assert_eq!(
+        read(&["--type", "hand", "--limit", "200"])["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        100
+    );
+    std::fs::remove_file(sidecar.join(".internal/annotations/semantic.event.jsonl")).unwrap();
+    let hand_only = read(&[]);
+    assert_eq!(hand_only["annotations"], json!(["grounding.hand"]));
+    assert_eq!(hand_only["total"], 0);
+    assert_eq!(hand_only["entries"], json!([]));
+    assert_eq!(read(&["--type", "hands"])["total"], 100);
+    let human = cli(
+        dir.path(),
+        &["status", source.to_str().unwrap(), "--timeline"],
+    );
+    assert!(human.status.success());
+    assert!(String::from_utf8_lossy(&human.stdout).contains("use --type hand"));
+}
+
+#[test]
 fn the_timeline_reads_local_files_only_and_rejects_a_type_that_does_not_exist() {
     let dir = tempfile::tempdir().unwrap();
     let empty = cli(dir.path(), &["--json", "status", "--timeline"]);
@@ -966,4 +1155,44 @@ fn a_partial_annotation_carries_the_command_that_continues_it() {
     let source = value["modules"][0]["source"].as_str().unwrap();
     assert!(source.ends_with("/sample.mp4"), "{source}");
     assert!(std::path::Path::new(source).is_absolute(), "{source}");
+}
+
+#[test]
+fn help_command_explains_workflows_without_workspace_or_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    for command in [
+        None,
+        Some("index"),
+        Some("search"),
+        Some("annotate"),
+        Some("render"),
+        Some("status"),
+        Some("open"),
+        Some("remove"),
+        Some("auth"),
+        Some("config"),
+        Some("upgrade"),
+    ] {
+        let mut args = vec!["help"];
+        if let Some(name) = command {
+            args.push(name);
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_cerul"))
+            .current_dir(dir.path())
+            .env_clear()
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}: {:?}", output);
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains("cerul"));
+        assert!(output.stderr.is_empty());
+        if command == Some("search") {
+            assert!(text.contains("--in is optional"));
+        }
+        if command == Some("index") {
+            assert!(text.contains("every indexed video"));
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 }

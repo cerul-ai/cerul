@@ -5,10 +5,32 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
+    /// Whole indexing invocation, including all selected videos and streams.
+    /// ETA is an approximate duration from priors, local history and observed work.
+    IndexProgress {
+        episode: String,
+        source: Option<PathBuf>,
+        phase: String,
+        done: u64,
+        /// Upper bound for a human estimate within active work; done stays measured.
+        #[serde(default)]
+        ceiling: u64,
+        total: u64,
+        eta_seconds: f64,
+        finished: bool,
+    },
     /// Per-attempt diagnostics, with unknown usage retained as null.
     ModelRequest {
         #[serde(flatten)]
         report: crate::providers::usage::RequestReport,
+    },
+    /// Completed annotation work units, including reused units separately.
+    AnnotationProgress {
+        episode: String,
+        phase: String,
+        done: u64,
+        total: u64,
+        cached: u64,
     },
     Progress {
         episode: String,

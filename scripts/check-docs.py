@@ -167,8 +167,11 @@ def check(package_list=None):
                 "docs/assets/cerul-logo-light.png",
                 "docs/assets/cerul-architecture.png",
                 "tests/fixtures/ocr-text.png",
+                "tests/fixtures/hand-opencv.png",
                 "models/det.onnx",
                 "models/rec.onnx",
+                "models/hands/palm.onnx",
+                "models/hands/landmarks.onnx",
             }:
                 errors.append(
                     f"package: asset needs explicit provenance review: {name}"

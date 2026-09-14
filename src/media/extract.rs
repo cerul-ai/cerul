@@ -67,7 +67,7 @@ pub fn video_quality(
         .tempfile_in(parent)?;
     let mut command = crate::media::command("ffmpeg");
     input(&mut command, source, source_range)?;
-    command.args(["-map", "0:v:0"]);
+    command.args(["-map", "0:V:0"]);
     if proxy {
         command.args(["-an", "-vf", "scale='min(480,iw)':'min(480,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=1:round=up"]);
     } else {
@@ -165,6 +165,25 @@ pub fn keyframes(
     );
     fs::create_dir_all(directory)?;
     let interval = (1_000_000. / fps).round() as i64;
+    selected_frames(source, source_range, directory, interval)
+}
+
+/// Decode every observed frame, with source PTS, in a bounded caller-owned chunk.
+pub fn observed_frames(
+    source: &Path,
+    source_range: SourceRange,
+    directory: &Path,
+) -> Result<Vec<(i64, std::path::PathBuf)>> {
+    fs::create_dir_all(directory)?;
+    selected_frames(source, source_range, directory, 0)
+}
+
+fn selected_frames(
+    source: &Path,
+    source_range: SourceRange,
+    directory: &Path,
+    interval: i64,
+) -> Result<Vec<(i64, std::path::PathBuf)>> {
     // Keep integer microseconds through selection and emit the observed PTS on
     // stdout. This avoids a separate ffprobe -show_frames decode and a filter
     // expression that grows with video length. Clear the marker before setting
@@ -203,7 +222,7 @@ pub fn keyframes(
     command
         .args([
             "-map",
-            "0:v:0",
+            "0:V:0",
             "-vf",
             &filter,
             "-fps_mode",

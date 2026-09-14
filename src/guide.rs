@@ -236,34 +236,6 @@ fn pick_input(palette: &Palette, title: &str) -> io::Result<Option<String>> {
     }
 }
 
-/// Turns answers into the command that runs them, shown before it runs so the
-/// next run can be typed instead of answered. `typed` is everything the person
-/// already wrote, so a global flag they chose appears in the command too.
-fn show_command(palette: &Palette, typed: &[String], extra: &[String]) -> io::Result<()> {
-    let term = Term::stderr();
-    let argv: Vec<String> = std::iter::once("cerul".to_owned())
-        .chain(typed.iter().cloned())
-        .chain(extra.iter().cloned())
-        .collect();
-    term.write_line("")?;
-    term.write_line(&format!("  {}", palette.cmd(&render::shell_command(&argv))))?;
-    Ok(())
-}
-
-fn confirm(palette: &Palette, typed: &[String], extra: &[String]) -> io::Result<Option<bool>> {
-    show_command(palette, typed, extra)?;
-    let choices = [
-        Choice::new("Start", "", Some(false)),
-        Choice::new(
-            "Preview only",
-            "--dry-run: no writes, no model calls",
-            Some(true),
-        ),
-        Choice::new("Cancel", "", None),
-    ];
-    Ok(select(palette, "Ready", &choices)?.flatten())
-}
-
 /// Where an invocation came from, which decides how much of it may be missing.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Entry {
@@ -308,16 +280,9 @@ pub fn complete(arguments: Vec<OsString>, palette: &Palette, entry: Entry) -> Gu
     let Some(command) = arguments.last() else {
         return Guided::Untouched;
     };
-    // Everything already typed, so the command a screen shows is the command
-    // that runs: a global flag chosen before the subcommand belongs in it.
-    let typed: Vec<String> = arguments
-        .iter()
-        .skip(1)
-        .map(|argument| argument.to_string_lossy().into_owned())
-        .collect();
     let extra = match command.to_string_lossy().as_ref() {
-        "annotate" => annotate(palette, &typed),
-        "index" => index(palette, &typed),
+        "annotate" => annotate(palette),
+        "index" => index(palette),
         "search" => search(palette),
         _ => return Guided::Untouched,
     };
@@ -333,121 +298,16 @@ pub fn complete(arguments: Vec<OsString>, palette: &Palette, entry: Entry) -> Gu
     }
 }
 
-/// Real episode indices and camera keys, or nothing when the dataset cannot be
-/// read. A dataset this build does not support should fail in the run, with its
-/// own error, rather than be hidden behind a menu that cannot offer anything.
-fn dataset(path: &str) -> Option<Vec<cerul::episode::Episode>> {
-    let root = Path::new(path);
-    if !root.join("meta/info.json").is_file() {
-        return None;
-    }
-    cerul::lerobot::read(root).ok().filter(|e| !e.is_empty())
-}
-
-/// Which episode and which cameras, from what the dataset actually contains.
-fn lerobot_scope(palette: &Palette, episodes: &[cerul::episode::Episode]) -> Option<Vec<String>> {
-    let mut argv = Vec::new();
-    // Indexes are not always consecutive and do not always start at zero, so the
-    // first one has to come from the dataset rather than from an assumption.
-    let first = episodes.first()?.local_id.clone();
-    let scope = [
-        Choice::new(
-            format!("Episode {first} only"),
-            "start small: one episode is one set of model calls",
-            Some(first.clone()),
-        ),
-        Choice::new(
-            format!("All {} episodes", episodes.len()),
-            "every episode in the dataset",
-            None,
-        ),
-    ];
-    if let Some(only) = select(palette, "Which episodes?", &scope).ok()?? {
-        argv.push("--only".to_owned());
-        argv.push(only);
-    }
-    let cameras: Vec<&str> = episodes
-        .first()
-        .map(|episode| {
-            episode
-                .streams
-                .iter()
-                .filter(|stream| matches!(stream, cerul::episode::Stream::Video { .. }))
-                .map(|stream| stream.id())
-                .collect()
-        })
-        .unwrap_or_default();
-    if cameras.len() > 1 {
-        let primary = &episodes.first()?.time.reference;
-        let choices = [
-            Choice::new(format!("Primary camera ({primary})"), "", false),
-            Choice::new(
-                format!("All {} cameras", cameras.len()),
-                "one set of results per camera",
-                true,
-            ),
-        ];
-        if select(palette, "Which cameras?", &choices).ok()?? {
-            argv.push("--streams".to_owned());
-            argv.push("all".to_owned());
-        }
-    }
-    Some(argv)
-}
-
-/// What a person has in front of them, named the way they would describe it
-/// rather than by the label names the flag happens to use.
-fn annotate(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
-    let path = pick_input(palette, "Annotate · which video or dataset?").ok()??;
-    let episodes = dataset(&path);
-    let robot = Choice::new(
-        "A robot or first-person demonstration",
-        "subtask, event, interaction, state",
-        "subtask,event,interaction,state",
-    );
-    // Naming the labels rather than leaning on the default: a dataset's own
-    // default is all seven types, which is not what this choice promises.
-    let general = Choice::new(
-        "A general video",
-        "task, subtask, flag",
-        "task,subtask,flag",
-    );
-    let everything = Choice::new(
-        "Everything",
-        "all seven semantic types",
-        "task,subtask,event,interaction,state,flag,progress",
-    );
-    // A dataset's own default is every semantic type, so that choice leads here.
-    let presets = match episodes.is_some() {
-        true => [
-            Choice::new(
-                "Everything",
-                "the LeRobot default: all seven types",
-                "default",
-            ),
-            robot,
-            general,
-        ],
-        false => [robot, general, everything],
-    };
-    let items = select(palette, "What is in it?", &presets).ok()??;
-    let mut extra = vec![path, "--semantic".to_owned()];
-    if items != "default" {
-        extra.push(items.to_owned());
-    }
-    if let Some(episodes) = &episodes {
-        extra.extend(lerobot_scope(palette, episodes)?);
-    }
-    if confirm(palette, typed, &extra).ok()?? {
-        extra.push("--dry-run".into());
-    }
+/// Ask only for the input; the normal CLI defaults and explicit flags decide the work.
+fn annotate(palette: &Palette) -> Option<Vec<String>> {
+    let path = pick_input(palette, "Annotate · input").ok()??;
+    let extra = vec![path];
     Some(extra)
 }
 
-fn index(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
-    let path = pick_input(palette, "Index · which video or folder?").ok()??;
+fn index(palette: &Palette) -> Option<Vec<String>> {
+    let path = pick_input(palette, "Index · input").ok()??;
     let extra = vec![path];
-    show_command(palette, typed, &extra).ok()?;
     Some(extra)
 }
 
@@ -462,24 +322,20 @@ fn search(palette: &Palette) -> Option<Vec<String>> {
     Some(vec![query])
 }
 
-/// Offered under the home screen, so running `cerul` still shows what it always
-/// showed and the menu is an addition rather than a replacement. The choice is
-/// appended to what was typed, so `--workspace` and the rest survive it.
+/// The compact home menu appends an action to the invocation, preserving any
+/// explicit workspace and other global flags.
 pub fn home_menu(palette: &Palette, arguments: &[OsString]) -> Option<Vec<OsString>> {
     if !asks(arguments) {
         return None;
     }
     let choices = [
-        Choice::new("Index a video so it can be searched", "", Some("index")),
-        Choice::new("Search indexed videos", "", Some("search")),
-        Choice::new(
-            "Annotate actions in a video or LeRobot dataset",
-            "",
-            Some("annotate"),
-        ),
-        Choice::new("Leave", "", None),
+        Choice::new("Index", "", Some("index")),
+        Choice::new("Search", "", Some("search")),
+        Choice::new("Annotate", "", Some("annotate")),
+        Choice::new("Help", "", Some("help")),
+        Choice::new("Exit", "", None),
     ];
-    let command = select(palette, "What do you want to do?", &choices).ok()??;
+    let command = select(palette, "Choose an action", &choices).ok()??;
     let mut next = arguments.to_vec();
     next.push(OsString::from(command?));
     Some(next)

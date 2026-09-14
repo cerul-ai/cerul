@@ -13,6 +13,7 @@ use crate::{
     storage::{self, Checkpoints},
 };
 use anyhow::{Context, Result, ensure};
+use futures::{StreamExt, stream as futures_stream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -266,7 +267,9 @@ pub async fn run(
         done: 0,
         total: scenes.records.len() as u64,
     });
-    for (i, record) in scenes.records.iter().enumerate() {
+    let work = futures_stream::iter(scenes.records.iter().enumerate().map(|(i, record)| {
+        let (space, input_hash, checkpoints) = (&space, &input_hash, &checkpoints);
+        async move {
         crate::media::check_cancellation()?;
         let text = record
             .fields
@@ -299,8 +302,8 @@ pub async fn run(
                 vector,
                 text: text.into(),
                 still: false,
-                space_id: space.clone(),
-                params_hash: input_hash.clone(),
+                space_id: space.to_owned(),
+                params_hash: input_hash.to_owned(),
             }
         };
         row.validate(dims)?;
@@ -310,13 +313,18 @@ pub async fn run(
                 && row.start_us == record.start_us
                 && row.end_us == record.end_us
                 && row.text == text
-                && row.space_id == space
+                && row.space_id == *space
                 && row.episode == episode.episode_id
                 && row.stream == stream,
             "cached description identity mismatch"
         );
-        row.params_hash = input_hash.clone();
+        row.params_hash = input_hash.to_owned();
         checkpoints.save(&key, &row)?;
+        Ok::<_, anyhow::Error>((i, record, row))
+    }})).buffer_unordered(provider.concurrency());
+    tokio::pin!(work);
+    while let Some(result) = work.next().await {
+        let (i, record, row) = result?;
         state.source_refs.insert(
             row.id.clone(),
             SourceRef {
@@ -325,14 +333,16 @@ pub async fn run(
                 revision: understanding::revision(record)?,
             },
         );
-        rows.push(row);
+        rows.push((i, row));
         events.emit(Event::Progress {
             episode: episode.episode_id.clone(),
             station: "description".into(),
-            done: (i + 1) as u64,
+            done: rows.len() as u64,
             total: scenes.records.len() as u64,
         });
     }
+    rows.sort_by_key(|(i, _)| *i);
+    let rows: Vec<_> = rows.into_iter().map(|(_, row)| row).collect();
     vectors::write(&product_path(sidecar, &state)?, &rows, dims)?;
     state.complete = true;
     storage::write_json(&path, &state)?;

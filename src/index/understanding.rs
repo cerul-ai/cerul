@@ -8,6 +8,7 @@ use crate::{
     storage::{self, Checkpoints},
 };
 use anyhow::{Context, Result, ensure};
+use futures::{StreamExt, stream as futures_stream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -281,6 +282,39 @@ fn checked_refs(refs: &[SourceRef], inventory: &Inventory) -> Result<Vec<TimeRan
         .collect()
 }
 
+fn validate_suggestion(suggestion: &QuerySuggestion, inventory: &Inventory) -> Result<()> {
+    ensure!(
+        valid_text(&suggestion.query, 160),
+        "invalid generated suggestion"
+    );
+    let annotation = match suggestion.kind.as_str() {
+        "visual" => "semantic.scene",
+        "speech" => "transcript",
+        "screen" => "screen_text",
+        _ => anyhow::bail!("unknown suggestion kind"),
+    };
+    ensure!(
+        suggestion.source_refs.len() <= 16,
+        "too many suggestion references"
+    );
+    checked_refs(&suggestion.source_refs, inventory)?;
+    ensure!(
+        suggestion
+            .source_refs
+            .iter()
+            .all(|r| r.annotation == annotation),
+        "suggestion modality mismatch"
+    );
+    Ok(())
+}
+
+fn retain_valid_suggestions(generated: &mut Overview, inventory: &Inventory) {
+    generated
+        .suggestions
+        .retain(|suggestion| validate_suggestion(suggestion, inventory).is_ok());
+    generated.suggestions.truncate(3);
+}
+
 fn validate_overview(generated: &Overview, inventory: &Inventory) -> Result<()> {
     ensure!(valid_text(&generated.title, 100), "invalid generated title");
     ensure!(
@@ -308,28 +342,7 @@ fn validate_overview(generated: &Overview, inventory: &Inventory) -> Result<()> 
         "invalid overview metadata"
     );
     for suggestion in &generated.suggestions {
-        ensure!(
-            valid_text(&suggestion.query, 160),
-            "invalid generated suggestion"
-        );
-        let annotation = match suggestion.kind.as_str() {
-            "visual" => "semantic.scene",
-            "speech" => "transcript",
-            "screen" => "screen_text",
-            _ => anyhow::bail!("unknown suggestion kind"),
-        };
-        ensure!(
-            suggestion.source_refs.len() <= 16,
-            "too many suggestion references"
-        );
-        checked_refs(&suggestion.source_refs, inventory)?;
-        ensure!(
-            suggestion
-                .source_refs
-                .iter()
-                .all(|r| r.annotation == annotation),
-            "suggestion modality mismatch"
-        );
+        validate_suggestion(suggestion, inventory)?;
     }
     let mut ranges = Vec::new();
     for section in &generated.sections {
@@ -391,22 +404,21 @@ async fn overview(
             size += bytes;
         }
         let count = groups.len();
-        let mut next = Vec::new();
-        for group in groups {
+        let work = futures_stream::iter(groups.into_iter().map(|group| async move {
             let key = storage::cache_key(&("overview", params, &group))?;
             let cached = if recompute {
                 None
             } else {
                 checkpoints.load::<Overview>(&key)?
             };
-            let generated = match cached {
+            let mut generated = match cached {
                 Some(value) => value,
                 None => {
                     let prompt = format!(
                         "{OVERVIEW_PROMPT}\nRecords: {}",
                         serde_json::to_string(&group)?
                     );
-                    let value: Overview = serde_json::from_value(
+                    let mut value: Overview = serde_json::from_value(
                         provider
                             .generate(
                                 &prompt,
@@ -415,12 +427,21 @@ async fn overview(
                             )
                             .await?,
                     )?;
+                    retain_valid_suggestions(&mut value, inventory);
                     validate_overview(&value, inventory)?;
                     checkpoints.save(&key, &value)?;
                     value
                 }
             };
+            retain_valid_suggestions(&mut generated, inventory);
             validate_overview(&generated, inventory)?;
+            Ok::<_, anyhow::Error>(generated)
+        }))
+        .buffered(provider.concurrency());
+        tokio::pin!(work);
+        let mut next = Vec::new();
+        while let Some(generated) = work.next().await {
+            let generated = generated?;
             if count == 1 {
                 return Ok(generated);
             }
@@ -496,6 +517,35 @@ pub async fn run(
     screen: Option<&AnnotationFile>,
     events: &mut dyn EventSink,
 ) -> Result<Product> {
+    let analysis = analyze(
+        episode, stream, sidecar, workspace, provider, recompute, events,
+    )
+    .await?;
+    summarize(
+        episode, stream, sidecar, provider, recompute, analysis, transcript, screen, events,
+    )
+    .await
+}
+
+pub(super) struct Analysis {
+    pub scenes: AnnotationFile,
+    pub errors: Vec<String>,
+    key: String,
+    successful: Vec<TimeRange>,
+    failed: Vec<TimeRange>,
+    retained: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn analyze(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    provider: &Provider,
+    recompute: bool,
+    events: &mut dyn EventSink,
+) -> Result<Analysis> {
     mark_status(episode, stream, sidecar, "incomplete")?;
     let coverage = episode
         .video_coverage(stream)?
@@ -538,225 +588,313 @@ pub async fn run(
     let mut successful = Vec::new();
     let mut failed = Vec::new();
     let mut errors = Vec::new();
-    let mut unavailable: Option<String> = None;
+    let unavailable = std::sync::Mutex::new(None::<String>);
     events.emit(Event::Progress {
         episode: episode.episode_id.clone(),
         station: "understanding".into(),
         done: 0,
         total: windows.len() as u64 + 1,
     });
-    for (i, window) in windows.iter().enumerate() {
-        media::check_cancellation()?;
-        let unit_key = storage::cache_key(&(&key, window))?;
-        let cached = if recompute {
-            None
-        } else {
-            checkpoints.load::<Vec<Record>>(&unit_key)?
-        };
-        let result: Result<Vec<Record>> = async {
-            if let Some(records) = cached {
-                let cached = file(
+    {
+        let (key, checkpoints, params, source, unavailable) =
+            (&key, &checkpoints, &params, &source, &unavailable);
+        let work = futures_stream::iter(windows.iter().map(|window| async move {
+            let mut reused = false;
+            let result: Result<Vec<Record>> = async {
+                media::check_cancellation()?;
+                let unit_key = storage::cache_key(&(&key, window))?;
+                let cached = if recompute {
+                    None
+                } else {
+                    checkpoints.load::<Vec<Record>>(&unit_key)?
+                };
+                if let Some(records) = cached {
+                    reused = true;
+                    let cached = file(
+                        episode,
+                        stream,
+                        "semantic.scene",
+                        provider,
+                        params.clone(),
+                        records,
+                    )?;
+                    cached.validate_in_range(*window, None)?;
+                    return Ok(cached.records);
+                }
+                if let Some(reason) = unavailable.lock().unwrap().clone() {
+                    anyhow::bail!("{reason}");
+                }
+                probes::check(provider, probes::Capability::Vision, workspace, false).await?;
+                let input_range = SourceRange::new(
+                    episode.episode_to_source(stream, window.start_us)?,
+                    episode.episode_to_source(stream, window.end_us)?,
+                )?;
+                let frames = media::frames::get(
+                    source,
+                    sha256,
+                    SourceRange::new(range_us[0], range_us[1])?,
+                    input_range,
+                    workspace,
+                )?;
+                let mut samples = frames
+                    .iter()
+                    .map(|(relative, _)| episode.source_to_episode(stream, range_us[0] + relative))
+                    .collect::<Result<Vec<_>>>()?;
+                let (inputs, input_sha256) = if input_kind == "video" {
+                    let clip = media::proxy::get_with_samples(
+                        source,
+                        sha256,
+                        input_range,
+                        SourceRange::new(range_us[0], range_us[1])?,
+                        workspace,
+                        24,
+                    )?;
+                    let bytes = fs::read(clip)?;
+                    if samples.is_empty() {
+                        samples = media::frame_pts(source)?
+                            .into_iter()
+                            .filter(|time| {
+                                *time >= input_range.start_us && *time < input_range.end_us
+                            })
+                            .take(1)
+                            .map(|time| episode.source_to_episode(stream, time))
+                            .collect::<Result<_>>()?;
+                    }
+                    let hash = storage::sha256_hex(&bytes);
+                    (vec![Input::Video(bytes, "video/mp4".into())], hash)
+                } else {
+                    ensure!(
+                        !frames.is_empty(),
+                        "no observed frames in understanding window"
+                    );
+                    let mut inputs = Vec::new();
+                    let mut hashes = Vec::new();
+                    for ((_, path), time) in frames.iter().zip(&samples) {
+                        let pixels = image::open(path)?
+                            .resize(480, 480, image::imageops::FilterType::Triangle)
+                            .to_rgb8();
+                        let mut bytes = Vec::new();
+                        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 80)
+                            .encode_image(&pixels)?;
+                        hashes.push((time, storage::sha256_hex(&bytes)));
+                        inputs.push(Input::Text(format!(
+                            "Frame at {} microseconds relative to this clip:",
+                            time - window.start_us
+                        )));
+                        inputs.push(Input::Image(bytes, "image/jpeg".into()));
+                    }
+                    (inputs, storage::cache_key(&hashes)?)
+                };
+                let input_duration = if input_kind == "video" {
+                    input_range.end_us - input_range.start_us
+                } else {
+                    window.end_us - window.start_us
+                };
+                let value = provider
+                    .generate(
+                        &format!(
+                            "{SCENE_PROMPT}\nClip duration: {} microseconds.",
+                            input_duration
+                        ),
+                        &inputs,
+                        serde_json::to_value(schemars::schema_for!(SceneResponse))?,
+                    )
+                    .await?;
+                let response: SceneResponse = serde_json::from_value(value)?;
+                check_response(&response, input_duration)?;
+                let mut seen = BTreeSet::new();
+                let mut output = Vec::new();
+                for scene in response.scenes {
+                    let range = scene_range(
+                        episode,
+                        stream,
+                        *window,
+                        input_range,
+                        input_kind == "video",
+                        &scene,
+                    )?;
+                    let id = storage::cache_key(&(
+                        &episode.episode_id,
+                        stream,
+                        "semantic.scene",
+                        range,
+                    ))?;
+                    if !seen.insert(id.clone()) {
+                        continue;
+                    }
+                    let revision = storage::cache_key(&(&unit_key, &scene))?;
+                    let payload = Scene {
+                        description: scene.description,
+                        objects: scene.objects,
+                        actions: scene.actions,
+                        kind: scene.kind,
+                        evidence: VisualEvidence {
+                            input_kind: input_kind.into(),
+                            input_start_us: window.start_us,
+                            input_end_us: window.end_us,
+                            sampling_fps: 1,
+                            sample_us: samples.clone(),
+                            max_edge: 480,
+                            media_sha256: sha256.clone(),
+                            input_sha256: input_sha256.clone(),
+                            recipe: RECIPE.into(),
+                        },
+                        revision,
+                        correction: None,
+                    };
+                    output.push(Record {
+                        id,
+                        start_us: range.start_us,
+                        end_us: range.end_us,
+                        confidence: None,
+                        fields: fields(payload)?,
+                    });
+                }
+                let checked = file(
                     episode,
                     stream,
                     "semantic.scene",
                     provider,
                     params.clone(),
-                    records,
+                    output,
                 )?;
-                cached.validate_in_range(*window, None)?;
-                return Ok(cached.records);
+                checked.validate_in_range(*window, None)?;
+                checkpoints.save(&unit_key, &checked.records)?;
+                Ok(checked.records)
             }
-            if let Some(reason) = &unavailable {
-                anyhow::bail!("{reason}");
-            }
-            probes::check(provider, probes::Capability::Vision, workspace, false).await?;
-            let input_range = SourceRange::new(
-                episode.episode_to_source(stream, window.start_us)?,
-                episode.episode_to_source(stream, window.end_us)?,
-            )?;
-            let frames = media::frames::get(
-                &source,
-                sha256,
-                SourceRange::new(range_us[0], range_us[1])?,
-                input_range,
-                workspace,
-            )?;
-            let mut samples = frames
-                .iter()
-                .map(|(relative, _)| episode.source_to_episode(stream, range_us[0] + relative))
-                .collect::<Result<Vec<_>>>()?;
-            let (inputs, input_sha256) = if input_kind == "video" {
-                let clip = media::proxy::get_with_samples(
-                    &source,
-                    sha256,
-                    input_range,
-                    SourceRange::new(range_us[0], range_us[1])?,
-                    workspace,
-                    24,
-                )?;
-                let bytes = fs::read(clip)?;
-                if samples.is_empty() {
-                    samples = media::frame_pts(&source)?
+            .await;
+            (*window, result, reused)
+        }))
+        .buffer_unordered(provider.concurrency());
+        tokio::pin!(work);
+        let mut completed = 0;
+        let mut generated = 0;
+        while let Some((window, result, reused)) = work.next().await {
+            match result {
+                Ok(unit) => {
+                    if !reused {
+                        generated += 1;
+                        events.emit(Event::Checkpoint {
+                            episode: episode.episode_id.clone(),
+                            station: "understanding".into(),
+                            window: generated,
+                            total: windows.len() as u64,
+                        });
+                    }
+                    successful.push(window);
+                    records.extend(unit);
+                }
+                Err(error) => {
+                    if provider.cancel.is_cancelled() {
+                        return Err(error);
+                    }
+                    if error
+                        .downcast_ref::<crate::providers::ProviderError>()
+                        .is_some_and(|error| {
+                            matches!(
+                                error.kind,
+                                crate::providers::Failure::MissingKey
+                                    | crate::providers::Failure::Unavailable
+                                    | crate::providers::Failure::Unsupported
+                            )
+                        })
+                    {
+                        *unavailable.lock().unwrap() = Some(error.to_string());
+                    }
+                    // A failed refresh keeps valid evidence for the same input.
+                    let retained: Vec<_> = previous
+                        .as_ref()
                         .into_iter()
-                        .filter(|time| *time >= input_range.start_us && *time < input_range.end_us)
-                        .take(1)
-                        .map(|time| episode.source_to_episode(stream, time))
-                        .collect::<Result<_>>()?;
+                        .flat_map(|f| &f.records)
+                        .filter(|r| r.start_us >= window.start_us && r.end_us <= window.end_us)
+                        .cloned()
+                        .collect();
+                    if retained.is_empty() {
+                        failed.push(window);
+                    } else {
+                        successful.push(window);
+                        records.extend(retained);
+                    }
+                    let message = format!("understanding: {error}");
+                    if !errors.contains(&message) {
+                        errors.push(message);
+                    }
                 }
-                let hash = storage::sha256_hex(&bytes);
-                (vec![Input::Video(bytes, "video/mp4".into())], hash)
-            } else {
-                ensure!(
-                    !frames.is_empty(),
-                    "no observed frames in understanding window"
-                );
-                let mut inputs = Vec::new();
-                let mut hashes = Vec::new();
-                for ((_, path), time) in frames.iter().zip(&samples) {
-                    let pixels = image::open(path)?
-                        .resize(480, 480, image::imageops::FilterType::Triangle)
-                        .to_rgb8();
-                    let mut bytes = Vec::new();
-                    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 80)
-                        .encode_image(&pixels)?;
-                    hashes.push((time, storage::sha256_hex(&bytes)));
-                    inputs.push(Input::Text(format!(
-                        "Frame at {} microseconds relative to this clip:",
-                        time - window.start_us
-                    )));
-                    inputs.push(Input::Image(bytes, "image/jpeg".into()));
-                }
-                (inputs, storage::cache_key(&hashes)?)
-            };
-            let input_duration = if input_kind == "video" {
-                input_range.end_us - input_range.start_us
-            } else {
-                window.end_us - window.start_us
-            };
-            let value = provider
-                .generate(
-                    &format!(
-                        "{SCENE_PROMPT}\nClip duration: {} microseconds.",
-                        input_duration
-                    ),
-                    &inputs,
-                    serde_json::to_value(schemars::schema_for!(SceneResponse))?,
-                )
-                .await?;
-            let response: SceneResponse = serde_json::from_value(value)?;
-            check_response(&response, input_duration)?;
-            let mut seen = BTreeSet::new();
-            let mut output = Vec::new();
-            for scene in response.scenes {
-                let range = scene_range(
-                    episode,
-                    stream,
-                    *window,
-                    input_range,
-                    input_kind == "video",
-                    &scene,
-                )?;
-                let id =
-                    storage::cache_key(&(&episode.episode_id, stream, "semantic.scene", range))?;
-                if !seen.insert(id.clone()) {
-                    continue;
-                }
-                let revision = storage::cache_key(&(&unit_key, &scene))?;
-                let payload = Scene {
-                    description: scene.description,
-                    objects: scene.objects,
-                    actions: scene.actions,
-                    kind: scene.kind,
-                    evidence: VisualEvidence {
-                        input_kind: input_kind.into(),
-                        input_start_us: window.start_us,
-                        input_end_us: window.end_us,
-                        sampling_fps: 1,
-                        sample_us: samples.clone(),
-                        max_edge: 480,
-                        media_sha256: sha256.clone(),
-                        input_sha256: input_sha256.clone(),
-                        recipe: RECIPE.into(),
-                    },
-                    revision,
-                    correction: None,
-                };
-                output.push(Record {
-                    id,
-                    start_us: range.start_us,
-                    end_us: range.end_us,
-                    confidence: None,
-                    fields: fields(payload)?,
-                });
             }
-            let checked = file(
-                episode,
-                stream,
-                "semantic.scene",
-                provider,
-                params.clone(),
-                output,
-            )?;
-            checked.validate_in_range(*window, None)?;
-            checkpoints.save(&unit_key, &checked.records)?;
-            Ok(checked.records)
+            completed += 1;
+            events.emit(Event::Progress {
+                episode: episode.episode_id.clone(),
+                station: "understanding".into(),
+                done: completed,
+                total: windows.len() as u64 + 1,
+            });
         }
-        .await;
-        match result {
-            Ok(unit) => {
-                successful.push(*window);
-                records.extend(unit);
-            }
-            Err(error) => {
-                if provider.cancel.is_cancelled() {
-                    return Err(error);
-                }
-                if error
-                    .downcast_ref::<crate::providers::ProviderError>()
-                    .is_some_and(|error| {
-                        matches!(
-                            error.kind,
-                            crate::providers::Failure::MissingKey
-                                | crate::providers::Failure::Unavailable
-                                | crate::providers::Failure::Unsupported
-                        )
-                    })
-                {
-                    unavailable = Some(error.to_string());
-                }
-                // A failed refresh keeps valid evidence for the same input.
-                let retained: Vec<_> = previous
-                    .as_ref()
-                    .into_iter()
-                    .flat_map(|f| &f.records)
-                    .filter(|r| r.start_us >= window.start_us && r.end_us <= window.end_us)
-                    .cloned()
-                    .collect();
-                if retained.is_empty() {
-                    failed.push(*window);
-                } else {
-                    successful.push(*window);
-                    records.extend(retained);
-                }
-                let message = format!("understanding: {error}");
-                if !errors.contains(&message) {
-                    errors.push(message);
-                }
-            }
-        }
-        events.emit(Event::Progress {
-            episode: episode.episode_id.clone(),
-            station: "understanding".into(),
-            done: (i + 1) as u64,
-            total: windows.len() as u64 + 1,
-        });
     }
+    successful.sort_by_key(|r| r.start_us);
+    failed.sort_by_key(|r| r.start_us);
+    errors.sort();
     if !failed.is_empty()
         && let Some(scenes) = published
     {
         // Successful target windows already have independent checkpoints. Keep
         // the current public generation until the replacement has no gaps,
         // even when endpoint/model/recipe changed. Never reuse changed media.
+        return Ok(Analysis {
+            scenes,
+            errors,
+            key,
+            successful,
+            failed,
+            retained: true,
+        });
+    }
+    records.sort_by_key(|r| (r.start_us, r.end_us, r.id.clone()));
+    apply_corrections(&directory, &mut records, &mut errors)?;
+    let scenes = file(
+        episode,
+        stream,
+        "semantic.scene",
+        provider,
+        params.clone(),
+        records,
+    )?;
+    publish(&scenes, &directory, coverage)?;
+    Ok(Analysis {
+        scenes,
+        errors,
+        key,
+        successful,
+        failed,
+        retained: false,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn summarize(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    provider: &Provider,
+    recompute: bool,
+    analysis: Analysis,
+    transcript: Option<&AnnotationFile>,
+    screen: Option<&AnnotationFile>,
+    events: &mut dyn EventSink,
+) -> Result<Product> {
+    let Analysis {
+        scenes,
+        mut errors,
+        key,
+        successful,
+        failed,
+        retained,
+    } = analysis;
+    let directory = super::stations::stream_directory(sidecar, stream, &episode.time.reference);
+    let coverage = episode
+        .video_coverage(stream)?
+        .context("no video coverage")?;
+    let checkpoints = Checkpoints::new(sidecar);
+    if retained {
         let summary = AnnotationFile::read(&directory.join("semantic.summary.jsonl"))
             .ok()
             .filter(|file| {
@@ -781,17 +919,7 @@ pub async fn run(
             events,
         );
     }
-    records.sort_by_key(|r| (r.start_us, r.end_us, r.id.clone()));
-    apply_corrections(&directory, &mut records, &mut errors)?;
-    let scenes = file(
-        episode,
-        stream,
-        "semantic.scene",
-        provider,
-        params.clone(),
-        records,
-    )?;
-    publish(&scenes, &directory, coverage)?;
+    let params = scenes.header.params.clone();
     let dependencies = dependency_snapshot(&directory)?;
     let mut inventory = BTreeMap::new();
     let mut context = Vec::new();
@@ -832,6 +960,12 @@ pub async fn run(
             events,
         );
     }
+    events.emit(Event::Progress {
+        episode: episode.episode_id.clone(),
+        station: "overview".into(),
+        done: 0,
+        total: 1,
+    });
     let result: Result<AnnotationFile> = async {
         // The cached overview regenerates both public files locally, including
         // when a projection or section file was removed independently.
@@ -1666,7 +1800,7 @@ mod tests {
                     let context: Value =
                         serde_json::from_str(prompt.split_once("\nRecords: ").unwrap().1).unwrap();
                     let reference = &context[0]["source"];
-                    json!({"title":"Color test pattern","summary":"A synthetic color pattern is displayed.","content_type":"static","environment":null,"language":null,"source_refs":[reference],"sections":[{"title":"Color pattern","source_refs":[reference]}],"suggestions":[{"query":"A colorful test pattern on screen","kind":"visual","source_refs":[reference]}]})
+                    json!({"title":"Color test pattern","summary":"A synthetic color pattern is displayed.","content_type":"static","environment":null,"language":null,"source_refs":[reference],"sections":[{"title":"Color pattern","source_refs":[reference]}],"suggestions":[{"query":"A colorful test pattern on screen","kind":"visual","source_refs":[reference]},{"query":"Incorrect speech recommendation","kind":"speech","source_refs":[reference]}]})
                 }
             };
             (
@@ -1735,9 +1869,12 @@ mod tests {
         publish(&next_sections, &sidecar, coverage).unwrap();
         assert!(!current_dependencies(&sidecar, &summary).unwrap());
         assert!(!current_dependencies(&sidecar, &next_sections).unwrap());
-        assert!(
-            super::super::suggestions::collect(&episode, &sidecar, "primary", None, None)
-                .is_empty()
+        let fallback =
+            super::super::suggestions::collect(&episode, &sidecar, "primary", None, None);
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(
+            fallback[0].query,
+            "A synthetic color test pattern is displayed."
         );
         publish(&next_summary, &sidecar, coverage).unwrap();
         assert!(current_dependencies(&sidecar, &next_sections).unwrap());
@@ -1809,7 +1946,8 @@ mod tests {
                 None
             )
             .iter()
-            .all(|s| s.source != "semantic.scene")
+            .all(|s| s.source == "semantic.scene"
+                && s.query == "A synthetic color test pattern is displayed.")
         );
     }
     #[test]

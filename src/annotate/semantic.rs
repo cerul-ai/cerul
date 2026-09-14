@@ -20,6 +20,7 @@ use std::{
 
 #[derive(Clone)]
 pub struct Options {
+    pub embodied: bool,
     pub window_us: i64,
     pub fps: f64,
     pub recompute: bool,
@@ -28,6 +29,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            embodied: false,
             window_us: 30_000_000,
             fps: 2.,
             recompute: false,
@@ -206,18 +208,46 @@ pub async fn run(
         "invalid semantic FPS"
     );
     let common = include_str!("../../prompts/semantic-common.md");
+    let domain = if options.embodied {
+        "This is an embodied demonstration. Describe visible manipulation, hand-object contacts and state transitions. Do not infer robot controls, calibrated geometry, or hidden state."
+    } else {
+        "This is a general video. Do not assume a robot or manipulation task. Describe visible activities; task, event, interaction, state and flag records may be empty when inapplicable. Subtasks describe chronological phases of the visible video."
+    };
+    let common = format!("{common}\n{domain}");
     let instruction = prompt(item)?;
     let name = format!("semantic.{item}");
     let ontology = (item == "event").then_some(&options.ontology);
     let ontology = ontology.and_then(|value| value.as_ref());
-    let params = json!({"stream_coverage_recipe":1,"contact_recipe":media::contact_proxy::RECIPE_VERSION,"window_us":options.window_us,"overlap_us":5_000_000,"fps":options.fps,"ontology":ontology,"prompt_hash":storage::cache_key(&(common,instruction,1))?,"kind":provider.endpoint.kind,"base_url":provider.endpoint.base_url,"model":provider.endpoint.model});
+    let params = json!({"stream_coverage_recipe":1,"contact_recipe":media::contact_proxy::RECIPE_VERSION,"window_us":options.window_us,"overlap_us":5_000_000,"fps":options.fps,"ontology":ontology,"mode":if options.embodied {"embodied"} else {"general"},"prompt_hash":storage::cache_key(&(&common,instruction,2))?,"kind":provider.endpoint.kind,"base_url":provider.endpoint.base_url,"model":provider.endpoint.model});
     let key = station_key(episode, stream, &name, &params)?;
     let directory = stream_directory(sidecar, stream, &episode.time.reference);
-    let path = directory.join(format!("{name}.jsonl"));
-    let product_path = directory.join(format!("{name}.conflicts.json"));
+    let path = super::layout::annotation(&directory, &name);
+    let product_path = super::layout::recovery(&directory, &name);
     let coverage = episode
         .video_coverage(stream)?
         .ok_or_else(|| anyhow::anyhow!("no stream coverage in episode"))?;
+    let windows = media::chunks(
+        coverage.end_us - coverage.start_us,
+        options.window_us,
+        5_000_000,
+    )?
+    .into_iter()
+    .map(|window| TimeRange::from_clip(coverage.start_us, window))
+    .collect::<Result<Vec<_>>>()?;
+    let passes = if item == "subtask" { 2 } else { 1 };
+    let total = windows.len() as u64 * passes + 1;
+    let mut done = 0;
+    let mut cached = 0;
+    let progress = |events: &mut dyn EventSink, done, cached, phase: &str| {
+        events.emit(Event::AnnotationProgress {
+            episode: episode.episode_id.clone(),
+            phase: format!("{stream} · {item} · {phase}"),
+            done,
+            total,
+            cached,
+        })
+    };
+    progress(events, 0, 0, "preparing");
     if !options.recompute && path.is_file() && product_path.is_file() {
         let annotation = AnnotationFile::read(&path)?;
         let saved: Product = serde_json::from_slice(&fs::read(&product_path)?)?;
@@ -226,6 +256,8 @@ pub async fn run(
             && storage::cache_key(&annotation)? == storage::cache_key(&saved.annotation)?
         {
             annotation.validate_in_range(coverage, ontology)?;
+            super::layout::publish(&directory, &saved, coverage, ontology)?;
+            progress(events, total, total, "cached");
             return Ok(Product {
                 annotation,
                 conflicts: saved.conflicts,
@@ -255,15 +287,7 @@ pub async fn run(
         .into_iter()
         .map(|t| episode.source_to_episode(stream, t))
         .collect::<Result<Vec<_>>>()?;
-    let windows = media::chunks(
-        coverage.end_us - coverage.start_us,
-        options.window_us,
-        5_000_000,
-    )?
-    .into_iter()
-    .map(|window| TimeRange::from_clip(coverage.start_us, window))
-    .collect::<Result<Vec<_>>>()?;
-    let checkpoints = Checkpoints::new(sidecar);
+    let checkpoints = Checkpoints::semantic(sidecar);
     let mut units = Vec::new();
     for (index, window) in windows.iter().enumerate() {
         interrupted(provider)?;
@@ -274,16 +298,23 @@ pub async fn run(
             && normalize(item, &unit, &header, &pts, ontology).is_ok()
         {
             units.push(unit);
+            done += passes;
+            cached += passes;
+            progress(events, done, cached, "cached");
             continue;
         }
         probes::check(provider, probes::Capability::Vision, workspace, false).await?;
         let sheet = contact::build_cached(episode, stream, *window, options.fps, workspace)?;
         let input = Input::Image(sheet.jpeg, "image/jpeg".into());
+        progress(events, done, cached, "model processing");
         let description = if item == "subtask" {
             let description_key = storage::cache_key(&(&unit_key, "description"))?;
             if !options.recompute
                 && let Some(text) = checkpoints.load::<String>(&description_key)?
             {
+                done += 1;
+                cached += 1;
+                progress(events, done, cached, "description cached");
                 text
             } else {
                 let value=provider.generate(&format!("{common}\nDescribe the sequence of visible actions in this window before segmenting it. Return an English description."),std::slice::from_ref(&input),json!({"type":"object","properties":{"description":{"type":"string"}},"required":["description"],"additionalProperties":false})).await?;
@@ -293,6 +324,8 @@ pub async fn run(
                     .ok_or_else(|| anyhow::anyhow!("missing subtask description"))?
                     .to_owned();
                 checkpoints.save(&description_key, &text)?;
+                done += 1;
+                progress(events, done, cached, "segmenting");
                 text
             }
         } else {
@@ -322,19 +355,12 @@ pub async fn run(
             window: index as u64 + 1,
             total: windows.len() as u64,
         });
-        events.emit(Event::Progress {
-            episode: episode.episode_id.clone(),
-            station: name.clone(),
-            done: index as u64 + 1,
-            total: windows.len() as u64,
-        });
+        done += 1;
+        progress(events, done, cached, "validated window");
     }
     let product = reconcile(item, &units, &header, &pts, coverage, ontology)?;
-    // Keep the conflict provenance recoverable if publication is interrupted.
-    storage::write_json(&product_path, &product)?;
-    product
-        .annotation
-        .publish_in_range(&path, coverage, ontology)?;
+    super::layout::publish(&directory, &product, coverage, ontology)?;
+    progress(events, total, cached, "published");
     Ok(product)
 }
 
@@ -478,8 +504,10 @@ mod tests {
                 .duration_us,
             2_000_000
         );
-        let annotation_path =
-            stream_directory(&sidecar, "short", "primary").join("semantic.subtask.jsonl");
+        let annotation_path = super::super::layout::annotation(
+            &stream_directory(&sidecar, "short", "primary"),
+            "semantic.subtask",
+        );
         let old_bytes = fs::read(&annotation_path).unwrap();
         for change in ["range", "mapping"] {
             let mut changed = episode.clone();
@@ -634,7 +662,7 @@ mod tests {
                 ]),
             }],
         };
-        let path = sidecar.join("semantic.subtask.jsonl");
+        let path = super::super::layout::annotation(&sidecar, "semantic.subtask");
         old.publish(&path, 7_000_000, None).unwrap();
         let before = fs::read(&path).unwrap();
         assert!(
@@ -671,7 +699,7 @@ mod tests {
         assert_eq!(product.annotation.records[1].end_us, 7_000_000);
         assert!(!product.conflicts.is_empty());
         super::super::pipeline::publish_conflicts(&episode, "primary", &sidecar).unwrap();
-        let flag_path = sidecar.join("semantic.flag.jsonl");
+        let flag_path = super::super::layout::annotation(&sidecar, "semantic.flag");
         let flags = AnnotationFile::read(&flag_path).unwrap();
         assert_eq!(flags.records[0].fields["kind"], "window_conflict");
         let bytes = fs::read(&flag_path).unwrap();
@@ -702,7 +730,11 @@ mod tests {
             .fields
             .insert("text".into(), json!("Different generation"));
         torn.conflicts.clear();
-        storage::write_json(&sidecar.join("semantic.subtask.conflicts.json"), &torn).unwrap();
+        storage::write_json(
+            &super::super::layout::recovery(&sidecar, "semantic.subtask"),
+            &torn,
+        )
+        .unwrap();
         super::super::pipeline::publish_conflicts(&episode, "primary", &sidecar).unwrap();
         assert_eq!(fs::read(&flag_path).unwrap(), bytes);
         let repaired = run(
@@ -719,7 +751,7 @@ mod tests {
         .unwrap();
         assert!(!repaired.conflicts.is_empty());
         let saved: Product = serde_json::from_slice(
-            &fs::read(sidecar.join("semantic.subtask.conflicts.json")).unwrap(),
+            &fs::read(super::super::layout::recovery(&sidecar, "semantic.subtask")).unwrap(),
         )
         .unwrap();
         assert_eq!(
