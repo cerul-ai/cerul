@@ -391,6 +391,8 @@ async fn run_inner(
         cancel.clone(),
     )?;
     vision.request_notice = options.request_notice.clone();
+    vision.share_limits(&embedding);
+    transcription.share_limits(&embedding);
     let space = config.space_id()?;
     let dims = config
         .embedding
@@ -510,32 +512,28 @@ async fn run_inner(
         for stream in selected {
             interrupted(&cancel)?;
             let mut errors = Vec::new();
-            events.begin(&episode.episode_id, &stream, "screen_text");
-            events.begin(&episode.episode_id, &stream, "transcript");
-            let (screen_result, transcript_result) = text_stations(
+            let StreamWork {
+                screen: screen_result,
+                speech: transcript_result,
+                embedding: embedding_result,
+                semantic: semantic_result,
+                descriptions: description_result,
+            } = Box::pin(stream_work(
                 &episode,
                 &stream,
                 &sidecar,
                 workspace,
-                &transcription,
+                config,
                 options,
+                &embedding,
+                &transcription,
+                &vision,
                 speech_blocked.get(&stream),
+                blocked.contains_key(&stream),
                 events,
                 &cancel,
-            )
-            .await;
-            events.end(
-                &episode.episode_id,
-                &stream,
-                "screen_text",
-                screen_result.is_ok(),
-            );
-            events.end(
-                &episode.episode_id,
-                &stream,
-                "transcript",
-                transcript_result.is_ok(),
-            );
+            ))
+            .await?;
             let mut screen = match screen_result {
                 Ok(file) => file,
                 Err(error) => {
@@ -565,22 +563,8 @@ async fn run_inner(
                 errors.push(error.clone());
             }
             let mut embedding_succeeded = false;
-            events.begin(&episode.episode_id, &stream, "embed");
             let count = if !blocked.contains_key(&stream) {
-                match embed::run(
-                    &episode,
-                    &stream,
-                    &sidecar,
-                    workspace,
-                    config,
-                    &embedding,
-                    &options.embedding,
-                    transcript.as_ref(),
-                    screen.as_ref(),
-                    events,
-                )
-                .await
-                {
+                match embedding_result {
                     Ok(count) => {
                         embedding_succeeded = true;
                         count
@@ -699,20 +683,7 @@ async fn run_inner(
                 super::understanding::mark_status(&episode, &stream, &sidecar, "disabled")?;
                 UnderstandingStatus::Disabled
             } else {
-                events.begin(&episode.episode_id, &stream, "understanding");
-                match super::understanding::run(
-                    &episode,
-                    &stream,
-                    &sidecar,
-                    workspace,
-                    &vision,
-                    options.embedding.recompute,
-                    transcript.as_ref(),
-                    screen.as_ref(),
-                    events,
-                )
-                .await
-                {
+                match semantic_result.context("missing understanding work")? {
                     Ok(product) => {
                         events.end(
                             &episode.episode_id,
@@ -726,27 +697,12 @@ async fn run_inner(
                             "overview",
                             product.errors.is_empty(),
                         );
-                        if embedding_succeeded {
-                            events.begin(&episode.episode_id, &stream, "description");
-                            match super::descriptions::run(
-                                &episode,
-                                &stream,
-                                &sidecar,
-                                workspace,
-                                config,
-                                &embedding,
-                                &product.scenes,
-                                options.embedding.recompute,
-                                events,
-                            )
-                            .await
-                            {
-                                Ok(count) => description_rows = count,
-                                Err(error) => {
-                                    interrupted(&cancel)?;
-                                    report.partial = true;
-                                    errors.push(format!("description index: {error}"));
-                                }
+                        match description_result {
+                            Ok(count) => description_rows = count,
+                            Err(error) => {
+                                interrupted(&cancel)?;
+                                report.partial = true;
+                                errors.push(format!("description index: {error}"));
                             }
                         }
                         if let Some(summary) =
@@ -835,6 +791,198 @@ async fn run_inner(
     events.end("", "", "finalize", !report.partial);
     events.finish(report.partial);
     Ok(report)
+}
+
+// Keep callbacks on the caller task while independent stages await shared providers.
+enum WorkEvent {
+    Data(Box<crate::events::Event>),
+    Begin(&'static str),
+    End(&'static str, bool),
+}
+struct StreamWork {
+    screen: Result<Option<AnnotationFile>>,
+    speech: Result<Option<AnnotationFile>>,
+    embedding: Result<usize>,
+    semantic: Option<Result<super::understanding::Product>>,
+    descriptions: Result<usize>,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stream_work(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    config: &Config,
+    options: &Options,
+    embedding: &Provider,
+    transcription: &Provider,
+    vision: &Provider,
+    speech_blocked: Option<&String>,
+    embedding_blocked: bool,
+    events: &mut super::progress::RunProgress<'_>,
+    cancel: &CancellationToken,
+) -> Result<StreamWork> {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (text_sender, text_receiver) = tokio::sync::oneshot::channel();
+    let primary = async {
+        let mut sink = |event| {
+            let _ = sender.send(WorkEvent::Data(Box::new(event)));
+        };
+        let _ = sender.send(WorkEvent::Begin("screen_text"));
+        let _ = sender.send(WorkEvent::Begin("transcript"));
+        let (screen, speech) = text_stations(
+            episode,
+            stream,
+            sidecar,
+            workspace,
+            transcription,
+            options,
+            speech_blocked,
+            &mut sink,
+            cancel,
+        )
+        .await;
+        let _ = sender.send(WorkEvent::End("screen_text", screen.is_ok()));
+        let _ = sender.send(WorkEvent::End("transcript", speech.is_ok()));
+        let screen_input = match &screen {
+            Ok(Some(file)) => Some(file.clone()),
+            _ if !options.no_ocr => retained_annotation(sidecar, episode, stream, "screen_text")?,
+            _ => None,
+        };
+        let speech_input = match &speech {
+            Ok(Some(file)) => Some(file.clone()),
+            _ if !options.no_audio => retained_annotation(sidecar, episode, stream, "transcript")?,
+            _ => None,
+        };
+        let _ = text_sender.send((screen_input.clone(), speech_input.clone()));
+        let _ = sender.send(WorkEvent::Begin("embed"));
+        let vectors = if embedding_blocked {
+            Ok(0)
+        } else {
+            embed::run(
+                episode,
+                stream,
+                sidecar,
+                workspace,
+                config,
+                embedding,
+                &options.embedding,
+                speech_input.as_ref(),
+                screen_input.as_ref(),
+                &mut sink,
+            )
+            .await
+        };
+        let _ = sender.send(WorkEvent::End(
+            "embed",
+            !embedding_blocked && vectors.is_ok(),
+        ));
+        Ok::<_, anyhow::Error>((screen, speech, vectors))
+    };
+    let semantic = async {
+        if options.no_understanding || config.vision.enabled == Some(false) {
+            return (None, Ok(0));
+        }
+        let mut scene_sink = |event| {
+            let _ = sender.send(WorkEvent::Data(Box::new(event)));
+        };
+        let _ = sender.send(WorkEvent::Begin("understanding"));
+        let analysis = super::understanding::analyze(
+            episode,
+            stream,
+            sidecar,
+            workspace,
+            vision,
+            options.embedding.recompute,
+            &mut scene_sink,
+        )
+        .await;
+        let _ = sender.send(WorkEvent::End(
+            "understanding",
+            analysis.as_ref().is_ok_and(|a| a.errors.is_empty()),
+        ));
+        let analysis = match analysis {
+            Ok(a) => a,
+            Err(e) => return (Some(Err(e)), Ok(0)),
+        };
+        let scenes = analysis.scenes.clone();
+        let descriptions = async {
+            if embedding_blocked {
+                return Ok(0);
+            }
+            let _ = sender.send(WorkEvent::Begin("description"));
+            let mut sink = |event| {
+                let _ = sender.send(WorkEvent::Data(Box::new(event)));
+            };
+            let result = super::descriptions::run(
+                episode,
+                stream,
+                sidecar,
+                workspace,
+                config,
+                embedding,
+                &scenes,
+                options.embedding.recompute,
+                &mut sink,
+            )
+            .await;
+            let _ = sender.send(WorkEvent::End("description", result.is_ok()));
+            result
+        };
+        let summary = async {
+            let (screen, speech) = text_receiver.await.context("text processing stopped")?;
+            let _ = sender.send(WorkEvent::Begin("overview"));
+            let mut sink = |event| {
+                let _ = sender.send(WorkEvent::Data(Box::new(event)));
+            };
+            let result = super::understanding::summarize(
+                episode,
+                stream,
+                sidecar,
+                vision,
+                options.embedding.recompute,
+                analysis,
+                speech.as_ref(),
+                screen.as_ref(),
+                &mut sink,
+            )
+            .await;
+            let _ = sender.send(WorkEvent::End(
+                "overview",
+                result.as_ref().is_ok_and(|p| p.errors.is_empty()),
+            ));
+            result
+        };
+        let (summary, descriptions) = tokio::join!(Box::pin(summary), Box::pin(descriptions));
+        (Some(summary), descriptions)
+    };
+    let work = async { tokio::join!(Box::pin(primary), Box::pin(semantic)) };
+    tokio::pin!(work);
+    let mut forward = |event| match event {
+        WorkEvent::Data(event) => events.emit(*event),
+        WorkEvent::Begin(stage) => events.begin(&episode.episode_id, stream, stage),
+        WorkEvent::End(stage, successful) => {
+            events.end(&episode.episode_id, stream, stage, successful)
+        }
+    };
+    let (primary, (semantic, descriptions)) = loop {
+        tokio::select! {
+            Some(event) = receiver.recv() => forward(event),
+            result = &mut work => break result,
+        }
+    };
+    while let Ok(event) = receiver.try_recv() {
+        forward(event);
+    }
+    let (screen, speech, embedding) = primary?;
+    Ok(StreamWork {
+        screen,
+        speech,
+        embedding,
+        semantic,
+        descriptions,
+    })
 }
 
 /// OCR runs on a blocking worker while ASR waits on the endpoint. Forward all

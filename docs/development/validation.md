@@ -166,3 +166,6 @@ and zero-model-call rebuilds. Use behavioral tests and the official loader in
 addition to compilation. Keep a copy of this checklist with the commit,
 platforms, fixture provenance, measured results, and remaining failures in the
 release evidence; empty checkboxes here do not describe a particular release.
+
+For dependency scheduling and the local delayed-model concurrency check, see
+[index performance](index-performance.md).

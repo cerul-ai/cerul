@@ -66,6 +66,7 @@ Then search your workspace:
 No path is needed when searching. --workspace DIR selects a separate library.
 Screen text runs locally; embeddings, speech, and descriptions use configured APIs.
 Compatible completed work is reused. --recompute processes it again.
+Independent model work shares --jobs (default 4) and --rpm across stages.
 One bar covers the whole run; ~ marks estimated progress within active work. Summarizing has its own budget. ETA uses rough estimates, local timings and measured work; API latency can change it. --json exposes confirmed progress.";
 
 const SEARCH_HELP: &str = "\
@@ -432,10 +433,10 @@ struct IndexArgs {
     /// Only these episodes (ids or local indexes), comma-separated.
     #[arg(long, help_heading = ADVANCED)]
     only: Option<String>,
-    /// Parallel model requests.
+    /// Maximum model requests in flight across indexing stages.
     #[arg(long, default_value_t = 4, help_heading = ADVANCED)]
     jobs: usize,
-    /// Cap on model requests per minute.
+    /// Shared cap on model requests per minute across indexing stages.
     #[arg(long, help_heading = ADVANCED)]
     rpm: Option<u32>,
     /// Store sidecars here instead of beside the videos.

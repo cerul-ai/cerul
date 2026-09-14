@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+static EXTRACTION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub const RECIPE: &str = "index-frames/2";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct Recipe {
@@ -108,6 +110,11 @@ pub fn get(
             );
         }
     }
+    // OCR and scene analysis may request the same cold frame cache together.
+    let _guard = EXTRACTION_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("frame extraction lock poisoned"))?;
+    super::check_cancellation()?;
     let manifest_path = directory.join("frames.json");
     if let Ok(bytes) = fs::read(&manifest_path)
         && let Ok(manifest) = serde_json::from_slice::<Manifest>(&bytes)

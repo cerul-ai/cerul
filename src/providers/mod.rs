@@ -343,6 +343,13 @@ impl Provider {
             .await?;
         Ok(())
     }
+    /// Share one invocation budget across concurrently scheduled model stages.
+    pub(crate) fn share_limits(&mut self, other: &Self) {
+        self.permits = other.permits.clone();
+        self.next = other.next.clone();
+        self.interval = other.interval;
+        self.jobs = other.jobs;
+    }
     pub fn concurrency(&self) -> usize {
         self.jobs
     }

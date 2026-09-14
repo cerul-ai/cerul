@@ -162,6 +162,13 @@ visible during slow requests. The success receipt waits for actual final publica
 partial runs never claim successful completion. JSON `index_progress.done` retains
 confirmed weighted work, while `ceiling` bounds the terminal's active-work estimate.
 
+Independent scene windows, speech windows, description vectors and overview groups
+run concurrently. OCR and scene analysis start alongside speech. Description
+vectors start as soon as scenes publish; the overview waits for scenes and text,
+then overlaps vector work. All model stages share `--jobs` (default 4) and `--rpm`;
+raising concurrency does not multiply the limit per stage. Frame extraction is
+shared, and publication/index bookkeeping stays ordered.
+
 Scene analysis and overview generation have separate weights. Summarizing reserves
 at least a quarter of their combined work budget, rather than treating a potentially
 slow overview as one more short scene window.
@@ -171,10 +178,10 @@ prior based on work size and configured concurrency is available before the firs
 API response. Successful measured stages refine local timing hints under
 `<workspace>/runtime/index-timing-<profile>.json`; profiles separate model/endpoints,
 chunk settings and concurrency, and contain no credentials or media paths.
-OCR and speech run concurrently, so their remaining times are combined with a
-maximum instead of being added together. Unmeasured reuse and failed stages do
-not train timings. Successful scene timings are saved after the complete product
-confirms success, using the scene interval without the following overview wait. Timing files are optional caches, never authoritative data.
+ETA follows the longest remaining dependency path, including parallel OCR, speech,
+scene analysis and downstream work, instead of adding concurrent stage times. Unmeasured reuse and failed stages do
+not train timings. Successful scene timings are saved at scene completion, independently of the
+following overview. Timing files are optional caches, never authoritative data.
 The estimate counts down between updates and is revised as work completes. If a
 request exceeds the prediction, `ETA updating` indicates the estimate is overdue;
 the approximate bar remains bounded within active work. API latency, retries, cache reuse and data

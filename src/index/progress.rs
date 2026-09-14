@@ -20,6 +20,7 @@ struct Stage {
     stream: String,
     station: &'static str,
     group: usize,
+    dependencies: Option<Vec<usize>>,
     units: f64,
     weight: f64,
     fraction: f64,
@@ -55,7 +56,7 @@ impl<'a> RunProgress<'a> {
     ) -> Result<Self> {
         // Store only a hash: no credentials, URLs, media paths, or request bodies.
         let profile = storage::cache_key(&(
-            "index-timing/2",
+            "index-timing/3",
             std::env::consts::ARCH,
             std::env::consts::OS,
             (
@@ -126,7 +127,7 @@ impl<'a> RunProgress<'a> {
                         "transcript",
                         group,
                         (seconds / 60.).ceil().max(1.),
-                        20.,
+                        20. / (options.jobs as f64).min((seconds / 60.).ceil().max(1.)),
                     );
                 }
                 group += 1;
@@ -154,7 +155,7 @@ impl<'a> RunProgress<'a> {
                         "understanding",
                         group,
                         windows,
-                        25.,
+                        25. / (options.jobs as f64).min(windows),
                     );
                     group += 1;
                     result.add(
@@ -163,7 +164,7 @@ impl<'a> RunProgress<'a> {
                         "overview",
                         group,
                         1.,
-                        (30. + windows * 3.).max(windows * 25. / 3.),
+                        30. + windows * 3.,
                     );
                     // A long summary is not just one more short scene request.
                     let len = result.stages.len();
@@ -177,13 +178,14 @@ impl<'a> RunProgress<'a> {
                         "description",
                         group,
                         windows,
-                        4.,
+                        4. / (options.jobs as f64).min(windows),
                     );
                     group += 1;
                 }
             }
         }
         result.add("", "", "finalize", group, 1., 3.);
+        result.link_dependencies();
         result.emit_overall(false, false);
         Ok(result)
     }
@@ -208,6 +210,7 @@ impl<'a> RunProgress<'a> {
             stream: stream.into(),
             station,
             group,
+            dependencies: None,
             units,
             weight: (rate * units).max(1.),
             fraction: 0.,
@@ -218,6 +221,35 @@ impl<'a> RunProgress<'a> {
             sample_elapsed: 0.,
             finished: false,
         });
+    }
+    fn link_dependencies(&mut self) {
+        for i in 0..self.stages.len() {
+            let stage = &self.stages[i];
+            let dependencies = self.stages[..i]
+                .iter()
+                .enumerate()
+                .filter_map(|(j, before)| {
+                    let same = before.episode == stage.episode && before.stream == stage.stream;
+                    let required = match stage.station {
+                        "prepare" | "finalize" => true,
+                        "embed" => same && matches!(before.station, "screen_text" | "transcript"),
+                        "overview" => {
+                            same && matches!(
+                                before.station,
+                                "screen_text" | "transcript" | "understanding"
+                            )
+                        }
+                        "description" => same && before.station == "understanding",
+                        _ => false,
+                    };
+                    // Different streams/episodes publish in order. Within a stream,
+                    // only actual inputs constrain when work can start.
+                    (required || before.episode != stage.episode || before.stream != stage.stream)
+                        .then_some(j)
+                })
+                .collect();
+            self.stages[i].dependencies = Some(dependencies);
+        }
     }
     pub fn begin(&mut self, episode: &str, stream: &str, station: &str) {
         if let Some(stage) = self.stages.iter_mut().find(|s| {
@@ -273,7 +305,8 @@ impl<'a> RunProgress<'a> {
         let done: f64 = self.stages.iter().map(|s| s.weight * s.fraction).sum();
         let mut groups: BTreeMap<usize, f64> = BTreeMap::new();
         let mut active = Vec::new();
-        for stage in &self.stages {
+        let mut ends = vec![0_f64; self.stages.len()];
+        for (index, stage) in self.stages.iter().enumerate() {
             if stage.finished {
                 continue;
             }
@@ -299,6 +332,9 @@ impl<'a> RunProgress<'a> {
             } else {
                 predicted
             };
+            if let Some(dependencies) = &stage.dependencies {
+                ends[index] = left + dependencies.iter().map(|&i| ends[i]).fold(0_f64, f64::max);
+            }
             groups
                 .entry(stage.group)
                 .and_modify(|n| *n = n.max(left))
@@ -314,7 +350,11 @@ impl<'a> RunProgress<'a> {
         };
         (
             ((done / total.max(1.) * 10_000.).floor() as u64).min(9999),
-            groups.values().sum::<f64>().max(1.),
+            if self.stages.iter().all(|s| s.dependencies.is_some()) {
+                ends.into_iter().fold(1_f64, f64::max)
+            } else {
+                groups.values().sum::<f64>().max(1.)
+            },
             phase,
         )
     }
@@ -633,6 +673,41 @@ mod tests {
         assert_eq!(run.history.seconds_per_unit["understanding"], learned);
         run.add("two", "front", "understanding", 2, 2., 25.);
         assert!((run.stages[2].weight - 8.).abs() < 0.4);
+    }
+
+    #[test]
+    fn parallel_eta_follows_dependencies_instead_of_summing_stages() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sink = |_: Event| {};
+        let mut run = empty(&mut sink, dir.path().join("history.json"));
+        for (i, (stage, seconds)) in [
+            ("prepare", 8.),
+            ("screen_text", 10.),
+            ("transcript", 20.),
+            ("embed", 12.),
+            ("understanding", 40.),
+            ("overview", 30.),
+            ("description", 10.),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            run.add(
+                "one",
+                if stage == "prepare" { "" } else { "front" },
+                stage,
+                i,
+                1.,
+                seconds,
+            );
+        }
+        run.add("", "", "finalize", 7, 1., 3.);
+        run.link_dependencies();
+        assert_eq!(run.snapshot().1, 81.); // prepare + max(text->embed, scenes->overview/description) + save
+        run.end("one", "", "prepare", true);
+        run.end("one", "front", "screen_text", true);
+        run.end("one", "front", "transcript", true);
+        assert_eq!(run.snapshot().1, 73.);
     }
 
     #[test]
