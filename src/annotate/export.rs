@@ -42,6 +42,11 @@ pub struct TrackCount {
 }
 
 pub fn text(record: &crate::annotations::Record) -> String {
+    if record.fields.contains_key("hands")
+        && let Ok(frame) = super::hands::Frame::from_record(record)
+    {
+        return format!("{} detected hands", frame.hands.len());
+    }
     if let Some(value) = record.fields.get("text").and_then(|value| value.as_str()) {
         return value.to_owned();
     }
@@ -88,6 +93,7 @@ pub fn summary(bundle: &Bundle) -> String {
     let mut rows = bundle
         .annotations
         .iter()
+        .filter(|file| file.header.name != super::hands::NAME)
         .flat_map(|file| file.records.iter().map(move |record| (file, record)))
         .collect::<Vec<_>>();
     rows.sort_by_key(|(file, record)| {
@@ -107,6 +113,19 @@ pub fn summary(bundle: &Bundle) -> String {
             markdown(&file.header.name),
             markdown(&text(record))
         ));
+    }
+    for file in bundle
+        .annotations
+        .iter()
+        .filter(|file| file.header.name == super::hands::NAME)
+    {
+        let detected = file
+            .records
+            .iter()
+            .filter_map(|r| super::hands::Frame::from_record(r).ok())
+            .filter(|f| !f.hands.is_empty())
+            .count();
+        output.push_str(&format!("\nHuman hands ({}): {} observed frames, {} frames with detections. Keypoints are in annotations.json.\n", markdown(&file.header.stream), file.records.len(), detected));
     }
     if bundle
         .annotations
@@ -147,7 +166,7 @@ pub fn publish(
             incomplete.push(format!("{}: {}", module.stream, module.annotation));
         }
     }
-    // Retain other current semantic types and reconciliation flags in the
+    // Retain other current semantic types, hand frames and reconciliation flags in the
     // portable view; a narrow rerun must not silently erase earlier results.
     for stream in &episode.streams {
         if !matches!(stream, crate::episode::Stream::Video { .. }) {
@@ -155,8 +174,11 @@ pub fn publish(
         }
         let directory =
             crate::index::stations::stream_directory(sidecar, stream.id(), &episode.time.reference);
-        for item in crate::annotations::SEMANTIC_ITEMS {
-            let name = format!("semantic.{item}");
+        for name in crate::annotations::SEMANTIC_ITEMS
+            .iter()
+            .map(|item| format!("semantic.{item}"))
+            .chain(std::iter::once(super::hands::NAME.to_owned()))
+        {
             if annotations
                 .iter()
                 .any(|file| file.header.stream == stream.id() && file.header.name == name)

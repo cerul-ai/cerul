@@ -29,6 +29,8 @@ use tokio_util::sync::CancellationToken;
 pub struct Options {
     pub items: Vec<String>,
     pub embodied: bool,
+    pub hands: bool,
+    pub no_semantic: bool,
     pub write_lerobot: bool,
     pub out: Option<PathBuf>,
     pub streams: String,
@@ -47,6 +49,8 @@ impl Default for Options {
         Self {
             items: Vec::new(),
             embodied: false,
+            hands: false,
+            no_semantic: false,
             write_lerobot: false,
             out: None,
             streams: "primary".into(),
@@ -64,6 +68,14 @@ impl Default for Options {
 }
 impl Options {
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.hands || self.embodied,
+            "--hands requires --embodied; human hands are optional in embodied demonstrations"
+        );
+        ensure!(
+            !self.no_semantic || (self.hands && self.items.is_empty() && !self.write_lerobot),
+            "--semantic none requires --hands and cannot write LeRobot subtasks"
+        );
         ensure!(
             self.out.is_none() || self.write_lerobot,
             "--out requires --write-lerobot"
@@ -400,7 +412,9 @@ async fn run_inner(
     for episode in episodes {
         let dataset = episode.source.format.starts_with("lerobot/");
         let vocabulary = ontology(options)?;
-        let mut items = if options.items.is_empty() {
+        let mut items = if options.no_semantic {
+            Vec::new()
+        } else if options.items.is_empty() {
             if options.embodied {
                 ["subtask", "event", "interaction", "state"]
                     .iter()
@@ -433,6 +447,11 @@ async fn run_inner(
                 )?
                 .len() as u64;
                 Ok(total
+                    + if options.hands {
+                        super::hands::plan(&episode, stream)?.times.len() as u64 + 1
+                    } else {
+                        0
+                    }
                     + items
                         .iter()
                         .map(|item| windows * if item == "subtask" { 2 } else { 1 } + 1)
@@ -441,6 +460,87 @@ async fn run_inner(
         let mut done = 0;
         let mut cached = 0;
         for stream in selected_streams {
+            if options.hands {
+                interrupted(&cancel)?;
+                let mut result = ModuleResult {
+                    episode: episode.episode_id.clone(),
+                    stream: stream.clone(),
+                    annotation: super::hands::NAME.into(),
+                    records: 0,
+                    complete: false,
+                    error: None,
+                    source: if dataset {
+                        episode.source.root.clone()
+                    } else {
+                        match episode.video(&episode.time.reference)? {
+                            crate::episode::Stream::Video { path, .. } => {
+                                episode.source.root.join(path)
+                            }
+                            _ => unreachable!(),
+                        }
+                    },
+                    dataset,
+                    path: None,
+                };
+                if !options.dry_run {
+                    let mut module_done = 0;
+                    let mut module_cached = 0;
+                    match super::hands::run(
+                        &episode,
+                        &stream,
+                        &sidecar,
+                        options.recompute,
+                        &mut |event| match event {
+                            Event::AnnotationProgress {
+                                phase,
+                                done: current,
+                                cached: reused,
+                                ..
+                            } => {
+                                done += current.saturating_sub(module_done);
+                                cached += reused.saturating_sub(module_cached);
+                                module_done = current;
+                                module_cached = reused;
+                                events.emit(Event::AnnotationProgress {
+                                    episode: episode.episode_id.clone(),
+                                    phase,
+                                    done,
+                                    total,
+                                    cached,
+                                });
+                            }
+                            other => events.emit(other),
+                        },
+                    ) {
+                        Ok(file) => {
+                            result.complete = true;
+                            result.records = file.records.len();
+                            let path = super::layout::annotation(
+                                &stream_directory(&sidecar, &stream, &episode.time.reference),
+                                super::hands::NAME,
+                            );
+                            result.path = Some(path.clone());
+                            events.emit(Event::Published {
+                                episode: episode.episode_id.clone(),
+                                stream: stream.clone(),
+                                annotation: super::hands::NAME.into(),
+                                records: result.records as u64,
+                                path,
+                            });
+                        }
+                        Err(error) => {
+                            interrupted(&cancel)?;
+                            report.partial = true;
+                            result.error = Some(error.to_string());
+                            events.emit(Event::Log {
+                                level: "error".into(),
+                                msg: format!("{} {stream} hands: {error}", episode.episode_id),
+                            });
+                        }
+                    }
+                }
+                report.modules.push(result);
+            }
             // Conflicts are projected into the flag file once every module of
             // this stream has run, so a flag module's real count is not known
             // until then. Announcing it early would disagree with the file.
@@ -679,6 +779,23 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hands_require_embodied_and_offline_selection_is_explicit() {
+        let mut options = Options {
+            hands: true,
+            ..Default::default()
+        };
+        assert!(options.validate().is_err());
+        options.embodied = true;
+        options.validate().unwrap();
+        options.no_semantic = true;
+        options.validate().unwrap();
+        options.write_lerobot = true;
+        assert!(options.validate().is_err());
+        options.write_lerobot = false;
+        options.hands = false;
+        assert!(options.validate().is_err());
+    }
     #[test]
     fn reject_contact_sheet_overflow_before_processing() {
         let mut options = Options {

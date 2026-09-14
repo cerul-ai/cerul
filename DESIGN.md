@@ -16,7 +16,7 @@ installation instructions are in the [documentation](docs/README.md).
 | Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, query instruction template, and applicable document template. The same model name at different endpoints is a different space. Queries must match exactly. |
 | Endpoints | Embedding defaults to Gemini Embedding 2 at 3072 dimensions. Embedding, vision, and optional transcription support configurable `kind = gemini \| openai` endpoints with user keys. `perception` is reserved and processing is not implemented. Missing perception must not block indexing/search. |
 | Default models | Required Gemini embedding: `gemini-embedding-2` at 3072 dimensions. Vision: `gemini-3.8-flash`. Optional ASR preset: `gemini-3.5-transcribe`. |
-| OCR | Embedded PP-OCRv6 small, approximately 31 MB of weights, CPU inference through `tract-onnx`, enabled by default. This is the only embedded model and the only exception to endpoint-based inference. |
+| OCR | Embedded PP-OCRv6 small, approximately 31 MB of weights, CPU inference through `tract-onnx`, enabled by default. Optional embodied hand annotation also embeds two CPU ONNX models (about 8 MB); these local models are the exceptions to endpoint-based inference. |
 | Retrieval | One compatible multimodal space with independent video, transcript, screen-text, and description rows. Default search retrieves each track separately plus original OCR/ASR full-text candidates, then uses fixed affine max with capped independent-evidence agreement. JSON retains original scores, ranks, intervals, and the recipe version. `[search] hybrid = false` restores the three-track raw-max baseline. Exact strings use `--text` substring matching. Annotation filtering precedes every candidate source. |
 | Annotations | Three fixed families: `semantic`, `grounding`, `world`. Subtypes may grow. All derived records are annotations. |
 | Time | Integer microseconds, half-open intervals, episode-relative time derived from PTS. |
@@ -27,7 +27,7 @@ installation instructions are in the [documentation](docs/README.md).
 | Versions | Increment `v0.0.x` without alpha/beta suffixes. Cargo.toml, packaging/dist.toml, and release tags must agree. Version numbers identify releases, not roadmap milestones. |
 | Distribution | GitHub Releases with a cargo-dist shell installer. Homebrew formula and npm wrapper artifacts are generated; registry/tap publication is separate. See [release artifacts](docs/development/releases.md). |
 | Telemetry | None. |
-| Scope | Video retrieval and semantic annotation require only third-party model credentials. `status --providers` probes only the implemented endpoints; the reserved perception endpoint is contacted solely when configured explicitly. Pose, depth, and segmentation depend on later perception services and must not be advertised as available. |
+| Scope | Video retrieval and semantic annotation require only third-party model credentials. `status --providers` probes only the implemented endpoints; the reserved perception endpoint is contacted solely when configured explicitly. Human-hand image keypoints are available locally only with `--embodied --hands`. Depth, segmentation, calibrated 3D pose and gripper detection are not implemented. |
 
 ## 2. Reader guides
 
@@ -102,22 +102,23 @@ last search is remembered in workspace `cache/last-search.json`. Players are
 tried in order: mpv, IINA, VLC, ffplay, then the system handler, which cannot
 start at a timestamp and says so.
 
-### `annotate <path>... --semantic [items] --grounding [items] --world [items]`
+### `annotate <path>... --semantic [items] --embodied --hands`
 
 | Options | Behavior/default |
 | --- | --- |
 | `--semantic` | Optional explicit types; default task, subtask, flag for every input format. |
 | `--embodied` | Demonstration prompts and default subtask, event, interaction, state. Explicit types override the default set. Mode and prompt recipe participate in cache identity. |
-| `--grounding` | Reserved; rejected as unsupported. |
+| `--hands` | Optional local human-hand keypoints. Requires `--embodied`; never enabled by mode alone. `--semantic none` makes this an offline hand-only run. |
+| `--grounding` | Generic selector remains reserved; use `--hands` for the implemented local subtype. |
 | `--world` | Reserved; rejected as unsupported. |
 | `--streams`, `--only`, `--ontology FILE`, `--window 30s`, `--fps 2` | Verbs are unrestricted unless an ontology is supplied, regardless of input format. |
 | `--write-lerobot`, `--out DIR` | No dataset mutation by default. Writeback accepts only an existing compatible v3.1 dataset. |
 
-Each subtype is a module: frames → timestamped contact sheet → schema-constrained model response → staging → validation → annotation publication → records index update. Invalid modules publish nothing; independent modules can still succeed.
+Each semantic subtype is a module: frames → timestamped contact sheet → schema-constrained model response → staging → validation → annotation publication → records index update. Invalid modules publish nothing; independent modules can still succeed.
 
 ### `render <video-or-annotations.json> --out FILE`
 
-Render published semantic labels into a new MP4 with no model calls. The caption
+Render published semantic labels and human-hand skeletons into a new MP4 with no model calls. Hand coordinates are applied to the original display image; no missing detections are interpolated. The caption
 panel preserves the source image; source timestamps and audio are rebased by the
 same clip origin. `--stream` selects a camera from a dataset bundle; non-unit
 time scaling is rejected. The output records Cerul version/generation metadata;
@@ -154,7 +155,7 @@ Results: `hits[]` containing episode, stream, start_us, end_us, optional frame_r
 
 Return a workspace overview or an episode's annotation inventory. Running `cerul` without a command is equivalent to status.
 
-Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes embedding, vision, and enabled transcription, plus perception only when explicitly configured, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not imply that this version implements grounding/world.
+Ordinary status does not probe remote endpoints; remote capabilities are null (unknown). `--providers` probes embedding, vision, and enabled transcription, plus perception only when explicitly configured, caching successful checks for seven days. `--recompute` refreshes checks; `--dry-run` performs none. Explicit probes report endpoint, model, check time, and error. Unsupported is false; missing keys and network errors remain null. Preserve other endpoint results when one fails and return exit code 6. The JSON root contains `capabilities`. Perception's advertised tasks do not enable additional grounding/world processing. Local hand annotation does not contact this endpoint.
 
 ## 4. Configuration and models
 
@@ -169,7 +170,7 @@ secret values. Provider adapters must preserve these request contracts:
 | Vision | `generateContent` with responseSchema. | `/v1/chat/completions` with image_url and json_schema. |
 | Transcription | Native word timestamps for `gemini-3.5-transcribe`; prompted segments for other Gemini models. | `/v1/audio/transcriptions`, verbose_json, segment timestamps. |
 
-Probe the remote calls actually needed, not command names. Index probes embedding only for pending vectors and transcription only for pending audio. Annotate probes selected vision/perception capabilities. Semantic search probes embedding only on a query-vector cache miss. Cached queries, filters alone, exact text, sidecar rebuilds, ordinary status, and cleanup make no probe calls.
+Probe the remote calls actually needed, not command names. Index probes embedding only for pending vectors and transcription only for pending audio. Semantic annotation probes vision only when pending model work requires it; local hand annotation never probes an endpoint. Semantic search probes embedding only on a query-vector cache miss. Cached queries, filters alone, exact text, sidecar rebuilds, ordinary status, and cleanup make no probe calls.
 
 Embedding probes send a sentence, image, and two-second video and check dimensions/modalities. Vision requests `{"ok":true}` from a 64×64 image. Transcription uses one second of silence. Perception reads `/capabilities`. Explicitly unsupported required capabilities fail with code 3 before processing media. Temporary network failures allow local probe/frame/OCR stations to finish, mark remote work incomplete, and return code 6; a later run fills the gaps.
 
@@ -245,7 +246,7 @@ An annotation JSONL file starts with a header containing $cerul=annotation/1, na
 | Family | Record subtypes and fields |
 | --- | --- |
 | semantic | task{text}; subtask{text,index}, with continuous coverage; event{verb,objects[],actor,outcome}; interaction{hand,object,contact}; state{object,attribute,before,after}; flag{kind,note}; progress{value,done}. |
-| grounding (reserved; not generated) | Coordinates normalized to [0,1] with frame_w/h. box{t_us,label,xyxy,track_id?}; affordance{t_us,label,points,action_hint}; trace{points[[t_us,x,y]],subject,label}; keypoint; mask{rle}. |
+| grounding | `hand` is implemented: one record per observed frame with dimensions and zero to two hands, each carrying a local track ID, handedness/score, presence confidence and 21 nullable normalized XY keypoints. No per-joint confidence or calibrated 3D is inferred. Other subtypes remain reserved: Coordinates normalized to [0,1] with frame_w/h. box{t_us,label,xyxy,track_id?}; affordance{t_us,label,points,action_hint}; trace{points[[t_us,x,y]],subject,label}; keypoint; mask{rle}. |
 | world (reserved; not generated) | Frames use T_<a>_from_<b>, units m or relative, xyzw quaternions, valid flags, null for missing values. camera{t_us,T_world_from_camera[7],intrinsics?,scale,valid}; hand{t_us,side,joints[21][3],valid}; object; depth{t_us,path,scale}; points. |
 
 **Index unit:** a 30-second video-stream interval in episode time, with up to three rows of kind video, speech, or screen. Write vectors to sidecars before indexing.

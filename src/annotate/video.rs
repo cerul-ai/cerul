@@ -51,10 +51,14 @@ pub fn load(input: &Path, workspace: &Path) -> Result<Bundle> {
         "source changed since annotation; annotate the current video first"
     );
     let mut annotations = Vec::new();
-    for item in SEMANTIC_ITEMS {
+    for name in SEMANTIC_ITEMS
+        .iter()
+        .map(|item| format!("semantic.{item}"))
+        .chain(std::iter::once(super::hands::NAME.to_owned()))
+    {
         let path = super::layout::annotation(
             &stream_directory(&sidecar, "primary", &episode.time.reference),
-            &format!("semantic.{item}"),
+            &name,
         );
         if path.is_file() {
             let file = AnnotationFile::read(&path)?;
@@ -63,7 +67,7 @@ pub fn load(input: &Path, workspace: &Path) -> Result<Bundle> {
             }
         }
     }
-    ensure!(!annotations.is_empty(), "no published semantic annotations");
+    ensure!(!annotations.is_empty(), "no published annotations");
     super::export::canonicalize(&mut annotations);
     // A completed export also records failed modules. Keep that exact view
     // while its included tracks match current sidecars; a failed recompute may
@@ -200,11 +204,15 @@ fn render_inner(
     let files = bundle
         .annotations
         .iter()
-        .filter(|file| file.header.stream == stream && file.header.name.starts_with("semantic."))
+        .filter(|file| {
+            file.header.stream == stream
+                && (file.header.name.starts_with("semantic.")
+                    || file.header.name == super::hands::NAME)
+        })
         .collect::<Vec<_>>();
     ensure!(
         !files.is_empty(),
-        "no published semantic annotations for selected stream"
+        "no published annotations for selected stream"
     );
     for file in &files {
         ensure!(
@@ -229,6 +237,7 @@ fn render_inner(
     media::check_dependencies()?;
     let records = files
         .iter()
+        .filter(|file| file.header.name.starts_with("semantic."))
         .flat_map(|file| {
             file.records
                 .iter()
@@ -240,11 +249,27 @@ fn render_inner(
         boundaries.insert(record.start_us);
         boundaries.insert(record.end_us);
     }
+    let hand_frames = files
+        .iter()
+        .find(|file| file.header.name == super::hands::NAME)
+        .map(|file| {
+            file.records
+                .iter()
+                .map(|r| Ok((r.start_us, r.end_us, super::hands::Frame::from_record(r)?)))
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    for (start, end, _) in &hand_frames {
+        boundaries.insert(*start);
+        boundaries.insert(*end);
+    }
     let boundaries = boundaries.into_iter().collect::<Vec<_>>();
     let directory = tempfile::tempdir()?;
     let mut concat = "ffconcat version 1.0\n".to_owned();
     let (display_width, display_height) = display_dimensions(&source)?;
     let width = display_width.max(32).div_ceil(2) * 2;
+    let height = display_height.div_ceil(2) * 2;
     let mut panel_height = 0;
     for (index, times) in boundaries.windows(2).enumerate() {
         interrupted(cancel)?;
@@ -269,9 +294,33 @@ fn render_inner(
                 .collect::<Vec<_>>()
                 .join("; "),
         };
+        let hand_index = hand_frames.partition_point(|(start, _, _)| *start <= times[0]);
+        let hand_frame = hand_index
+            .checked_sub(1)
+            .and_then(|i| hand_frames.get(i))
+            .filter(|(_, end, _)| times[0] < *end);
+        let caption = if caption.is_empty() && !hand_frames.is_empty() {
+            format!(
+                "Human hands: {} detected",
+                hand_frame.map_or(0, |(_, _, f)| f.hands.len())
+            )
+        } else {
+            caption
+        };
         let panel = super::caption::panel(width, &caption, watermark);
         panel_height = panel.height();
-        panel.save(directory.path().join(format!("{index}.png")))?;
+        let path = directory.path().join(format!("{index}.png"));
+        if hand_frames.is_empty() {
+            panel.save(path)?;
+        } else {
+            let mut overlay = image::RgbaImage::new(width, height + panel_height);
+            let panel = image::DynamicImage::ImageRgb8(panel).to_rgba8();
+            image::imageops::replace(&mut overlay, &panel, 0, height as i64);
+            if let Some((_, _, frame)) = hand_frame {
+                super::hands::draw(&mut overlay, frame, display_width, display_height);
+            }
+            overlay.save(path)?;
+        }
         concat.push_str(&format!(
             "file '{index}.png'\noption framerate 1000000\nduration {:.6}\n",
             (times[1] - times[0]) as f64 / 1e6
@@ -291,11 +340,11 @@ fn render_inner(
     let temp = tempfile::Builder::new()
         .suffix(".mp4")
         .tempfile_in(parent)?;
-    let height = display_height.div_ceil(2) * 2;
     let start = source_start as f64 / 1e6;
     let end = source_end as f64 / 1e6;
+    let overlay_y = if hand_frames.is_empty() { height } else { 0 };
     let filter = format!(
-        "[0:v:0]trim=start={start:.6}:end={end:.6},setpts=PTS-({start:.6})/TB,pad={width}:{}:0:0[video];[video][1:v:0]overlay=x=0:y={height}:eof_action=repeat:shortest=0[out]",
+        "[0:v:0]trim=start={start:.6}:end={end:.6},setpts=PTS-({start:.6})/TB,pad={width}:{}:0:0[video];[video][1:v:0]overlay=x=0:y={overlay_y}:eof_action=repeat:shortest=0[out]",
         height + panel_height
     );
     let mut command = media::command("ffmpeg");

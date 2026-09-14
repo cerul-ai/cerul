@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
 generated-by: cerul 0.0.10
-generated-sha256: 52fd7358f06ddd81ea063a1f0f8afef82f9256b33a0331d85cae8e28577375ef
+generated-sha256: d0ced1155d0a59570c91383bc9e3b4d8cbb0564220cc8d327c01b3cb6232fbb3
 ---
 
 # Cerul
@@ -114,14 +114,16 @@ cerul --json status ./video.mp4 --timeline
 Every input format defaults to `task,subtask,flag`. Use `--embodied` for
 demonstration prompts and `subtask,event,interaction,state`, or list `--semantic`
 items explicitly. Available items: task, subtask, event, interaction, state, flag,
-progress. Pose, depth, segmentation, and 3D trajectories are not implemented and
-must not be offered.
+progress. `--embodied --hands` adds local human-hand keypoints; add
+`--semantic none` for offline hand-only inference. Hands require embodied mode
+and are never enabled automatically. Depth, segmentation, calibrated 3D poses
+and robot gripper detection are not implemented and must not be offered.
 
 Each episode exports `annotations.json` and `summary.md` with Cerul provenance.
 Internal typed sidecars remain authoritative. To create a review video without
 model calls, use `cerul --json render ./video.mp4 --out ./video.annotated.mp4`.
 Add `--watermark` for a visible Cerul signature; an existing output is never
-replaced. Rendering labels does not generate hand keypoints or depth.
+replaced. Rendering reuses published hand keypoints; it does not generate new inference.
 
 **Annotate a LeRobot dataset.** Pass the dataset root that contains `meta/`.
 
@@ -230,11 +232,12 @@ Configure the required Gemini key and optional default speech transcription
 
 ### cerul annotate
 
-Generate semantic annotations (tasks, events, states) for videos
+Generate semantic labels and optional local hands for embodied videos
 
   <PATHS>...                  Videos, directories, or LeRobot datasets
-  --semantic <ITEMS>          Semantic items to generate, comma-separated (default set when no value is given)
+  --semantic <ITEMS>          Semantic items, comma-separated; use none with --hands for offline hand annotation
   --embodied                  Annotate embodied demonstrations (subtask, event, interaction, state)
+  --hands                     Add local human-hand keypoints to an embodied demonstration (CPU, no API calls)
   --write-lerobot             Write subtask annotations back into the LeRobot dataset
   --out <DIR>                 New output LeRobot dataset (requires --write-lerobot)
   --ontology <FILE>           Custom ontology file
@@ -247,7 +250,7 @@ Generate semantic annotations (tasks, events, states) for videos
 
 ### cerul render
 
-Render published semantic annotations into a new video without model calls
+Render published semantic labels and hand skeletons without model calls
 
   <PATH>                      Annotated video, or an exported annotations.json for a dataset episode
   --out <MP4>                 New review video (must not already exist)

@@ -31,7 +31,11 @@ recording provenance and licensing. During local editing, add
 `--allow-dirty` to the Cargo package command to inspect uncommitted changes.
 
 Core CI runs on Linux x86_64 and macOS arm64. Tests include embedded OCR on real
-pixels, cancellation, restart recovery, sidecar invalidation, and index rebuilds.
+pixels, embedded hand inference on a licensed public fixture, cancellation,
+restart recovery, sidecar invalidation, and index rebuilds. Hand tests cover
+embodied-only selection, an offline endpoint-free run, resumed tracker state,
+rotated/VFR video and skeleton rendering. They establish behavior, not accuracy
+on arbitrary first-person manipulation clips.
 The Linux job also checks the official LeRobot loader. CI does not use a model
 key. A successful CI run is evidence for its exact commit and fixtures, not a
 measurement of retrieval quality on arbitrary videos.

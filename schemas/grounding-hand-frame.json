@@ -1,0 +1,89 @@
+{
+  "$id": "https://cerul.ai/schemas/grounding-hand-frame/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Frame",
+  "type": "object",
+  "properties": {
+    "frame_height": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "frame_width": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "hands": {
+      "description": "Empty means no accepted detection in this observed frame.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Hand"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "frame_width",
+    "frame_height",
+    "hands"
+  ],
+  "$defs": {
+    "Hand": {
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "description": "Model hand-presence confidence; per-joint visibility is unavailable.",
+          "type": "number",
+          "format": "float"
+        },
+        "handedness": {
+          "$ref": "#/$defs/Side"
+        },
+        "handedness_score": {
+          "description": "Classification confidence for the side, not keypoint accuracy.",
+          "type": "number",
+          "format": "float"
+        },
+        "keypoints": {
+          "description": "MediaPipe order: wrist, thumb, index, middle, ring, little finger.\nDisplay-image normalized XY. Out-of-frame/nonfinite predictions are null.",
+          "type": "array",
+          "items": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "maxItems": 2,
+            "minItems": 2
+          },
+          "maxItems": 21,
+          "minItems": 21
+        },
+        "track_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "track_id",
+        "handedness",
+        "handedness_score",
+        "confidence",
+        "keypoints"
+      ]
+    },
+    "Side": {
+      "type": "string",
+      "enum": [
+        "left",
+        "right"
+      ]
+    }
+  }
+}

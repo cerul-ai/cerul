@@ -95,7 +95,9 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
                 {
                     continue;
                 }
-                if file.header.name.starts_with("semantic.") {
+                if file.header.name.starts_with("semantic.")
+                    || file.header.name == crate::annotate::hands::NAME
+                {
                     let coverage =
                         episode
                             .video_coverage(&file.header.stream)?

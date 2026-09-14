@@ -263,6 +263,35 @@ fn annotation_help_teaches_the_workflow_without_loading_configuration() {
 fn annotate_default_plan_and_m2_rejection_are_explicit() {
     let dir = tempfile::tempdir().unwrap();
     video(dir.path());
+    for args in [
+        vec!["--json", "annotate", "sample.mp4", "--hands", "--dry-run"],
+        vec![
+            "--json",
+            "annotate",
+            "sample.mp4",
+            "--semantic",
+            "none",
+            "--dry-run",
+        ],
+    ] {
+        assert_eq!(cli(dir.path(), &args).status.code(), Some(2));
+    }
+    for (extra, count) in [
+        (vec!["--embodied", "--hands"], 5),
+        (vec!["--embodied", "--hands", "--semantic", "none"], 1),
+    ] {
+        let mut args = vec!["--json", "annotate", "sample.mp4", "--dry-run"];
+        args.extend(extra);
+        let output = cli(dir.path(), &args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let value = final_json(&output);
+        assert_eq!(value["modules"].as_array().unwrap().len(), count);
+        assert_eq!(value["modules"][0]["annotation"], "grounding.hand");
+    }
     let output = cli(
         dir.path(),
         &["--json", "annotate", "sample.mp4", "--dry-run"],

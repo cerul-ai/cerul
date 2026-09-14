@@ -685,6 +685,9 @@ fn facts(out: &mut dyn Write, palette: &Palette, rows: &[(&str, String)]) -> io:
 /// The `--semantic` value a person types, from the annotation's internal name.
 fn item_name(annotation: &str) -> &str {
     let item = annotation.rsplit('/').next().unwrap_or(annotation);
+    if item == "grounding.hand" {
+        return "hand frames";
+    }
     item.strip_prefix("semantic.").unwrap_or(item)
 }
 
@@ -1831,7 +1834,31 @@ pub fn annotate(
             .map(|module| module.records)
             .sum();
         let records = export.map(|export| export.records).unwrap_or(records);
-        writeln!(out, "{mark} {} · {records} records", palette.bold(&title))?;
+        let hand_frames: usize = export
+            .map(|e| {
+                e.tracks
+                    .iter()
+                    .filter(|t| t.annotation == "grounding.hand")
+                    .map(|t| t.records)
+                    .sum()
+            })
+            .unwrap_or_else(|| {
+                modules
+                    .iter()
+                    .filter(|m| m.complete && m.annotation == "grounding.hand")
+                    .map(|m| m.records)
+                    .sum()
+            });
+        if hand_frames > 0 {
+            writeln!(
+                out,
+                "{mark} {} · {} labels · {hand_frames} hand frames",
+                palette.bold(&title),
+                records - hand_frames
+            )?;
+        } else {
+            writeln!(out, "{mark} {} · {records} records", palette.bold(&title))?;
+        }
         writeln!(out)?;
         // Cameras of one episode share a file name, so the stream has to appear
         // whenever more than one of them was annotated.

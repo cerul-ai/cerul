@@ -398,6 +398,21 @@ fn annotate(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
     let mut extra = vec![path];
     if embodied {
         extra.push("--embodied".to_owned());
+        let choices = [
+            Choice::new(
+                "Semantic labels only",
+                "human or robot demonstrations",
+                false,
+            ),
+            Choice::new(
+                "Also track human hands",
+                "local CPU · 21 keypoints per hand",
+                true,
+            ),
+        ];
+        if select(palette, "Human-hand annotation", &choices).ok()?? {
+            extra.push("--hands".to_owned());
+        }
     }
     if let Some(episodes) = &episodes {
         extra.extend(lerobot_scope(palette, episodes)?);

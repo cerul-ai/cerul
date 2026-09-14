@@ -112,14 +112,16 @@ cerul --json status ./video.mp4 --timeline
 Every input format defaults to `task,subtask,flag`. Use `--embodied` for
 demonstration prompts and `subtask,event,interaction,state`, or list `--semantic`
 items explicitly. Available items: task, subtask, event, interaction, state, flag,
-progress. Pose, depth, segmentation, and 3D trajectories are not implemented and
-must not be offered.
+progress. `--embodied --hands` adds local human-hand keypoints; add
+`--semantic none` for offline hand-only inference. Hands require embodied mode
+and are never enabled automatically. Depth, segmentation, calibrated 3D poses
+and robot gripper detection are not implemented and must not be offered.
 
 Each episode exports `annotations.json` and `summary.md` with Cerul provenance.
 Internal typed sidecars remain authoritative. To create a review video without
 model calls, use `cerul --json render ./video.mp4 --out ./video.annotated.mp4`.
 Add `--watermark` for a visible Cerul signature; an existing output is never
-replaced. Rendering labels does not generate hand keypoints or depth.
+replaced. Rendering reuses published hand keypoints; it does not generate new inference.
 
 **Annotate a LeRobot dataset.** Pass the dataset root that contains `meta/`.
 

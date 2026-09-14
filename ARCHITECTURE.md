@@ -13,7 +13,7 @@ the behavior, storage contracts, and invariants implementations must preserve.
 | Media and time | [episode.rs](src/episode.rs), [media/](src/media), [ocr.rs](src/ocr.rs) | Discover media properties, map episode time, prepare model inputs, and run embedded OCR. |
 | Providers | [providers/](src/providers) | Call configured endpoints, validate capabilities, and resolve scoped credentials. |
 | Indexing | [index/pipeline.rs](src/index/pipeline.rs), [index/](src/index) | Discover inputs, resume processing stations, publish sidecars, and build search indexes. |
-| Annotations | [annotate/pipeline.rs](src/annotate/pipeline.rs), [annotations/](src/annotations) | Generate semantic modules, validate records, and publish annotations. |
+| Annotations | [annotate/pipeline.rs](src/annotate/pipeline.rs), [annotate/hands.rs](src/annotate/hands.rs), [annotations/](src/annotations) | Generate semantic modules and optional embodied CPU hand keypoints, validate records, and publish annotations. |
 | Retrieval | [search/](src/search) | Apply temporal filters, search vectors or text, and export clips. |
 | Dataset writeback | [lerobot.rs](src/lerobot.rs), [lerobot/](src/lerobot) | Read datasets and stage, validate, publish, or recover subtask writeback. |
 | Persistence and maintenance | [storage.rs](src/storage.rs), [status.rs](src/status.rs), [clean.rs](src/clean.rs) | Atomic writes and locks, status reporting, and explicit data or cache removal. |

@@ -2,7 +2,8 @@
 
 Status: design rationale. Explicit modes, aggregate progress, portable exports,
 private semantic storage and semantic review-video rendering are implemented.
-Perception integration remains proposed. DESIGN.md is the implementation baseline.
+Optional local human-hand inference is implemented; depth is deferred. DESIGN.md
+is the implementation baseline.
 
 ## Observed problems
 
@@ -114,42 +115,30 @@ test interruption boundaries before moving files. Do not change existing
 sample data during the design phase. An optional single-file export may ease
 sharing but is not a new competing source of truth.
 
-## Perception and rendered video
+## Local hands and rendered video
 
-Proposed future workflow:
+The accepted scope is local hand annotation inside the CLI. Depth and hosted
+perception integration are deferred. Generic `--grounding` and `--world` selectors
+remain unavailable. `--embodied` selects semantic intent only; `--hands` requires
+that mode and explicitly opts into human-hand detection. Robot demonstrations
+need not contain human hands. `--semantic none` with both flags runs hands alone.
 
-```text
-cerul annotate ./demo.mp4 --embodied --grounding keypoint --world depth
-cerul render ./demo.mp4 --overlay subtask,hand --depth-panel --out ./demo.annotated.mp4
-```
+Embed the Apache-2.0 OpenCV Zoo MediaPipe palm/landmark ONNX conversions and reuse
+tract-onnx CPU inference. Rust owns image transforms, NMS and temporal association;
+this is not the full MediaPipe Tasks tracking graph. No new Python/OpenCV/GPU
+runtime or hosted service is part of the CLI. Preserve model revisions and hashes.
 
-Hand/depth inference and the perception composition options above are currently
-unavailable. Semantic-only `render` is implemented. Define and implement a concrete
-perception endpoint contract before exposing the options. The Rust CLI should
-orchestrate configurable endpoints and local composition without bundling a
-Python/PyTorch runtime. Missing perception must not block semantic-only work.
-Explicitly requested unavailable perception must fail preflight before billing.
+Use every observed frame, integer-microsecond timestamps and bounded five-second
+decode/checkpoint chunks. Restore tracker state only from matching checkpoints.
+Publish a complete `grounding.hand` sidecar atomically; retain previous publication
+on failure. Missing detections remain empty, and invalid/out-of-frame points null.
+Expose only image XY, hand-presence confidence and side classification confidence.
+Do not invent per-joint visibility, world poses or robot actions.
 
-Start with 2D hand keypoints, stable tracks, handedness, confidence, visibility,
-and source timestamps. Human-hand detection does not cover robot grippers.
-Treat occluded or missing joints as missing, not zero-valued positions. Add
-relative video depth with validity masks and temporally consistent scaling.
-Persist numerical depth independently of its colorized preview. Metric depth
-requires an explicit scale/unit contract and separate validation. Hand-local
-3D points are not automatically camera/world-frame robot coordinates.
-
-Rendering reads published annotations without model calls. First deliver
-semantic labels on video; later add skeletons and a depth panel. Preserve source
-PTS, episode offsets, audio synchronization, and variable-frame-rate behavior.
-Write a new video atomically; retain original video and raw annotations. A
-burned-in MP4 is a review artifact, not a replacement for training data. Camera
-calibration, robot action/state, and synchronized sensors cannot be recovered
-merely by compositing an overlay.
-
-Candidate references, not chosen integrations:
-
-- [MediaPipe hand landmarks](https://ai.google.dev/edge/api/mediapipe/python/mp/tasks/vision/HandLandmarkerResult)
-- [Video Depth Anything](https://github.com/DepthAnything/Video-Depth-Anything)
+Portable exports retain current hand tracks on narrow semantic reruns. The summary
+reports hand coverage without rows of coordinates. Rendering reads the published
+track and overlays skeletons on the source image, adding semantic captions below.
+A rendered MP4 remains a review artifact; structured labels remain authoritative.
 
 ## Delivery and acceptance
 
@@ -159,12 +148,11 @@ Candidate references, not chosen integrations:
    partial publication, redirected output, and JSON separation.
 2. Semantic video rendering and readable summary; then storage migration with
    legacy-read, interrupted-publication and zero-model-call rebuild checks.
-3. Endpoint-backed hands/depth, then composition. Evaluate real first-person
-   hand occlusion, left/right and track stability, temporal depth flicker,
-   valid scale, and audiovisual synchronization. Verify per-frame timestamp
-   alignment rather than relying on visually plausible examples alone.
+3. Embedded CPU hands and composition. Evaluate real first-person occlusion,
+   left/right and track stability, interruption recovery and audiovisual
+   synchronization. Verify per-frame timestamps, including VFR and rotation.
 
-Implementation changes require repository fmt/clippy/test gates. Perception
+Implementation changes require repository fmt/clippy/test gates. Hand
 release acceptance additionally requires both supported platforms and real
-endpoint inference; schema-only evidence is insufficient. Existing release
+CPU model inference; schema-only evidence is insufficient. Existing release
 gates, including official LeRobot loader round-trips, still apply.

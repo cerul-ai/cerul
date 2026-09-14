@@ -53,6 +53,8 @@ Examples:
       Label the first LeRobot episode with the general defaults. Add --embodied for demonstrations.
   cerul annotate ./video.mp4 --semantic --dry-run
       Preview the work without writing files or calling models.
+  cerul annotate ./video.mp4 --embodied --hands --semantic none
+      Track human hands locally on CPU, with no key or network required.
 
 Types: task, subtask, event, interaction, state, flag, progress.
 Defaults: task,subtask,flag for every format; --embodied selects subtask,event,interaction,state.
@@ -61,8 +63,9 @@ LeRobot: annotations live in .cerul/episodes/<episode_index>/ inside the dataset
 --out is a new LeRobot dataset copy and requires --write-lerobot; it is not a
 JSONL export directory. See the LeRobot guide for supported writeback versions.
 
-Uses your configured vision endpoint (Gemini by default): cerul auth set.
-Pose, depth, and 3D trajectories are not supported in this version.
+Semantic labels use your configured vision endpoint (Gemini by default): cerul auth set.
+--hands requires --embodied and is never enabled automatically. Add --semantic none for hands only.
+Depth, calibrated 3D poses, and robot gripper detection are not supported.
 Guide: https://github.com/cerul-ai/cerul/blob/main/docs/annotation.md";
 
 #[derive(Parser)]
@@ -140,14 +143,14 @@ enum Command {
     Auth(AuthArgs),
     /// Configure the required Gemini key and optional default speech transcription.
     Config,
-    /// Generate semantic annotations (tasks, events, states) for videos.
+    /// Generate semantic labels and optional local hands for embodied videos.
     #[command(
         arg_required_else_help = true,
         long_about = "Label tasks, action steps, events, interactions, and states in videos or LeRobot demonstrations. Run directly on your media; indexing is not required.",
         before_help = ANNOTATE_EXAMPLES
     )]
     Annotate(AnnotateArgs),
-    /// Render published semantic annotations into a new video without model calls.
+    /// Render published semantic labels and hand skeletons without model calls.
     Render {
         /// Annotated video, or an exported annotations.json for a dataset episode.
         path: PathBuf,
@@ -232,12 +235,15 @@ struct AnnotateArgs {
     /// Videos, directories, or LeRobot datasets.
     #[arg(required = true)]
     paths: Vec<PathBuf>,
-    /// Semantic items to generate, comma-separated (default set when no value is given).
+    /// Semantic items, comma-separated; use none with --hands for offline hand annotation.
     #[arg(long,num_args=0..=1,default_missing_value="default", value_name = "ITEMS")]
     semantic: Option<String>,
     /// Annotate embodied demonstrations (subtask, event, interaction, state).
     #[arg(long)]
     embodied: bool,
+    /// Add local human-hand keypoints to an embodied demonstration (CPU, no API calls).
+    #[arg(long, requires = "embodied")]
+    hands: bool,
     /// Write subtask annotations back into the LeRobot dataset.
     #[arg(long)]
     write_lerobot: bool,
@@ -1344,12 +1350,14 @@ async fn execute(
             }
             let config = config(cli).map_err(|e| category(2, e))?;
             let items = match args.semantic.as_deref() {
-                Some("default") | None => Vec::new(),
+                Some("default" | "none") | None => Vec::new(),
                 Some(value) => value.split(',').map(str::to_owned).collect(),
             };
             let options = cerul::annotate::pipeline::Options {
                 items,
                 embodied: args.embodied,
+                hands: args.hands,
+                no_semantic: args.semantic.as_deref() == Some("none"),
                 write_lerobot: args.write_lerobot,
                 out: args.out.clone(),
                 streams: args.streams.clone(),

@@ -132,6 +132,7 @@ pub fn summarize_record(annotation: &str, record: &crate::annotations::Record) -
         .strip_prefix("semantic.")
         .unwrap_or(annotation);
     match item {
+        "grounding.hand" => crate::annotate::export::text(record),
         "scene" => text("description"),
         "section" => text("title"),
         "summary" => format!("{} — {}", text("title"), text("summary")),
@@ -214,6 +215,9 @@ pub fn timeline(
     options: &TimelineOptions,
 ) -> Result<Timeline> {
     let wanted = options.kind.as_ref().map(|kind| {
+        if matches!(kind.as_str(), "hand" | "hands" | "grounding.hand") {
+            return crate::annotate::hands::NAME.to_owned();
+        }
         let item = kind.strip_prefix("semantic.").unwrap_or(kind);
         format!("semantic.{item}")
     });
@@ -251,7 +255,9 @@ pub fn timeline(
             );
             for path in crate::annotate::layout::files(&directory)? {
                 let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-                if !name.starts_with("semantic.") || name.contains("conflicts") {
+                if (!name.starts_with("semantic.") && name != crate::annotate::hands::NAME)
+                    || name.contains("conflicts")
+                {
                     continue;
                 }
                 let file = AnnotationFile::read(&path)?;
@@ -366,7 +372,9 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
                 {
                     continue;
                 }
-                if file.header.name.starts_with("semantic.") {
+                if file.header.name.starts_with("semantic.")
+                    || file.header.name == crate::annotate::hands::NAME
+                {
                     let coverage = episode
                         .video_coverage(stream.id())?
                         .context("annotation stream has no episode coverage")?;
