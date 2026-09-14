@@ -54,7 +54,7 @@ Examples:
   cerul annotate ./video.mp4 --semantic --dry-run
       Preview the work without writing files or calling models.
   cerul annotate ./video.mp4 --embodied --hands --semantic none
-      Track human hands locally on CPU, with no key or network required.
+      Track human hands locally on CPU, with no model key required.
 
 Types: task, subtask, event, interaction, state, flag, progress.
 Defaults: task,subtask,flag for every format; --embodied selects subtask,event,interaction,state.
@@ -78,6 +78,9 @@ Guide: https://github.com/cerul-ai/cerul/blob/main/docs/annotation.md";
     disable_help_subcommand = true
 )]
 struct Cli {
+    /// Check media tools without downloading or selecting automatic repairs.
+    #[arg(long, global = true, help_heading = ADVANCED)]
+    no_auto_deps: bool,
     /// Machine-readable output: final JSON on stdout, NDJSON events on stderr.
     #[arg(long, global = true, help_heading = GLOBAL)]
     json: bool,
@@ -1119,6 +1122,24 @@ fn readable(paths: &[PathBuf]) -> Result<()> {
     }
     Ok(())
 }
+
+async fn prepare_media(
+    cli: &Cli,
+    workspace: &Path,
+    sink: &Sink,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let events = sink.clone();
+    cerul::media::dependencies::prepare(
+        workspace,
+        !cli.no_auto_deps,
+        cli.dry_run,
+        cancel,
+        &mut |event| events.emit(event),
+    )
+    .await
+    .map_err(|error| category(3, error))
+}
 fn names(workspace: &Path) -> BTreeMap<String, PathBuf> {
     discover::read_registry(workspace)
         .map(|entries| {
@@ -1329,6 +1350,8 @@ async fn execute(
             stream,
             watermark,
         }) => {
+            readable(std::slice::from_ref(path))?;
+            prepare_media(cli, &workspace, sink, &cancel).await?;
             sink.spinner("Rendering published annotations");
             let report = cerul::annotate::video::render(
                 path,
@@ -1375,7 +1398,7 @@ async fn execute(
             };
             options.validate().map_err(|e| category(2, e))?;
             readable(&args.paths)?;
-            cerul::media::check_dependencies().map_err(|e| category(3, e))?;
+            prepare_media(cli, &workspace, sink, &cancel).await?;
             let events = sink.clone();
             let mut report = cerul::annotate::pipeline::run(
                 &args.paths,
@@ -1427,6 +1450,9 @@ async fn execute(
                 request_notice: (!cli.yes).then(|| sink.notice(MEDIA_NOTICE)),
             };
             options.validate().map_err(|e| category(2, e))?;
+            if !cli.dry_run && (options.save.is_some() || options.preview) {
+                prepare_media(cli, &workspace, sink, &cancel).await?;
+            }
             sink.spinner("Searching…");
             let report = cerul::search::run(&workspace, &config, &options, cancel).await;
             sink.finish();
@@ -1608,8 +1634,8 @@ async fn execute(
                 CliError(2, "chunk must be at most 32s".into())
             );
             readable(&args.paths)?;
-            cerul::media::check_dependencies().map_err(|e| category(3, e))?;
             let mut resolved = config(cli).map_err(|e| category(2, e))?;
+            prepare_media(cli, &workspace, sink, &cancel).await?;
             if !args.no_audio && resolved.transcription.enabled.is_none() {
                 let pending = pipeline::pending_transcription(
                     &args.paths,

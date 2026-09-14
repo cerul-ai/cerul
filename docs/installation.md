@@ -90,7 +90,7 @@ semantic-search setup. Configure a key and rerun the same command to finish.
 | Symptom | Next step |
 | --- | --- |
 | An older Cerul version runs after installation | Run `type -a cerul` to find competing installations, then put the new installer's directory first on PATH and open a new terminal |
-| `ffmpeg` or `ffprobe` missing/too old | Check the executable path and version printed in the error; select compatible tools with the overrides below |
+| `ffmpeg` or `ffprobe` missing/too old | Processing commands automatically prepare compatible media tools; if download fails, retry with network access or configure compatible local tools below |
 | Unknown encoder `libx264` | Use a build that includes this encoder |
 | Missing model credential | Set the endpoint's configured key environment variable without exposing the value |
 | Provider quota or rate limit | Lower `--jobs`, set an account-appropriate `--rpm`, and resume after quota is available |
@@ -109,14 +109,31 @@ Continue with the [video tutorial](video-search.md) or the
 Resolution order is `CERUL_FFMPEG` / `CERUL_FFPROBE`, then the bundled
 `cerul-ffmpeg` / `cerul-ffprobe` next to the running CLI, then installed
 `cerul-ffmpeg` / `cerul-ffprobe` on PATH, then system `ffmpeg` / `ffprobe` on PATH.
-Overrides select an executable path, not a shell command. An invalid override
-fails instead of silently selecting another tool. Source-only developers may
+Overrides select an executable path, not a shell command. Processing commands
+validate both versions and a small H.264/AAC encode/probe before media work or
+model requests. If selected tools fail, Cerul first tries compatible local tools,
+then reuses or installs a verified media bundle in `<workspace>/runtime/media`
+(default `~/.cerul/runtime/media`). This selection applies to the current command;
+it does not rewrite overrides, Homebrew/Conda installations, or the running CLI.
+The original command continues after successful repair. Source-only developers may
 use `cargo build --release --locked` with system FFmpeg/ffprobe 6.0+ and libx264,
 or reuse the media tools from an existing Cerul installation on PATH.
 Git builds with `N-...` version names are checked using their loaded libavutil
 version; an unfamiliar release label alone does not mean the tools are too old.
 The bundled executables intentionally disable FFmpeg network input protocols;
 Cerul processes local media files.
+
+Compatible local tools work offline and do not trigger update requests. Automatic
+repair uses the pinned v0.0.10 media bundle for macOS arm64 or Linux x86_64, verifies
+its embedded SHA-256, retains dependency licenses, and publishes the tool pair
+atomically after a codec check. Interrupted downloads can be retried; incomplete
+installs are never selected. Other platforms need compatible local tools.
+
+`--no-auto-deps` disables automatic fallback and download for environments that
+require the explicitly selected tools. `--dry-run` checks selected tool versions
+without downloading or writing an installation. Help, status, and searches that
+do not export or preview clips do not install media tools. This is dependency
+repair, not an automatic upgrade of the Cerul CLI itself.
 
 ## Build from source
 

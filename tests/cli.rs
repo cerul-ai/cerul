@@ -458,7 +458,15 @@ fn search_rejects_invalid_kind_and_missing_save_tools_before_workspace_writes() 
     for (args, code) in [
         (vec!["--json", "search", "--filter", "kind=video"], 2),
         (
-            vec!["--json", "search", "cup", "--text", "--save", "clips"],
+            vec![
+                "--json",
+                "--no-auto-deps",
+                "search",
+                "cup",
+                "--text",
+                "--save",
+                "clips",
+            ],
             3,
         ),
     ] {

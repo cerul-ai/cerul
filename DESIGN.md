@@ -345,3 +345,15 @@ disabled ASR, no audio, successful empty transcription, and failures remain
 distinguishable. The [hybrid retrieval plan](docs/design/hybrid-video-search.md)
 records the initial default fusion and follow-up evaluation work. Automatic ANN
 selection remains disabled pending representative performance measurements.
+
+### Media dependency preflight
+
+CLI media processing validates FFmpeg/ffprobe versions and an H.264/AAC codec
+round-trip before processing or model calls. Compatible local tools require no
+network request. Missing or incompatible tools trigger automatic preparation of a
+pinned, checksum-verified Cerul media bundle in `<workspace>/runtime/media`, with
+licenses, bounded extraction, cancellation, a repair lock, and atomic publication.
+Selection is scoped to the operation and propagated into media CPU workers; the
+running CLI and system/package-manager installations are not replaced. Library
+operations do not download dependencies implicitly. `--no-auto-deps` disables
+fallback and installation; dry runs only check selected tool versions.

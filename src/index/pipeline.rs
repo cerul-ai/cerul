@@ -819,24 +819,27 @@ async fn text_stations(
             cancel.clone(),
             sender.clone(),
         );
+        let tools = crate::media::current_tools();
         tokio::task::spawn_blocking(move || {
-            if options.no_ocr {
-                return Ok(None);
-            }
-            crate::media::with_sync_cancellation(cancel.clone(), || {
-                stations::screen_text_with_workspace(
-                    &episode,
-                    &stream,
-                    &sidecar,
-                    &workspace,
-                    options.embedding.recompute,
-                    options.jobs,
-                    &mut |event| {
-                        let _ = sender.send(event);
-                    },
-                    &cancel,
-                )
-                .map(Some)
+            crate::media::with_sync_tools(tools, || {
+                if options.no_ocr {
+                    return Ok(None);
+                }
+                crate::media::with_sync_cancellation(cancel.clone(), || {
+                    stations::screen_text_with_workspace(
+                        &episode,
+                        &stream,
+                        &sidecar,
+                        &workspace,
+                        options.embedding.recompute,
+                        options.jobs,
+                        &mut |event| {
+                            let _ = sender.send(event);
+                        },
+                        &cancel,
+                    )
+                    .map(Some)
+                })
             })
         })
     };

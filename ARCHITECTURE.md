@@ -44,6 +44,12 @@ Library hosts can scope credentials with `providers::with_credentials` and suppl
 a lazy resolver with `providers::with_credential_resolver`. The library does not
 read CLI credential files; environment values take precedence. Bundled media
 tools are resolved by `media::command`, with explicit overrides taking precedence.
+Processing CLI commands call `media::dependencies::prepare` before media work and
+model calls. This validates versions and codecs and, when necessary, installs a
+pinned, checksum-verified pair under the workspace's `runtime/media`. The pair is
+scoped to the operation and explicitly carried into OCR CPU workers. Library
+operations do not initiate dependency downloads on their own. Failed or interrupted
+repairs never publish an active installation; system tools and the CLI are untouched.
 
 This crate implements local processing and endpoint clients. It does not
 implement product UI, hosted inference, or HTTP/MCP serving. See

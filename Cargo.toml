@@ -46,6 +46,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tract-onnx = "0.23.6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 imageproc = { version = "0.27", default-features = false }
+lzma-rs = "0.3"
+tar = "0.4"
 
 tempfile = "3"
 rpassword = "7"

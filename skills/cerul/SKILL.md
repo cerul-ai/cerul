@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
 generated-by: cerul 0.0.10
-generated-sha256: 9de2941e25c968784634d60c13d2f23164f82fd78a2bfe7a026fd3740be1b122
+generated-sha256: c180ba52d6c88d325e043762dc8c7454e4da6255fe05c4c0638a608a9290dca7
 ---
 
 # Cerul
@@ -159,6 +159,7 @@ returns published annotation records in time order, with `--type` and `--limit`.
 Generated from this build's argument definitions.
 These options work on every command:
 
+  --no-auto-deps              Check media tools without downloading or selecting automatic repairs
   --json                      Machine-readable output: final JSON on stdout, NDJSON events on stderr
   --workspace <DIR>           Where indexes and caches live (default ~/.cerul)
   --dry-run                   Show what would happen without writing anything or calling models

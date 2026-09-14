@@ -13,6 +13,11 @@ use std::{
 /// Prefer an explicit override, then the tools shipped alongside this executable.
 /// Source builds can reuse an installed Cerul media bundle on PATH, then system tools.
 pub fn command(tool: &str) -> Command {
+    if let Some(tools) = current_tools()
+        && let Some(path) = tools.path(tool)
+    {
+        return Command::new(path);
+    }
     let variable = match tool {
         "ffmpeg" => "CERUL_FFMPEG",
         "ffprobe" => "CERUL_FFPROBE",
@@ -25,6 +30,56 @@ pub fn command(tool: &str) -> Command {
         std::env::var_os("PATH"),
     );
     Command::new(executable)
+}
+
+/// One validated pair, scoped to an operation rather than process environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tools {
+    pub ffmpeg: std::path::PathBuf,
+    pub ffprobe: std::path::PathBuf,
+}
+impl Tools {
+    pub fn discover(overrides: bool) -> Self {
+        let resolve = |tool, variable| {
+            resolve_tool(
+                tool,
+                overrides.then(|| std::env::var_os(variable)).flatten(),
+                std::env::current_exe().ok(),
+                std::env::var_os("PATH"),
+            )
+        };
+        Self {
+            ffmpeg: resolve("ffmpeg", "CERUL_FFMPEG"),
+            ffprobe: resolve("ffprobe", "CERUL_FFPROBE"),
+        }
+    }
+    pub fn in_directory(directory: &Path) -> Self {
+        Self {
+            ffmpeg: directory.join("cerul-ffmpeg"),
+            ffprobe: directory.join("cerul-ffprobe"),
+        }
+    }
+    fn path(&self, tool: &str) -> Option<&Path> {
+        match tool {
+            "ffmpeg" => Some(&self.ffmpeg),
+            "ffprobe" => Some(&self.ffprobe),
+            _ => None,
+        }
+    }
+}
+pub(crate) fn current_tools() -> Option<Tools> {
+    TOOLS
+        .try_with(|tools| tools.borrow().clone())
+        .ok()
+        .flatten()
+}
+pub(crate) fn select_tools(tools: Tools) -> Result<()> {
+    TOOLS
+        .try_with(|selected| *selected.borrow_mut() = Some(tools))
+        .context("media preparation requires an operation scope")
+}
+pub(crate) fn with_sync_tools<T>(tools: Option<Tools>, operation: impl FnOnce() -> T) -> T {
+    TOOLS.sync_scope(std::cell::RefCell::new(tools), operation)
 }
 fn resolve_tool(
     tool: &str,
@@ -96,6 +151,7 @@ struct CachedFrames {
     points: Vec<i64>,
 }
 tokio::task_local! {
+    static TOOLS: std::cell::RefCell<Option<Tools>>;
     static FRAME_CACHE: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, CachedFrames>>;
     static CANCELLATION: tokio_util::sync::CancellationToken;
 }
@@ -105,9 +161,12 @@ pub async fn with_cancellation<T>(
     cancel: tokio_util::sync::CancellationToken,
     future: impl std::future::Future<Output = T>,
 ) -> T {
-    FRAME_CACHE
-        .scope(Default::default(), CANCELLATION.scope(cancel, future))
-        .await
+    let operation = FRAME_CACHE.scope(Default::default(), CANCELLATION.scope(cancel, future));
+    if TOOLS.try_with(|_| ()).is_ok() {
+        operation.await
+    } else {
+        TOOLS.scope(Default::default(), operation).await
+    }
 }
 /// Carry an operation's cancellation token into scoped CPU worker threads.
 pub(crate) fn with_sync_cancellation<T>(
@@ -526,6 +585,7 @@ pub mod frames;
 pub mod proxy;
 
 pub mod contact_proxy;
+pub mod dependencies;
 
 #[cfg(test)]
 mod tool_resolution_tests {

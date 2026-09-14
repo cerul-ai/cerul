@@ -49,7 +49,9 @@ cerul annotate ./video.mp4 --embodied --hands --semantic none
 ```
 
 The first command combines cloud semantic labels with local hands. The second
-runs only local CPU inference and needs no API key or network. Both hand models
+runs only local CPU inference and needs no API key. Once compatible media tools
+are available, it works offline. Processing commands automatically prepare missing
+or incompatible FFmpeg/ffprobe before inference; see [dependency repair](installation.md#custom-media-tools-and-development-builds). Both hand models
 are bundled; no Python, OpenCV, GPU runtime or model download is required.
 `--fps` controls semantic sampling only; hands use every observed source frame.
 
