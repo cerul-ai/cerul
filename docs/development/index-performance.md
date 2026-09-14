@@ -48,6 +48,14 @@ overlapping overview/vector work, concurrent groups, sorted publication,
 zero-call cached replay, and recovery of one invalid scene window without
 repeating completed speech or scene requests. No external model is called.
 
+A macOS arm64 release-to-release check on 2026-09-14 used identical input bytes,
+`--jobs 4`, no OCR, and fixed local response delays (scene 450 ms, speech 350 ms,
+overview 600 ms, embedding 100 ms). Total invocation time was **30.10 seconds
+before and 16.58 seconds after** (1.82x throughput, approximately 45% less time).
+Both runs made 175 requests with peak concurrency four. Published scene,
+transcript, summary and section records were identical. These are one-run local
+scheduling measurements, not hosted-provider latency guarantees.
+
 Fixed local delays isolate scheduling overhead. Such measurements do not predict
 Gemini or another hosted provider's wall time. A real speed comparison should use
 the same media, endpoints, models, jobs/rate limits, cache state and requested
