@@ -29,19 +29,45 @@ use tokio_util::sync::CancellationToken;
 const ADVANCED: &str = "Advanced";
 const GLOBAL: &str = "Global";
 const EXAMPLES: &str = "\
-Examples:
-  cerul index ./demo.mp4                 index a video (screen text, speech, search)
-  cerul search \"a person holding a cup\"  find moments by description
-  cerul search --text \"ERROR 500\"        exact words on screen or in speech
-  cerul search \"...\" --save ./clips      export matching clips as MP4
-  cerul open 2                           play the second result at its moment
-  cerul annotate ./demo.mp4 --semantic    label tasks, steps, and quality flags
-  cerul annotate --help                   video and LeRobot annotation examples
-  cerul status                           what is indexed and which models are used
+Common workflows:
+  cerul index ./video.mp4                          add to your search workspace
+  cerul search \"a person holding a cup\"            search all indexed videos
+  cerul annotate ./video.mp4                       general semantic labels
+  cerul annotate ./video.mp4 --embodied --hands    embodied labels + local hands
+  cerul render ./video.mp4 --out ./review.mp4      export an annotated video
+  cerul status                                     inspect the workspace
 
-Speech and semantic search use Gemini; run `cerul auth set` once to save a key.
-Add --json to any command for machine-readable output.
-Shell completion: cerul completions <shell>.";
+Help: cerul help <command> or cerul <command> --help
+All folders share ~/.cerul by default; --workspace DIR selects another workspace.
+Model API usage is billed by your provider; cerul auth set saves your key.
+Use -v for diagnostic output, --json for scripts, --dry-run to preview work.";
+
+const INDEX_HELP: &str = "\
+Examples:
+  cerul index ./video.mp4               index one video
+  cerul index ./videos                  index a folder
+  cerul index ./dataset                 index a LeRobot dataset
+  cerul index ./video.mp4 --no-audio    skip speech transcription
+  cerul index ./video.mp4 --dry-run     preview without processing
+
+Then: cerul search \"describe a moment\"
+No path is needed when searching. --workspace DIR selects a separate library.
+Screen text runs locally; embeddings, speech, and descriptions use configured APIs.
+Compatible completed work is reused. --recompute processes it again.
+Progress percentages and ETA describe each active stage; ETA starts after measured work.";
+
+const SEARCH_HELP: &str = "\
+Examples:
+  cerul search \"washing vegetables\"                     search the whole workspace
+  cerul search --text \"ERROR 500\"                       exact screen text or speech
+  cerul search --image ./reference.jpg                  search by reference image
+  cerul search \"washing vegetables\" --in ./video.mp4    restrict to one video
+  cerul search \"washing vegetables\" --save ./clips      export matching clips
+  cerul open 2                                          open result 2
+
+Run index first. Quote a multi-word query as one argument.
+--in is optional; source videos remain in their original locations.
+--text searches local evidence; semantic queries use your configured embedding API.";
 
 const ANNOTATE_EXAMPLES: &str = "\
 Examples:
@@ -75,7 +101,7 @@ Guide: https://github.com/cerul-ai/cerul/blob/main/docs/annotation.md";
     about = "Search and annotate your videos",
     long_about = "Search and annotate your videos.\n\nFind moments from a description, export clips, or label actions and states in videos and LeRobot demonstrations.",
     after_help = EXAMPLES,
-    disable_help_subcommand = true
+    disable_help_subcommand = false
 )]
 struct Cli {
     /// Check media tools without downloading or selecting automatic repairs.
@@ -116,10 +142,15 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Index videos so they can be searched (screen text, speech, visual search).
+    #[command(long_about = "Add videos or a dataset to the current search workspace. Later searches cover every indexed video in that workspace, regardless of your current folder.", after_help = INDEX_HELP)]
     Index(IndexArgs),
     /// Find moments by description, exact words, or a reference image.
+    #[command(long_about = "Search all indexed videos in the current workspace. Use --in only when you want to restrict the search to a video or folder.", after_help = SEARCH_HELP)]
     Search(SearchArgs),
     /// Show indexed videos, model configuration, and storage.
+    #[command(
+        after_help = "Examples:\n  cerul status                           list indexed videos\n  cerul status ./video.mp4                inspect one video\n  cerul status ./video.mp4 --timeline     read annotations\n  cerul status --providers                check configured endpoints (may call APIs)"
+    )]
     Status {
         /// Only report videos under this path.
         path: Option<PathBuf>,
@@ -137,14 +168,23 @@ enum Command {
         limit: usize,
     },
     /// Open a result from the last search in a video player, at its moment.
+    #[command(
+        after_help = "Example: cerul open 2\nOpens result 2 from the last search; the default is result 1."
+    )]
     Open {
         /// Result number shown by the last search.
         #[arg(default_value_t = 1, value_name = "N")]
         number: usize,
     },
     /// Manage the saved Gemini API key.
+    #[command(
+        after_help = "Examples:\n  cerul auth          show key status\n  cerul auth set      enter and save your key\n  cerul auth remove   delete the saved key"
+    )]
     Auth(AuthArgs),
     /// Configure the required Gemini key and optional default speech transcription.
+    #[command(
+        after_help = "Run cerul config in a terminal to configure model endpoints and speech transcription. Run cerul auth set to save a model key. Use --workspace DIR to choose a separate workspace."
+    )]
     Config,
     /// Generate semantic labels and optional local hands for embodied videos.
     #[command(
@@ -154,6 +194,9 @@ enum Command {
     )]
     Annotate(AnnotateArgs),
     /// Render published semantic labels and hand skeletons without model calls.
+    #[command(
+        after_help = "Example: cerul render ./video.mp4 --out ./review.mp4\nRequires published annotations. Adds semantic captions and available hand skeletons, with no model calls. Use --watermark for a visible Cerul signature; output must be a new file."
+    )]
     Render {
         /// Annotated video, or an exported annotations.json for a dataset episode.
         path: PathBuf,
@@ -168,8 +211,14 @@ enum Command {
         watermark: bool,
     },
     /// Remove indexed videos, or free the disk they and their caches use.
+    #[command(
+        after_help = "Examples:\n  cerul remove ./video.mp4     forget indexed results; keep the source video\n  cerul remove --cache         clear regenerable caches\nAdd --dry-run to preview changes."
+    )]
     Remove(RemoveArgs),
     /// Install the newest published release of Cerul over this one.
+    #[command(
+        after_help = "Run cerul upgrade to check and install the latest published CLI. Confirmation is required before replacement; --yes skips that prompt. Compatible media dependencies are prepared automatically during processing."
+    )]
     Upgrade,
     /// Print or install the agent skill that teaches this CLI to a coding agent.
     Skill(SkillArgs),
@@ -1667,12 +1716,13 @@ async fn execute(
                 }
             }
             let config = resolved;
-            if sink.mode == Mode::Human && !cli.quiet && !cli.dry_run {
-                let palette = Palette::new(console::colors_enabled_stderr());
-                let _ = render::index_plan(&mut io::stderr(), &palette, &args.paths);
-            }
             if !cli.dry_run {
-                sink.spinner("Preparing video…");
+                let subject = if args.paths.len() == 1 {
+                    render::file_name(&args.paths[0])
+                } else {
+                    format!("{} inputs", args.paths.len())
+                };
+                sink.spinner(&format!("Indexing {subject}"));
             }
             let events = sink.clone();
             let report = pipeline::run(
@@ -1855,6 +1905,7 @@ async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::pr
         progress: Arc::new(Mutex::new(render::Progress::new(
             &workspace_hint,
             cli.quiet,
+            cli.verbose > 0,
             Palette::new(mode == Mode::Human && console::colors_enabled_stderr()),
         ))),
     };
@@ -1941,8 +1992,7 @@ async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::pr
         }
         _ => Ok(()),
     };
-    // The home screen keeps its own output and the menu is offered underneath
-    // it, so running `cerul` still shows everything it always showed.
+    // Offer the action menu underneath the compact home summary.
     if entry == guide::Entry::Typed
         && code == 0
         && written.is_ok()

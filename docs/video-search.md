@@ -152,15 +152,23 @@ configured embedding endpoint.
 After choosing Index and a path in the interactive guide, processing starts
 immediately. Explicit `--dry-run` remains available for inspecting planned work.
 Live terminal output shows the current stage, a progress bar, and an estimated
-remaining time for that stage after enough work has completed. Preparation and
-single-request stages show an indeterminate estimate rather than a fabricated ETA.
-Redirected output uses plain lines; `--json` keeps structured progress events.
+remaining time for that stage after its first measured work unit. The estimate
+counts down between measured completions and is revised when more work finishes;
+an overrun returns to `ETA --:--` until another useful measurement is available. Preparation and single-request stages show
+`ETA --:--` until a meaningful estimate is available. Percentages represent
+completed stage work, not a predicted overall completion percentage.
 
-The completion message uses a generated title when available and shortens long
-file names otherwise. It never renames your files. Each episode stores zero to
+Completed bars disappear before the final receipt is written. Routine model
+notices and station summaries are hidden by default; `-v` enables diagnostics.
+Warnings and errors remain visible. Redirected output contains a plain final
+receipt; `--json` retains the structured progress and diagnostic events.
+
+The completion message names the source file and shows one copyable search
+command. Long names are shortened; source files are never renamed. Each episode stores zero to
 three generated suggestions with source record IDs and revisions. Visual
 suggestions cite scene records; speech and screen suggestions cite their own
-tracks. Commands preserve workspace/model overrides and scope to that video.
+tracks. The displayed command preserves workspace/model overrides and searches the
+whole workspace. `--in` is optional and only restricts an explicitly scoped search.
 The examples show supported content; they do not guarantee a retrieval rank.
 
 If understanding is unavailable or explicitly skipped, Cerul uses extractive
@@ -208,3 +216,17 @@ from `status --timeline --type scene --json`). Re-indexing applies the edits wit
 changing their IDs or intervals. Generation never writes this correction file.
 When a new generation conflicts or re-segments the scene, Cerul reports that the
 edit needs rebasing and withholds the disputed replacement.
+
+## Command help
+
+Run `cerul help` for the command overview, `cerul help index` for indexing,
+`cerul help search` for searching, or `cerul help annotate` for annotation modes.
+`cerul <command> --help` provides the same command reference. Help includes
+usage, examples, prerequisites, and relevant options, and works without media
+tools, a key, or an initialized workspace.
+
+All directories share the default `~/.cerul` workspace. After indexing, run
+`cerul search "describe a moment"` from any directory to search that workspace;
+there is no need to repeat the video's path. Use `--workspace DIR` when you
+intentionally want a separate search workspace. Source media and authoritative
+sidecars stay in their existing locations.

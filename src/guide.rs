@@ -236,17 +236,6 @@ fn pick_input(palette: &Palette, title: &str) -> io::Result<Option<String>> {
     }
 }
 
-/// Turns answers into the command that runs them, shown before it runs so the
-/// next run can be typed instead of answered. `typed` is everything the person
-/// already wrote, so a global flag they chose appears in the command too.
-fn show_command(palette: &Palette, typed: &[String], extra: &[String]) -> io::Result<()> {
-    let term = Term::stderr();
-    let argv: Vec<String> = typed.iter().cloned().chain(extra.iter().cloned()).collect();
-    term.write_line("")?;
-    term.write_line(&format!("  {}", palette.cmd(&render::shell_command(&argv))))?;
-    Ok(())
-}
-
 /// Where an invocation came from, which decides how much of it may be missing.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Entry {
@@ -291,15 +280,9 @@ pub fn complete(arguments: Vec<OsString>, palette: &Palette, entry: Entry) -> Gu
     let Some(command) = arguments.last() else {
         return Guided::Untouched;
     };
-    // Everything already typed, so the command a screen shows is the command
-    // that runs: a global flag chosen before the subcommand belongs in it.
-    let typed: Vec<String> = arguments
-        .iter()
-        .map(|argument| argument.to_string_lossy().into_owned())
-        .collect();
     let extra = match command.to_string_lossy().as_ref() {
-        "annotate" => annotate(palette, &typed),
-        "index" => index(palette, &typed),
+        "annotate" => annotate(palette),
+        "index" => index(palette),
         "search" => search(palette),
         _ => return Guided::Untouched,
     };
@@ -316,17 +299,15 @@ pub fn complete(arguments: Vec<OsString>, palette: &Palette, entry: Entry) -> Gu
 }
 
 /// Ask only for the input; the normal CLI defaults and explicit flags decide the work.
-fn annotate(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
-    let path = pick_input(palette, "Annotate · which video or dataset?").ok()??;
+fn annotate(palette: &Palette) -> Option<Vec<String>> {
+    let path = pick_input(palette, "Annotate · input").ok()??;
     let extra = vec![path];
-    show_command(palette, typed, &extra).ok()?;
     Some(extra)
 }
 
-fn index(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
-    let path = pick_input(palette, "Index · which video or folder?").ok()??;
+fn index(palette: &Palette) -> Option<Vec<String>> {
+    let path = pick_input(palette, "Index · input").ok()??;
     let extra = vec![path];
-    show_command(palette, typed, &extra).ok()?;
     Some(extra)
 }
 
@@ -341,24 +322,20 @@ fn search(palette: &Palette) -> Option<Vec<String>> {
     Some(vec![query])
 }
 
-/// Offered under the home screen, so running `cerul` still shows what it always
-/// showed and the menu is an addition rather than a replacement. The choice is
-/// appended to what was typed, so `--workspace` and the rest survive it.
+/// The compact home menu appends an action to the invocation, preserving any
+/// explicit workspace and other global flags.
 pub fn home_menu(palette: &Palette, arguments: &[OsString]) -> Option<Vec<OsString>> {
     if !asks(arguments) {
         return None;
     }
     let choices = [
-        Choice::new("Index a video so it can be searched", "", Some("index")),
-        Choice::new("Search indexed videos", "", Some("search")),
-        Choice::new(
-            "Annotate actions in a video or LeRobot dataset",
-            "",
-            Some("annotate"),
-        ),
-        Choice::new("Leave", "", None),
+        Choice::new("Index", "", Some("index")),
+        Choice::new("Search", "", Some("search")),
+        Choice::new("Annotate", "", Some("annotate")),
+        Choice::new("Help", "", Some("help")),
+        Choice::new("Exit", "", None),
     ];
-    let command = select(palette, "What do you want to do?", &choices).ok()??;
+    let command = select(palette, "Choose an action", &choices).ok()??;
     let mut next = arguments.to_vec();
     next.push(OsString::from(command?));
     Some(next)

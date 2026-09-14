@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
 generated-by: cerul 0.0.10
-generated-sha256: c180ba52d6c88d325e043762dc8c7454e4da6255fe05c4c0638a608a9290dca7
+generated-sha256: 58decd0b2381f2a87e6ecc71e5df0ceea6da5e1a232430d86c91e4b1987f2b5b
 ---
 
 # Cerul
@@ -225,6 +225,7 @@ Manage the saved Gemini API key
 
   cerul auth set                   Enter and verify a Gemini API key, replacing any saved one
   cerul auth remove                Delete the saved Gemini API key
+  cerul auth help                  Print this message or the help of the given subcommand(s)
 
 ### cerul config
 
@@ -281,3 +282,20 @@ Print or install the agent skill that teaches this CLI to a coding agent
   --dir <DIR>                 Install into this skills directory instead of an agent's own
   --print                     Write the skill to stdout instead of installing it
   --force                     Replace an installed skill even when it was changed after it was written
+
+### cerul help
+
+Print this message or the help of the given subcommand(s)
+
+  cerul help index                 Index videos so they can be searched (screen text, speech, visual search)
+  cerul help search                Find moments by description, exact words, or a reference image
+  cerul help status                Show indexed videos, model configuration, and storage
+  cerul help open                  Open a result from the last search in a video player, at its moment
+  cerul help auth                  Manage the saved Gemini API key
+  cerul help config                Configure the required Gemini key and optional default speech transcription
+  cerul help annotate              Generate semantic labels and optional local hands for embodied videos
+  cerul help render                Render published semantic labels and hand skeletons without model calls
+  cerul help remove                Remove indexed videos, or free the disk they and their caches use
+  cerul help upgrade               Install the newest published release of Cerul over this one
+  cerul help skill                 Print or install the agent skill that teaches this CLI to a coding agent
+  cerul help help                  Print this message or the help of the given subcommand(s)

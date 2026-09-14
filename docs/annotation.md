@@ -213,3 +213,8 @@ stdout remains one final result object.
 Compatibility change: LeRobot no longer implicitly selects all seven types or
 enforces the manipulation verb list. Use an explicit seven-type `--semantic`
 selection to retain that selection, and `--ontology FILE` for strict verbs.
+
+The default terminal receipt shows one summary and links to `annotations.json`
+and `summary.md`. Per-track counts and provenance remain in those files; use
+`cerul help status` to find timeline inspection commands. Partial results retain
+failure details and the command to continue.

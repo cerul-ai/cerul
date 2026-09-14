@@ -593,14 +593,8 @@ fn human_mode_renders_text_and_json_mode_stays_machine_readable() {
     assert!(home.status.success());
     let text = String::from_utf8_lossy(&home.stdout);
     assert!(text.starts_with("cerul 0."), "{text}");
-    assert!(text.contains("Get started"), "{text}");
-    assert!(
-        text.contains("cerul annotate ./video.mp4 --semantic"),
-        "{text}"
-    );
-    assert!(text.contains("cerul auth set"), "{text}");
-    assert!(text.contains("cerul index ./video.mp4"), "{text}");
-    assert!(text.contains("cerul auth set"), "{text}");
+    assert!(text.contains("cerul help"), "{text}");
+    assert_eq!(text.lines().count(), 2, "{text}");
     assert!(serde_json::from_str::<Value>(&text).is_err());
     assert!(home.stderr.is_empty());
 
@@ -1161,4 +1155,44 @@ fn a_partial_annotation_carries_the_command_that_continues_it() {
     let source = value["modules"][0]["source"].as_str().unwrap();
     assert!(source.ends_with("/sample.mp4"), "{source}");
     assert!(std::path::Path::new(source).is_absolute(), "{source}");
+}
+
+#[test]
+fn help_command_explains_workflows_without_workspace_or_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    for command in [
+        None,
+        Some("index"),
+        Some("search"),
+        Some("annotate"),
+        Some("render"),
+        Some("status"),
+        Some("open"),
+        Some("remove"),
+        Some("auth"),
+        Some("config"),
+        Some("upgrade"),
+    ] {
+        let mut args = vec!["help"];
+        if let Some(name) = command {
+            args.push(name);
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_cerul"))
+            .current_dir(dir.path())
+            .env_clear()
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}: {:?}", output);
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains("cerul"));
+        assert!(output.stderr.is_empty());
+        if command == Some("search") {
+            assert!(text.contains("--in is optional"));
+        }
+        if command == Some("index") {
+            assert!(text.contains("every indexed video"));
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 }
