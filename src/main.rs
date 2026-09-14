@@ -23,6 +23,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -67,6 +68,7 @@ No path is needed when searching. --workspace DIR selects a separate library.
 Screen text runs locally; embeddings, speech, and descriptions use configured APIs.
 Compatible completed work is reused. --recompute processes it again.
 Independent model work shares --jobs (default 4) and --rpm across stages.
+The final receipt keeps total indexing time, excluding setup and prompts.
 One bar covers the whole run; ~ marks estimated progress within active work. Summarizing has its own budget. ETA uses rough estimates, local timings and measured work; API latency can change it. --json exposes confirmed progress.";
 
 const SEARCH_HELP: &str = "\
@@ -1733,6 +1735,7 @@ async fn execute(
                 }
             }
             let config = resolved;
+            let started = Instant::now();
             if !cli.dry_run {
                 let subject = if args.paths.len() == 1 {
                     render::file_name(&args.paths[0])
@@ -1768,6 +1771,7 @@ async fn execute(
                 &mut |value| events.emit(value),
             )
             .await?;
+            let elapsed = started.elapsed();
             sink.finish();
             let code = if report.partial { 6 } else { 0 };
             let mut search_prefix = vec!["cerul".into()];
@@ -1785,6 +1789,7 @@ async fn execute(
                         names: names(&workspace),
                         retry: invocation.to_vec(),
                         search_prefix,
+                        elapsed,
                     },
                 ),
                 code,
