@@ -126,7 +126,7 @@ enum Command {
         /// Read the published annotations in time order instead of the summary.
         #[arg(long)]
         timeline: bool,
-        /// Only one semantic item, for example event.
+        /// One semantic item (for example event), or hand to expand hand frames.
         #[arg(long, value_name = "ITEM", requires = "timeline")]
         r#type: Option<String>,
         /// Most annotation records to show per video.
@@ -1182,7 +1182,8 @@ async fn execute(
                     let item = kind.strip_prefix("semantic.").unwrap_or(kind);
                     anyhow::ensure!(
                         cerul::annotations::SEMANTIC_ITEMS.contains(&item)
-                            || cerul::index::understanding::ITEMS.contains(&item),
+                            || cerul::index::understanding::ITEMS.contains(&item)
+                            || matches!(kind.as_str(), "hand" | "hands" | "grounding.hand"),
                         CliError(
                             2,
                             format!(
@@ -1191,6 +1192,7 @@ async fn execute(
                                     .iter()
                                     .chain(cerul::index::understanding::ITEMS)
                                     .copied()
+                                    .chain(["hand", "hands", "grounding.hand"])
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             )

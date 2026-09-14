@@ -900,6 +900,138 @@ fn printing_and_redirecting_the_skill_need_no_home_directory() {
 }
 
 #[test]
+fn timeline_keeps_semantics_visible_and_expands_hands_only_on_request() {
+    use cerul::annotations::{AnnotationFile, Header, Model, Record};
+    use serde_json::json;
+    let dir = tempfile::tempdir().unwrap();
+    video(dir.path());
+    let source = dir.path().join("sample.mp4");
+    let workspace = dir.path().join(".cerul");
+    let episode = cerul::index::discover::ordinary_episode(&source).unwrap();
+    let sidecar = cerul::index::discover::publish_episode(&workspace, &episode, None).unwrap();
+    let coverage = episode.video_coverage("primary").unwrap().unwrap();
+    let step = (coverage.end_us - coverage.start_us) / 100;
+    let publish = |name: &str, records| {
+        let file = AnnotationFile {
+            header: Header {
+                schema: "annotation/1".into(),
+                name: name.into(),
+                episode: episode.episode_id.clone(),
+                stream: "primary".into(),
+                model: Model {
+                    kind: "test".into(),
+                    name: "fixture".into(),
+                    base_url: None,
+                },
+                params: json!({}),
+                created: "2026-01-01T00:00:00Z".into(),
+                cerul_version: "test".into(),
+                input_hash: cerul::index::stations::station_key(
+                    &episode,
+                    "primary",
+                    name,
+                    &json!({}),
+                )
+                .unwrap(),
+                record_schema: format!("{name}/1"),
+            },
+            records,
+        };
+        file.publish_in_range(
+            &sidecar.join(format!(".internal/annotations/{name}.jsonl")),
+            coverage,
+            None,
+        )
+        .unwrap();
+    };
+    publish(
+        "grounding.hand",
+        (0..100)
+            .map(|i| Record {
+                id: format!("hand-{i}"),
+                start_us: coverage.start_us + i * step,
+                end_us: if i == 99 {
+                    coverage.end_us
+                } else {
+                    coverage.start_us + (i + 1) * step
+                },
+                confidence: None,
+                fields: serde_json::from_value(
+                    json!({"frame_width":64,"frame_height":64,"hands":[]}),
+                )
+                .unwrap(),
+            })
+            .collect(),
+    );
+    publish(
+        "semantic.event",
+        [0, 90]
+            .into_iter()
+            .map(|i| Record {
+                id: format!("event-{i}"),
+                start_us: coverage.start_us + i * step,
+                end_us: coverage.start_us + (i + 1) * step,
+                confidence: None,
+                fields: serde_json::from_value(json!({"verb":"grasp"})).unwrap(),
+            })
+            .collect(),
+    );
+    let read = |extra: &[&str]| {
+        let mut args = vec!["--json", "status", source.to_str().unwrap(), "--timeline"];
+        args.extend_from_slice(extra);
+        let output = cli(dir.path(), &args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(output.stderr.is_empty());
+        final_json(&output)["episodes"][0].clone()
+    };
+    let default = read(&[]);
+    assert_eq!(
+        default["annotations"],
+        json!(["grounding.hand", "semantic.event"])
+    );
+    assert_eq!(default["total"], 2);
+    assert_eq!(default["entries"].as_array().unwrap().len(), 2);
+    assert_eq!(default["entries"][1]["record"]["id"], "event-90");
+    assert_eq!(read(&["--type", "event"]), default);
+    for alias in ["hand", "hands", "grounding.hand"] {
+        let hands = read(&["--type", alias]);
+        assert_eq!(hands["annotations"], default["annotations"]);
+        assert_eq!(hands["total"], 100);
+        assert_eq!(hands["entries"].as_array().unwrap().len(), 50);
+        assert!(
+            hands["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["annotation"] == "grounding.hand")
+        );
+    }
+    assert_eq!(
+        read(&["--type", "hand", "--limit", "200"])["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        100
+    );
+    std::fs::remove_file(sidecar.join(".internal/annotations/semantic.event.jsonl")).unwrap();
+    let hand_only = read(&[]);
+    assert_eq!(hand_only["annotations"], json!(["grounding.hand"]));
+    assert_eq!(hand_only["total"], 0);
+    assert_eq!(hand_only["entries"], json!([]));
+    assert_eq!(read(&["--type", "hands"])["total"], 100);
+    let human = cli(
+        dir.path(),
+        &["status", source.to_str().unwrap(), "--timeline"],
+    );
+    assert!(human.status.success());
+    assert!(String::from_utf8_lossy(&human.stdout).contains("use --type hand"));
+}
+
+#[test]
 fn the_timeline_reads_local_files_only_and_rejects_a_type_that_does_not_exist() {
     let dir = tempfile::tempdir().unwrap();
     let empty = cli(dir.path(), &["--json", "status", "--timeline"]);

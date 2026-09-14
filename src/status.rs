@@ -109,7 +109,8 @@ pub struct Timeline {
 }
 #[derive(Debug, Clone)]
 pub struct TimelineOptions {
-    /// Semantic item or full annotation name; `None` reads every published item.
+    /// Semantic item or full annotation name. `None` reads semantic records;
+    /// hand frames require an explicit hand, hands, or grounding.hand selection.
     pub kind: Option<String>,
     pub limit: usize,
 }
@@ -282,6 +283,11 @@ pub fn timeline(
                 );
                 annotations.push(name.clone());
                 if wanted.as_ref().is_some_and(|kind| kind != &name) {
+                    continue;
+                }
+                // Keep dense hand tracks in the inventory without letting them
+                // consume the default semantic timeline's record limit.
+                if name == crate::annotate::hands::NAME && wanted.is_none() {
                     continue;
                 }
                 for record in file.records {

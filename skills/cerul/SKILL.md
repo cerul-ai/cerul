@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
 generated-by: cerul 0.0.10
-generated-sha256: d0ced1155d0a59570c91383bc9e3b4d8cbb0564220cc8d327c01b3cb6232fbb3
+generated-sha256: 9de2941e25c968784634d60c13d2f23164f82fd78a2bfe7a026fd3740be1b122
 ---
 
 # Cerul
@@ -209,7 +209,7 @@ Show indexed videos, model configuration, and storage
   <PATH>                      Only report videos under this path
   --providers                 Verify configured model endpoints with small test requests (cached for seven days)
   --timeline                  Read the published annotations in time order instead of the summary
-  --type <ITEM>               Only one semantic item, for example event
+  --type <ITEM>               One semantic item (for example event), or hand to expand hand frames
   --limit <N>                 Most annotation records to show per video (default 50)
 
 ### cerul open

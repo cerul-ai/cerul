@@ -2047,6 +2047,11 @@ pub fn timeline(
                 "  {}",
                 palette.dim(&match kind {
                     Some(kind) => format!("no {kind} records"),
+                    None if episode
+                        .annotations
+                        .iter()
+                        .any(|name| name == "grounding.hand") =>
+                        "no semantic records; use --type hand to view hand frames".into(),
                     None => "no records".into(),
                 })
             )?;

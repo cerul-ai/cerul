@@ -115,9 +115,17 @@ follow the [LeRobot subtask tutorial](lerobot-subtasks.md) and
 cerul status ./video.mp4 --timeline
 ```
 
-This prints the published records in time order, one line each, so you can judge
+This prints the published semantic records in time order, one line each, so you can judge
 a run without opening a JSONL file. Narrow it with `--type event` and lengthen it
 with `--limit 200`. It reads sidecars only: no model call and no network.
+
+Hand tracks remain listed, but their per-frame records do not consume the default
+timeline limit. Expand them explicitly with `--type hand` (aliases: `hands` and
+`grounding.hand`):
+
+```sh
+cerul status ./video.mp4 --timeline --type hand --limit 200
+```
 
 ## Find and inspect the results
 
