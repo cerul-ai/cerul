@@ -460,6 +460,7 @@ async fn run_inner(
             })?;
         let mut done = 0;
         let mut cached = 0;
+        let mut capability_error = None;
         for stream in selected_streams {
             if options.hands {
                 interrupted(&cancel)?;
@@ -645,13 +646,10 @@ async fn run_inner(
                         }
                         Err(error) => {
                             interrupted(&cancel)?;
-                            if !options.hands
-                                && error.downcast_ref::<ProviderError>().is_some_and(|e| {
+                            let capability_failure =
+                                error.downcast_ref::<ProviderError>().is_some_and(|e| {
                                     matches!(e.kind, Failure::MissingKey | Failure::Unsupported)
-                                })
-                            {
-                                return Err(error);
-                            }
+                                });
                             report.partial = true;
                             result.error = Some(error.to_string());
                             events.emit(Event::Log {
@@ -661,6 +659,9 @@ async fn run_inner(
                                     episode.episode_id
                                 ),
                             });
+                            if capability_failure && capability_error.is_none() {
+                                capability_error = Some(error);
+                            }
                         }
                     }
                 }
@@ -685,6 +686,13 @@ async fn run_inner(
                     });
                 }
             }
+        }
+        if let Some(error) = capability_error
+            && !report.modules[module_start..]
+                .iter()
+                .any(|module| module.complete)
+        {
+            return Err(error);
         }
         if !options.dry_run {
             report.exports.push(super::export::publish(
@@ -801,6 +809,227 @@ mod tests {
         options.hands = false;
         assert!(options.validate().is_err());
     }
+    #[tokio::test]
+    async fn failed_hands_do_not_hide_a_missing_semantic_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("video.mp4");
+        crate::media::run(
+            crate::media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=32x32:rate=1:duration=2",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let mut config = Config::default();
+        config.vision.api_key_env = "CERUL_FAILED_HANDS_NO_KEY".into();
+        let options = Options {
+            embodied: true,
+            hands: true,
+            items: vec!["event".into()],
+            ..Default::default()
+        };
+        let earlier = dir.path().join("earlier.mp4");
+        crate::media::run(
+            crate::media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=red:size=32x32:rate=1:duration=1",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&earlier),
+        )
+        .unwrap();
+        let failing_episode = discover::ordinary_episode(&source).unwrap().episode_id;
+        let original = fs::read(&source).unwrap();
+        let mut decode_started = false;
+        let mut restored = false;
+        let error = run(&[earlier.clone(), source.clone()], &dir.path().join("workspace"), &config, &options,
+            CancellationToken::new(), &mut |event| {
+                if matches!(event, Event::AnnotationProgress { ref episode, ref phase, .. } if episode == &failing_episode && phase.ends_with("hands · decoding")) {
+                    // Simulate local decode failure after successful discovery/planning.
+                    fs::write(&source, b"invalid video after planning").unwrap();
+                    decode_started = true;
+                }
+                if matches!(event, Event::Log { ref msg, .. } if msg.contains("hands:")) {
+                    fs::write(&source, &original).unwrap();
+                    restored = true;
+                }
+            }).await.unwrap_err();
+        assert!(decode_started && restored);
+        // A previous episode's successful hands must not authorize an empty
+        // partial export for the current failed episode.
+        let previous: super::super::export::Bundle = serde_json::from_slice(
+            &fs::read(earlier.with_extension("mp4.cerul").join("annotations.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            previous
+                .annotations
+                .iter()
+                .any(|file| file.header.name == super::super::hands::NAME)
+        );
+        assert_eq!(
+            error.downcast_ref::<ProviderError>().unwrap().kind,
+            Failure::MissingKey
+        );
+        assert!(
+            !source
+                .with_extension("mp4.cerul")
+                .join("annotations.json")
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn later_camera_hands_survive_an_earlier_camera_capability_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dataset");
+        crate::lerobot::tests::fixture(&root, "v3.1");
+        let front = root.join("videos/observation.images.front/chunk-000/file-000.mp4");
+        let original = fs::read(&front).unwrap();
+        let mut config = Config::default();
+        config.vision.api_key_env = "CERUL_MULTICAMERA_HANDS_NO_KEY".into();
+        let options = Options {
+            embodied: true,
+            hands: true,
+            streams: "all".into(),
+            only: Some("0".into()),
+            items: vec!["event".into()],
+            ..Default::default()
+        };
+        let mut injected = false;
+        let mut restored = false;
+        let report = run(std::slice::from_ref(&root), &dir.path().join("workspace"), &config, &options,
+            CancellationToken::new(), &mut |event| {
+                if !injected && matches!(event, Event::AnnotationProgress { ref phase, .. } if phase.ends_with("hands · decoding")) {
+                    fs::write(&front, b"invalid video after planning").unwrap();
+                    injected = true;
+                }
+                if !restored && matches!(event, Event::Log { ref msg, .. } if msg.contains("hands:")) {
+                    fs::write(&front, &original).unwrap();
+                    restored = true;
+                }
+            }).await.unwrap();
+        assert!(injected && restored && report.partial);
+        assert!(
+            report
+                .modules
+                .iter()
+                .any(|m| m.stream == "observation.images.front"
+                    && m.annotation == super::super::hands::NAME
+                    && !m.complete)
+        );
+        assert!(
+            report
+                .modules
+                .iter()
+                .any(|m| m.stream == "observation.images.wrist"
+                    && m.annotation == super::super::hands::NAME
+                    && m.complete
+                    && m.path.as_ref().unwrap().is_file())
+        );
+        assert_eq!(report.exports.len(), 1);
+        assert!(
+            report.exports[0]
+                .tracks
+                .iter()
+                .any(|track| track.stream == "observation.images.wrist"
+                    && track.annotation == super::super::hands::NAME
+                    && track.records > 0)
+        );
+        assert!(report.exports[0].annotations.is_file());
+    }
+
+    #[tokio::test]
+    async fn cached_semantics_survive_later_capability_errors_with_or_without_hands() {
+        let (base, server) = crate::providers::tests::server(vec![
+            (200, response(json!({"ok":true}))),
+            (200, response(json!({"records":[]}))),
+            (400, json!({"error":"unsupported schema"})),
+            (400, json!({"error":"unsupported schema"})),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dataset");
+        crate::lerobot::tests::fixture(&root, "v3.1");
+        let front = root.join("videos/observation.images.front/chunk-000/file-000.mp4");
+        let original = fs::read(&front).unwrap();
+        let mut config = Config::default();
+        config.vision.base_url = base;
+        let mut options = Options {
+            embodied: true,
+            only: Some("0".into()),
+            items: vec!["event".into()],
+            ..Default::default()
+        };
+        let workspace = dir.path().join("workspace");
+        assert!(
+            !run(
+                std::slice::from_ref(&root),
+                &workspace,
+                &config,
+                &options,
+                CancellationToken::new(),
+                &mut |_| {}
+            )
+            .await
+            .unwrap()
+            .partial
+        );
+        options.items.push("state".into());
+        for hands in [false, true] {
+            options.hands = hands;
+            let mut injected = false;
+            let mut restored = false;
+            let report = run(std::slice::from_ref(&root), &workspace, &config, &options,
+                CancellationToken::new(), &mut |event| {
+                    if matches!(event, Event::AnnotationProgress { ref phase, .. } if phase.ends_with("hands · decoding")) {
+                        fs::write(&front, b"invalid video after planning").unwrap();
+                        injected = true;
+                    }
+                    if matches!(event, Event::Log { ref msg, .. } if msg.contains("hands:")) {
+                        fs::write(&front, &original).unwrap();
+                        restored = true;
+                    }
+                }).await.unwrap();
+            assert_eq!(injected && restored, hands);
+            assert!(report.partial);
+            assert!(
+                report
+                    .modules
+                    .iter()
+                    .any(|m| m.annotation == "semantic.event" && m.complete)
+            );
+            assert!(
+                report
+                    .modules
+                    .iter()
+                    .any(|m| m.annotation == "semantic.state" && !m.complete)
+            );
+            let bundle: super::super::export::Bundle =
+                serde_json::from_slice(&fs::read(&report.exports[0].annotations).unwrap()).unwrap();
+            assert!(
+                bundle
+                    .annotations
+                    .iter()
+                    .any(|a| a.header.name == "semantic.event")
+            );
+        }
+        assert_eq!(server.join().unwrap().len(), 4);
+    }
+
     #[test]
     fn reject_contact_sheet_overflow_before_processing() {
         let mut options = Options {
