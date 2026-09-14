@@ -81,6 +81,23 @@ pub(crate) fn select_tools(tools: Tools) -> Result<()> {
 pub(crate) fn with_sync_tools<T>(tools: Option<Tools>, operation: impl FnOnce() -> T) -> T {
     TOOLS.sync_scope(std::cell::RefCell::new(tools), operation)
 }
+fn executable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_ok()
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 fn resolve_tool(
     tool: &str,
     override_path: Option<std::ffi::OsString>,
@@ -92,7 +109,7 @@ fn resolve_tool(
     }
     if let Some(parent) = executable.as_deref().and_then(Path::parent) {
         let bundled = parent.join(format!("cerul-{tool}"));
-        if bundled.is_file() {
+        if executable_file(&bundled) {
             return bundled;
         }
     }
@@ -100,7 +117,7 @@ fn resolve_tool(
         search_path.as_ref().and_then(|paths| {
             std::env::split_paths(paths)
                 .map(|directory| directory.join(name))
-                .find(|path| path.is_file())
+                .find(|path| executable_file(path))
         })
     };
     find(&format!("cerul-{tool}"))
@@ -624,9 +641,19 @@ mod tool_resolution_tests {
         for name in ["ffmpeg", "ffprobe"] {
             let old = conda.join(name);
             std::fs::write(&old, b"old fixture").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
             assert_eq!(resolve_tool(name, None, None, Some(paths.clone())), old);
             let bundled = installed.join(format!("cerul-{name}"));
             std::fs::write(&bundled, b"bundle fixture").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&bundled, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
             assert_eq!(resolve_tool(name, None, None, Some(paths.clone())), bundled);
             assert_eq!(
                 resolve_tool(
@@ -639,6 +666,35 @@ mod tool_resolution_tests {
             );
         }
     }
+    #[cfg(unix)]
+    #[test]
+    fn nonexecutable_path_entries_do_not_shadow_valid_tools() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("bad");
+        let good = dir.path().join("good");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::create_dir_all(&good).unwrap();
+        let paths = std::env::join_paths([&bad, &good]).unwrap();
+        for name in ["ffmpeg", "ffprobe"] {
+            for candidate in [bad.join(name), bad.join(format!("cerul-{name}"))] {
+                std::fs::write(&candidate, b"not executable").unwrap();
+                std::fs::set_permissions(candidate, std::fs::Permissions::from_mode(0o644))
+                    .unwrap();
+            }
+            let executable = good.join(name);
+            std::fs::write(&executable, b"#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(
+                resolve_tool(name, None, Some(bad.join("cerul")), Some(paths.clone())),
+                executable
+            );
+            let bundled = good.join(format!("cerul-{name}"));
+            std::fs::copy(&executable, &bundled).unwrap();
+            assert_eq!(resolve_tool(name, None, None, Some(paths.clone())), bundled);
+        }
+    }
+
     #[test]
     fn bundle_precedes_path_but_explicit_override_is_authoritative() {
         let dir = tempfile::tempdir().unwrap();
@@ -649,6 +705,11 @@ mod tool_resolution_tests {
             Path::new("ffmpeg")
         );
         std::fs::write(&bundled, b"fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bundled, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         assert_eq!(
             resolve_tool("ffmpeg", None, Some(exe.clone()), None),
             bundled

@@ -645,11 +645,11 @@ async fn run_inner(
                         }
                         Err(error) => {
                             interrupted(&cancel)?;
-                            if !options.hands
-                                && error.downcast_ref::<ProviderError>().is_some_and(|e| {
-                                    matches!(e.kind, Failure::MissingKey | Failure::Unsupported)
-                                })
-                            {
+                            if !report.modules.iter().any(|module| {
+                                module.complete && module.annotation == super::hands::NAME
+                            }) && error.downcast_ref::<ProviderError>().is_some_and(|e| {
+                                matches!(e.kind, Failure::MissingKey | Failure::Unsupported)
+                            }) {
                                 return Err(error);
                             }
                             report.partial = true;
@@ -801,6 +801,61 @@ mod tests {
         options.hands = false;
         assert!(options.validate().is_err());
     }
+    #[tokio::test]
+    async fn failed_hands_do_not_hide_a_missing_semantic_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("video.mp4");
+        crate::media::run(
+            crate::media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=32x32:rate=1:duration=2",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let mut config = Config::default();
+        config.vision.api_key_env = "CERUL_FAILED_HANDS_NO_KEY".into();
+        let options = Options {
+            embodied: true,
+            hands: true,
+            items: vec!["event".into()],
+            ..Default::default()
+        };
+        let original = fs::read(&source).unwrap();
+        let mut decode_started = false;
+        let mut restored = false;
+        let error = run(std::slice::from_ref(&source), &dir.path().join("workspace"), &config, &options,
+            CancellationToken::new(), &mut |event| {
+                if matches!(event, Event::AnnotationProgress { ref phase, .. } if phase.ends_with("hands · decoding")) {
+                    // Simulate local decode failure after successful discovery/planning.
+                    fs::write(&source, b"invalid video after planning").unwrap();
+                    decode_started = true;
+                }
+                if matches!(event, Event::Log { ref msg, .. } if msg.contains("hands:")) {
+                    fs::write(&source, &original).unwrap();
+                    restored = true;
+                }
+            }).await.unwrap_err();
+        assert!(decode_started && restored);
+        assert_eq!(
+            error.downcast_ref::<ProviderError>().unwrap().kind,
+            Failure::MissingKey
+        );
+        assert!(
+            !source
+                .with_extension("mp4.cerul")
+                .join("annotations.json")
+                .exists()
+        );
+    }
+
     #[test]
     fn reject_contact_sheet_overflow_before_processing() {
         let mut options = Options {

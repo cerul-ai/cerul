@@ -1,6 +1,6 @@
 [package]
 name = "cerul"
-version = "0.0.11"
+version = "0.0.12"
 edition = "2024"
 license = "Apache-2.0"
 description = "Searchable video and annotation data, using your own model endpoints"
@@ -53,6 +53,9 @@ tempfile = "3"
 rpassword = "7"
 indicatif = "0.17"
 console = { version = "0.15", default-features = false, features = ["ansi-parsing"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }
 
 [profile.dev]
 debug = 0
