@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -295,6 +296,7 @@ fn station_label(station: &str) -> String {
         "transcript" => "Speech".into(),
         "embed" => "Search index".into(),
         "understanding" => "Understanding".into(),
+        "overview" => "Summarizing".into(),
         "description" => "Descriptions".into(),
         other => {
             let name = other.strip_prefix("semantic.").unwrap_or(other);
@@ -304,6 +306,51 @@ fn station_label(station: &str) -> String {
                 None => other.into(),
             }
         }
+    }
+}
+
+struct SmoothIndex {
+    shown: f64,
+    confirmed: f64,
+    ceiling: f64,
+    total: f64,
+    duration: f64,
+    updated: Instant,
+    ticked: Instant,
+}
+impl SmoothIndex {
+    fn new(now: Instant) -> Self {
+        Self {
+            shown: 0.,
+            confirmed: 0.,
+            ceiling: 0.,
+            total: 1.,
+            duration: 1.,
+            updated: now,
+            ticked: now,
+        }
+    }
+    fn sample(&mut self, now: Instant) -> f64 {
+        let now = now.max(self.ticked);
+        let elapsed = now.duration_since(self.updated).as_secs_f64();
+        let target = self.confirmed
+            + (self.ceiling - self.confirmed) * 0.9 * (1. - (-elapsed / self.duration).exp());
+        let step = now.duration_since(self.ticked).as_secs_f64() * self.total * 0.15;
+        self.shown = self.shown.max(target.min(self.shown + step));
+        self.ticked = now;
+        (self.shown / self.total).min(0.999)
+    }
+    fn update(&mut self, done: u64, ceiling: u64, total: u64, eta: f64, now: Instant) {
+        let now = now.max(self.ticked);
+        self.sample(now);
+        if self.confirmed != done as f64 || self.ceiling != ceiling as f64 {
+            self.updated = now;
+        }
+        self.confirmed = done as f64;
+        self.ceiling = ceiling.max(done) as f64;
+        self.total = total.max(1) as f64;
+        self.duration =
+            (eta * (self.ceiling - self.confirmed) / (self.total - self.confirmed).max(1.)).max(1.);
     }
 }
 /// Terminal-only progress; durable results are printed once by the final receipt.
@@ -317,6 +364,7 @@ pub struct Progress {
     estimates: HashMap<(String, String), (Instant, u64)>,
     spinner: Option<ProgressBar>,
     indexing: bool,
+    index_estimate: Arc<Mutex<SmoothIndex>>,
     names: HashMap<String, String>,
     resolved: std::collections::HashSet<String>,
 }
@@ -359,6 +407,7 @@ impl Progress {
             estimates: HashMap::new(),
             spinner: None,
             indexing: false,
+            index_estimate: Arc::new(Mutex::new(SmoothIndex::new(Instant::now()))),
             names: HashMap::new(),
             resolved: std::collections::HashSet::new(),
         }
@@ -473,11 +522,11 @@ impl Progress {
         &mut self,
         episode: String,
         phase: String,
-        done: u64,
-        total: u64,
+        amounts: (u64, u64, u64),
         eta_seconds: f64,
         finished: bool,
     ) {
+        let (done, ceiling, total) = amounts;
         self.indexing = true;
         self.stop_spinner();
         if self.quiet {
@@ -514,14 +563,37 @@ impl Progress {
             return;
         }
         let sampled = Instant::now();
-        let template = if console::Term::stderr().size().1 >= 72 {
-            "  Indexing [{bar:18.cyan/black}] {percent:>3}%  ETA {remaining:>8}  {wide_msg}"
+        self.index_estimate
+            .lock()
+            .unwrap()
+            .update(done, ceiling, total, eta_seconds, sampled);
+        let wide = console::Term::stderr().size().1 >= 72;
+        let width = if wide { 18 } else { 8 };
+        let template = if wide {
+            "  {spinner} Indexing [{smooth_bar.cyan/black}] {smooth_percent:>4}  ETA {remaining:>8}  {wide_msg} · {elapsed_precise}"
         } else {
-            "Index [{bar:8.cyan/black}] {percent:>3}% ETA {remaining:>8}"
+            "{spinner} [{smooth_bar.cyan/black}] {smooth_percent:>4} ETA {remaining:>8}"
         };
+        let bar_estimate = self.index_estimate.clone();
+        let percent_estimate = self.index_estimate.clone();
         let style = ProgressStyle::with_template(template)
             .expect("static template")
             .progress_chars("━╸─")
+            .with_key(
+                "smooth_bar",
+                move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                    let ratio = bar_estimate.lock().unwrap().sample(Instant::now());
+                    let filled = (ratio * width as f64).floor() as usize;
+                    let _ = write!(out, "{}{}", "━".repeat(filled), "─".repeat(width - filled));
+                },
+            )
+            .with_key(
+                "smooth_percent",
+                move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                    let ratio = percent_estimate.lock().unwrap().sample(Instant::now());
+                    let _ = write!(out, "~{}%", (ratio * 100.).floor() as u64);
+                },
+            )
             .with_key(
                 "remaining",
                 move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
@@ -557,6 +629,7 @@ impl Progress {
                 source,
                 phase,
                 done,
+                ceiling,
                 total,
                 eta_seconds,
                 finished,
@@ -564,7 +637,13 @@ impl Progress {
                 if let Some(source) = source {
                     self.names.insert(episode.clone(), file_name(&source));
                 }
-                self.index_progress(episode, phase, done, total, eta_seconds, finished);
+                self.index_progress(
+                    episode,
+                    phase,
+                    (done, ceiling, total),
+                    eta_seconds,
+                    finished,
+                );
             }
             Event::Progress { .. } if self.indexing => {}
             Event::Log { level, msg } => {
@@ -2127,6 +2206,25 @@ mod tests {
     }
 
     #[test]
+    fn estimated_index_progress_smooths_jumps_without_claiming_future_work() {
+        let start = Instant::now();
+        let mut estimate = SmoothIndex::new(start);
+        estimate.update(0, 500, 10_000, 100., start);
+        let first = estimate.sample(start + Duration::from_secs(1));
+        assert!(first > 0. && first < 0.05);
+        estimate.update(8000, 9000, 10_000, 40., start + Duration::from_secs(1));
+        let next = estimate.sample(start + Duration::from_secs(2));
+        assert!(next >= first && next < 0.25); // No immediate jump to 80%.
+        let waiting = estimate.sample(start + Duration::from_secs(60));
+        assert!((0.8..0.9).contains(&waiting));
+        let overdue = estimate.sample(start + Duration::from_secs(300));
+        assert!(overdue >= waiting && overdue < 0.9);
+        estimate.update(8500, 9500, 10_000, 30., start + Duration::from_secs(300));
+        assert!(estimate.sample(start + Duration::from_secs(301)) >= overdue);
+        assert!(estimate.sample(start + Duration::from_secs(600)) < 0.95);
+    }
+
+    #[test]
     fn indexing_keeps_one_bar_and_has_an_initial_total_eta() {
         let terminal = RecordedTerminal::default();
         let dir = tempfile::tempdir().unwrap();
@@ -2146,6 +2244,7 @@ mod tests {
                 source: Some("/fixture/video.mp4".into()),
                 phase: phase.into(),
                 done,
+                ceiling: (done + 1000).min(9999),
                 total: 10_000,
                 eta_seconds: 80.,
                 finished: false,
@@ -2163,6 +2262,7 @@ mod tests {
         }
         let output = terminal.0.lock().unwrap().join("");
         assert!(output.contains("Indexing"), "{output}");
+        assert!(output.contains("~0%"), "{output}");
         assert!(output.contains("~01:20"), "{output}");
         assert!(output.contains("video.mp4"), "{output}");
         assert!(!output.contains("internal-dataset"), "{output}");
@@ -2172,6 +2272,7 @@ mod tests {
             source: None,
             phase: "finalize".into(),
             done: 10_000,
+            ceiling: 10_000,
             total: 10_000,
             eta_seconds: 0.,
             finished: true,

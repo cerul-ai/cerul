@@ -66,7 +66,7 @@ Then search your workspace:
 No path is needed when searching. --workspace DIR selects a separate library.
 Screen text runs locally; embeddings, speech, and descriptions use configured APIs.
 Compatible completed work is reused. --recompute processes it again.
-One progress bar covers the whole index run. ETA starts with a rough estimate, then uses local timing history and measured work; API latency can change it.";
+One bar covers the whole run; ~ marks estimated progress within active work. Summarizing has its own budget. ETA uses rough estimates, local timings and measured work; API latency can change it. --json exposes confirmed progress.";
 
 const SEARCH_HELP: &str = "\
 Examples:

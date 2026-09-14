@@ -7,6 +7,13 @@
       "description": "Whole indexing invocation, including all selected videos and streams.\nETA is an approximate duration from priors, local history and observed work.",
       "type": "object",
       "properties": {
+        "ceiling": {
+          "description": "Upper bound for a human estimate within active work; done stays measured.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 0,
+          "minimum": 0
+        },
         "done": {
           "type": "integer",
           "format": "uint64",

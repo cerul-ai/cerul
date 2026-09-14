@@ -12,6 +12,9 @@ pub enum Event {
         source: Option<PathBuf>,
         phase: String,
         done: u64,
+        /// Upper bound for a human estimate within active work; done stays measured.
+        #[serde(default)]
+        ceiling: u64,
         total: u64,
         eta_seconds: f64,
         finished: bool,

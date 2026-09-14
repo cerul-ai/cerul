@@ -720,6 +720,12 @@ async fn run_inner(
                             "understanding",
                             product.errors.is_empty(),
                         );
+                        events.end(
+                            &episode.episode_id,
+                            &stream,
+                            "overview",
+                            product.errors.is_empty(),
+                        );
                         if embedding_succeeded {
                             events.begin(&episode.episode_id, &stream, "description");
                             match super::descriptions::run(
@@ -770,6 +776,7 @@ async fn run_inner(
                 }
             };
             events.end(&episode.episode_id, &stream, "understanding", false);
+            events.end(&episode.episode_id, &stream, "overview", false);
             events.end(
                 &episode.episode_id,
                 &stream,

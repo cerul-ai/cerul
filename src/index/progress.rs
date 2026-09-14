@@ -23,6 +23,7 @@ struct Stage {
     units: f64,
     weight: f64,
     fraction: f64,
+    step: f64,
     started: Option<Instant>,
     measured_end: Option<Instant>,
     observed: bool,
@@ -54,7 +55,7 @@ impl<'a> RunProgress<'a> {
     ) -> Result<Self> {
         // Store only a hash: no credentials, URLs, media paths, or request bodies.
         let profile = storage::cache_key(&(
-            "index-timing/1",
+            "index-timing/2",
             std::env::consts::ARCH,
             std::env::consts::OS,
             (
@@ -152,9 +153,23 @@ impl<'a> RunProgress<'a> {
                         &stream,
                         "understanding",
                         group,
-                        windows + 1.,
+                        windows,
                         25.,
                     );
+                    group += 1;
+                    result.add(
+                        &episode.episode_id,
+                        &stream,
+                        "overview",
+                        group,
+                        1.,
+                        (30. + windows * 3.).max(windows * 25. / 3.),
+                    );
+                    // A long summary is not just one more short scene request.
+                    let len = result.stages.len();
+                    result.stages[len - 1].weight = result.stages[len - 1]
+                        .weight
+                        .max(result.stages[len - 2].weight / 3.);
                     group += 1;
                     result.add(
                         &episode.episode_id,
@@ -196,6 +211,7 @@ impl<'a> RunProgress<'a> {
             units,
             weight: (rate * units).max(1.),
             fraction: 0.,
+            step: 1. / units.max(1.),
             started: None,
             measured_end: None,
             observed: false,
@@ -299,6 +315,19 @@ impl<'a> RunProgress<'a> {
     fn emit_overall(&mut self, finished: bool, partial: bool) {
         let (done, eta_seconds, phase) = self.snapshot();
         self.high_water = self.high_water.max(done);
+        let total: f64 = self.stages.iter().map(|s| s.weight).sum();
+        let ceiling: f64 = self
+            .stages
+            .iter()
+            .map(|s| {
+                s.weight
+                    * if s.started.is_some() && !s.finished {
+                        (s.fraction + s.step).min(1.)
+                    } else {
+                        s.fraction
+                    }
+            })
+            .sum();
         self.sink.emit(Event::IndexProgress {
             episode: self.latest.clone(),
             source: self.sources.get(&self.latest).cloned(),
@@ -309,6 +338,13 @@ impl<'a> RunProgress<'a> {
                 self.high_water
             },
             total: 10_000,
+            ceiling: if finished && !partial {
+                10_000
+            } else {
+                ((ceiling / total.max(1.) * 10_000.) as u64)
+                    .max(self.high_water)
+                    .min(9999)
+            },
             eta_seconds: if finished { 0. } else { eta_seconds },
             finished,
         });
@@ -326,6 +362,26 @@ impl EventSink for RunProgress<'_> {
         if let Event::Progress {
             episode,
             station,
+            done: 0,
+            ..
+        } = &event
+            && station == "overview"
+            && let Some(stage) = self.stages.iter().find(|s| {
+                s.episode == *episode
+                    && s.station == "understanding"
+                    && !s.finished
+                    && s.started.is_some()
+            })
+        {
+            let stream = stage.stream.clone();
+            // Only the whole product can confirm scene success, so do not train
+            // timings from this boundary (it can also follow retained failures).
+            self.end(episode, &stream, "understanding", false);
+            self.begin(episode, &stream, "overview");
+        }
+        if let Event::Progress {
+            episode,
+            station,
             done,
             total,
         } = &event
@@ -334,8 +390,14 @@ impl EventSink for RunProgress<'_> {
             })
         {
             stage.observed = true;
-            let fraction = if *total > 0 {
-                *done as f64 / *total as f64
+            let total = if station == "understanding" {
+                total.saturating_sub(1).max(1)
+            } else {
+                (*total).max(1)
+            };
+            stage.step = 1. / total as f64;
+            let fraction = if total > 0 {
+                *done as f64 / total as f64
             } else {
                 1.
             }
@@ -347,7 +409,7 @@ impl EventSink for RunProgress<'_> {
                     .map(|time| time.elapsed().as_secs_f64())
                     .unwrap_or(0.);
             }
-            if done >= total {
+            if *done >= total {
                 stage.measured_end = Some(Instant::now());
             }
         }
@@ -494,6 +556,47 @@ mod tests {
         next.add("other", "front", "embed", 0, 2., 12.);
         assert!((next.snapshot().1 - 8.).abs() < 0.2);
     }
+    #[test]
+    fn scene_completion_reserves_overview_work_and_bounds_estimates() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut events = Vec::new();
+        let mut sink = |e| events.push(e);
+        let mut run = empty(&mut sink, dir.path().join("timings.json"));
+        run.add("mori", "primary", "understanding", 0, 9., 25.);
+        run.add("mori", "primary", "overview", 1, 1., 75.);
+        run.add("mori", "primary", "description", 2, 9., 4.);
+        run.add("", "", "finalize", 3, 1., 3.);
+        run.begin("mori", "primary", "understanding");
+        run.emit(Event::Progress {
+            episode: "mori".into(),
+            station: "understanding".into(),
+            done: 9,
+            total: 10,
+        });
+        run.emit(Event::Progress {
+            episode: "mori".into(),
+            station: "overview".into(),
+            done: 0,
+            total: 1,
+        });
+        assert!(run.stages[0].finished);
+        assert!(run.stages[1].started.is_some());
+        drop(run);
+        let Some(Event::IndexProgress {
+            phase,
+            done,
+            ceiling,
+            total,
+            ..
+        }) = events.last()
+        else {
+            panic!("missing aggregate progress")
+        };
+        assert_eq!(phase, "overview");
+        assert!(*done < total * 3 / 4);
+        assert!(*ceiling > *done && *ceiling < *total);
+    }
+
     #[test]
     fn plan_omits_disabled_work_and_namespaces_history_by_configuration() {
         let dir = tempfile::tempdir().unwrap();

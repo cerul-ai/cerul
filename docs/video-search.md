@@ -153,9 +153,16 @@ After choosing Index and a path in the interactive guide, processing starts
 immediately. Explicit `--dry-run` remains available for inspecting planned work.
 Live indexing uses one progress bar across all selected videos, cameras and
 stages. The current operation appears as a status label; changing stages does not
-reset the percentage. The bar advances from observed work and completed or
-skipped stages, weighted using the fixed plan. It reaches 100% only after the
-whole run succeeds, including final index publication.
+reset the percentage. The terminal labels its percentage with `~`: it eases large
+completion jumps and estimates movement only within the current active work unit.
+It never estimates completion of a future stage. A spinner and elapsed time remain
+visible during slow requests. The success receipt waits for actual final publication;
+partial runs never claim successful completion. JSON `index_progress.done` retains
+confirmed weighted work, while `ceiling` bounds the terminal's active-work estimate.
+
+Scene analysis and overview generation have separate weights. Summarizing reserves
+at least a quarter of their combined work budget, rather than treating a potentially
+slow overview as one more short scene window.
 
 ETA covers the remaining invocation. Once the video inventory is known, a rough
 prior based on work size and configured concurrency is available before the first
@@ -167,15 +174,19 @@ maximum instead of being added together. Unmeasured reuse and failed stages do
 not train timings. Timing files are optional caches, never authoritative data.
 The estimate counts down between updates and is revised as work completes. If a
 request exceeds the prediction, `ETA updating` indicates the estimate is overdue;
-it does not falsely advance the bar. API latency, retries, cache reuse and data
+the approximate bar remains bounded within active work. API latency, retries, cache reuse and data
 complexity can still make these approximate estimates inaccurate.
 
 Stage labels describe the work: Screen text is local OCR; Speech transcribes
 audio; Search index embeds video windows for semantic retrieval; Understanding
-creates scene descriptions and summaries; Descriptions embeds that text; Saving
+creates scene descriptions; Summarizing builds the overview and sections;
+Descriptions embeds scene text; Saving
 index prepares the final searchable records and local text index. Disabled or
 inapplicable stages are omitted from the plan. `--json` includes an additive
 `index_progress` event for the whole run and preserves individual stage events.
+Optional search suggestions with invalid types or source references are discarded
+before overview publication; summary and section evidence still require strict
+validation. Invalid optional recommendations alone do not make an index partial.
 
 Completed bars disappear before the final receipt is written. Routine model
 notices and station summaries are hidden by default; `-v` enables diagnostics.

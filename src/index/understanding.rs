@@ -281,6 +281,39 @@ fn checked_refs(refs: &[SourceRef], inventory: &Inventory) -> Result<Vec<TimeRan
         .collect()
 }
 
+fn validate_suggestion(suggestion: &QuerySuggestion, inventory: &Inventory) -> Result<()> {
+    ensure!(
+        valid_text(&suggestion.query, 160),
+        "invalid generated suggestion"
+    );
+    let annotation = match suggestion.kind.as_str() {
+        "visual" => "semantic.scene",
+        "speech" => "transcript",
+        "screen" => "screen_text",
+        _ => anyhow::bail!("unknown suggestion kind"),
+    };
+    ensure!(
+        suggestion.source_refs.len() <= 16,
+        "too many suggestion references"
+    );
+    checked_refs(&suggestion.source_refs, inventory)?;
+    ensure!(
+        suggestion
+            .source_refs
+            .iter()
+            .all(|r| r.annotation == annotation),
+        "suggestion modality mismatch"
+    );
+    Ok(())
+}
+
+fn retain_valid_suggestions(generated: &mut Overview, inventory: &Inventory) {
+    generated
+        .suggestions
+        .retain(|suggestion| validate_suggestion(suggestion, inventory).is_ok());
+    generated.suggestions.truncate(3);
+}
+
 fn validate_overview(generated: &Overview, inventory: &Inventory) -> Result<()> {
     ensure!(valid_text(&generated.title, 100), "invalid generated title");
     ensure!(
@@ -308,28 +341,7 @@ fn validate_overview(generated: &Overview, inventory: &Inventory) -> Result<()> 
         "invalid overview metadata"
     );
     for suggestion in &generated.suggestions {
-        ensure!(
-            valid_text(&suggestion.query, 160),
-            "invalid generated suggestion"
-        );
-        let annotation = match suggestion.kind.as_str() {
-            "visual" => "semantic.scene",
-            "speech" => "transcript",
-            "screen" => "screen_text",
-            _ => anyhow::bail!("unknown suggestion kind"),
-        };
-        ensure!(
-            suggestion.source_refs.len() <= 16,
-            "too many suggestion references"
-        );
-        checked_refs(&suggestion.source_refs, inventory)?;
-        ensure!(
-            suggestion
-                .source_refs
-                .iter()
-                .all(|r| r.annotation == annotation),
-            "suggestion modality mismatch"
-        );
+        validate_suggestion(suggestion, inventory)?;
     }
     let mut ranges = Vec::new();
     for section in &generated.sections {
@@ -399,14 +411,14 @@ async fn overview(
             } else {
                 checkpoints.load::<Overview>(&key)?
             };
-            let generated = match cached {
+            let mut generated = match cached {
                 Some(value) => value,
                 None => {
                     let prompt = format!(
                         "{OVERVIEW_PROMPT}\nRecords: {}",
                         serde_json::to_string(&group)?
                     );
-                    let value: Overview = serde_json::from_value(
+                    let mut value: Overview = serde_json::from_value(
                         provider
                             .generate(
                                 &prompt,
@@ -415,11 +427,13 @@ async fn overview(
                             )
                             .await?,
                     )?;
+                    retain_valid_suggestions(&mut value, inventory);
                     validate_overview(&value, inventory)?;
                     checkpoints.save(&key, &value)?;
                     value
                 }
             };
+            retain_valid_suggestions(&mut generated, inventory);
             validate_overview(&generated, inventory)?;
             if count == 1 {
                 return Ok(generated);
@@ -832,6 +846,12 @@ pub async fn run(
             events,
         );
     }
+    events.emit(Event::Progress {
+        episode: episode.episode_id.clone(),
+        station: "overview".into(),
+        done: 0,
+        total: 1,
+    });
     let result: Result<AnnotationFile> = async {
         // The cached overview regenerates both public files locally, including
         // when a projection or section file was removed independently.
@@ -1666,7 +1686,7 @@ mod tests {
                     let context: Value =
                         serde_json::from_str(prompt.split_once("\nRecords: ").unwrap().1).unwrap();
                     let reference = &context[0]["source"];
-                    json!({"title":"Color test pattern","summary":"A synthetic color pattern is displayed.","content_type":"static","environment":null,"language":null,"source_refs":[reference],"sections":[{"title":"Color pattern","source_refs":[reference]}],"suggestions":[{"query":"A colorful test pattern on screen","kind":"visual","source_refs":[reference]}]})
+                    json!({"title":"Color test pattern","summary":"A synthetic color pattern is displayed.","content_type":"static","environment":null,"language":null,"source_refs":[reference],"sections":[{"title":"Color pattern","source_refs":[reference]}],"suggestions":[{"query":"A colorful test pattern on screen","kind":"visual","source_refs":[reference]},{"query":"Incorrect speech recommendation","kind":"speech","source_refs":[reference]}]})
                 }
             };
             (
