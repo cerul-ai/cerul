@@ -1,0 +1,255 @@
+{
+  "$id": "https://cerul.ai/schemas/analyze-result/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Report",
+  "type": "object",
+  "properties": {
+    "dry_run": {
+      "type": "boolean"
+    },
+    "partial": {
+      "type": "boolean"
+    },
+    "streaming": {
+      "type": "boolean"
+    },
+    "streams": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StreamResult"
+      }
+    }
+  },
+  "required": [
+    "streams",
+    "partial",
+    "dry_run",
+    "streaming"
+  ],
+  "$defs": {
+    "Answer": {
+      "type": "object",
+      "properties": {
+        "answer": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "answer",
+        "evidence",
+        "limitations"
+      ]
+    },
+    "Evidence": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "time_us": {
+          "description": "An actual sampled video timestamp on the episode timeline.",
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "time_us",
+        "description"
+      ]
+    },
+    "Model": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    },
+    "Record": {
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "id": {
+          "type": "string"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "start_us",
+        "end_us"
+      ]
+    },
+    "Response": {
+      "type": "object",
+      "properties": {
+        "answer": {
+          "$ref": "#/$defs/Answer"
+        },
+        "model": {
+          "$ref": "#/$defs/Model"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "range_us": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "reference_hashes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sample_times_us": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "source_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt",
+        "range_us",
+        "source_hash",
+        "reference_hashes",
+        "sample_times_us",
+        "model",
+        "answer"
+      ]
+    },
+    "StreamResult": {
+      "type": "object",
+      "properties": {
+        "cached": {
+          "type": "boolean"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "range_us": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "response": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Response"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scenes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Record"
+          }
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Record"
+          }
+        },
+        "sidecar": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "stream": {
+          "type": "string"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Record"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "episode",
+        "source",
+        "stream",
+        "sidecar",
+        "cached",
+        "scenes",
+        "sections",
+        "errors"
+      ]
+    }
+  }
+}

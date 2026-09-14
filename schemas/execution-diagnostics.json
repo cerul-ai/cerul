@@ -1,0 +1,122 @@
+{
+  "$id": "https://cerul.ai/schemas/execution-diagnostics/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Report",
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string"
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "failed": {
+      "type": "boolean"
+    },
+    "partial": {
+      "type": "boolean"
+    },
+    "schema": {
+      "type": "string"
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Stage"
+      }
+    },
+    "started_at_unix_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema",
+    "command",
+    "started_at_unix_ms",
+    "elapsed_ms",
+    "failed",
+    "partial",
+    "stages"
+  ],
+  "$defs": {
+    "Cache": {
+      "type": "object",
+      "properties": {
+        "hits": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "misses": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "hits",
+        "misses"
+      ]
+    },
+    "Stage": {
+      "type": "object",
+      "properties": {
+        "caches": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Cache"
+          }
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "episode": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "request_elapsed_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "request_max_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "requests": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "retries": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "episode",
+        "stream",
+        "elapsed_ms",
+        "requests",
+        "request_elapsed_ms",
+        "request_max_ms",
+        "retries",
+        "caches"
+      ]
+    }
+  }
+}

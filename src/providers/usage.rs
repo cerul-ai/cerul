@@ -140,6 +140,7 @@ pub(super) struct Attempt {
     observer: Option<RequestObserver>,
     started: Instant,
     report: RequestReport,
+    diagnostics: Option<crate::diagnostics::Context>,
 }
 impl Attempt {
     pub(super) fn new(
@@ -151,6 +152,7 @@ impl Attempt {
     ) -> Self {
         Self {
             observer,
+            diagnostics: crate::diagnostics::current(),
             started: Instant::now(),
             report: RequestReport {
                 request_id,
@@ -174,8 +176,9 @@ impl Attempt {
 }
 impl Drop for Attempt {
     fn drop(&mut self) {
+        self.report.elapsed_ms = self.started.elapsed().as_millis().min(u64::MAX.into()) as u64;
+        crate::diagnostics::request(self.diagnostics.as_ref(), &self.report);
         if let Some(observer) = &self.observer {
-            self.report.elapsed_ms = self.started.elapsed().as_millis().min(u64::MAX.into()) as u64;
             observer(self.report.clone());
         }
     }

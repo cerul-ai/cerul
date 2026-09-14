@@ -1,5 +1,9 @@
 # Annotation experience proposal
 
+Update 2026-09-15: the general annotation mode was removed. Annotation now
+defaults to embodied labels; analyze handles explicit general-video scenes and
+overviews. The mode-selection discussion below is historical.
+
 Status: design rationale. Explicit modes, aggregate progress, portable exports,
 private semantic storage and semantic review-video rendering are implemented.
 Optional local human-hand inference is implemented; depth is deferred. DESIGN.md

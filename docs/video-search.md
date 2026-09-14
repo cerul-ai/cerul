@@ -20,10 +20,11 @@ cerul index ./demo.mp4
 cerul status ./demo.mp4
 ```
 
-The default pipeline runs screen OCR and available ASR concurrently, embeds
-video, speech, and screen text, then produces visual scene descriptions and a
-grounded overview. OCR, embedding proxies, and understanding reuse timestamped
-samples; each consumer selects its own resolution. Each completed artifact is stored in
+The default pipeline runs screen OCR and available ASR concurrently, then embeds
+video, speech, and screen text. It does not generate scene descriptions, chapters,
+or summaries, and does not call the vision endpoint. Use `cerul analyze ./video.mp4`
+for explicit analysis and `cerul annotate ./video.mp4` for embodied labels. OCR and embedding proxies reuse timestamped samples; each
+consumer selects its own resolution. Completed artifacts are stored in
 `demo.mp4.cerul/`; the workspace holds disposable indexes and proxy caches.
 Media directories that cannot be written use workspace sidecars instead.
 
@@ -64,9 +65,9 @@ cerul search --filter 'semantic.event.verb=place'
 cerul search --filter 'semantic.event.verb=place' --count
 ```
 
-Ordinary videos default to task, subtask, and flag. Event annotations are
-requested explicitly here. Without an ontology, ordinary-video event verbs are
-free text: use a verb actually present in your generated annotations. A filter
+Annotation defaults to embodied subtask, event, interaction and state labels.
+The second command explicitly requests only events. Without an ontology, verbs
+are free text: use a verb actually present in your generated annotations. A filter
 on an annotation that has not been generated returns a capability error.
 Repeated filters combine with AND; filters apply before vector ranking.
 
@@ -162,35 +163,27 @@ visible during slow requests. The success receipt waits for actual final publica
 partial runs never claim successful completion. JSON `index_progress.done` retains
 confirmed weighted work, while `ceiling` bounds the terminal's active-work estimate.
 
-Independent scene windows, speech windows, description vectors and overview groups
-run concurrently. OCR and scene analysis start alongside speech. Description
-vectors start as soon as scenes publish; the overview waits for scenes and text,
-then overlaps vector work. All model stages share `--jobs` (default 4) and `--rpm`;
-raising concurrency does not multiply the limit per stage. Frame extraction is
-shared, and publication/index bookkeeping stays ordered.
-
-Scene analysis and overview generation have separate weights. Summarizing reserves
-at least a quarter of their combined work budget, rather than treating a potentially
-slow overview as one more short scene window.
+OCR and speech run concurrently. Speech and embedding windows use bounded
+concurrency. Video embedding starts alongside OCR and speech; text vectors and final publication follow text readiness. Model work
+shares `--jobs` (default 4) and `--rpm`; publication stays ordered. The plan has
+no scene-analysis, overview, or description-vector allocation.
 
 ETA covers the remaining invocation. Once the video inventory is known, a rough
 prior based on work size and configured concurrency is available before the first
 API response. Successful measured stages refine local timing hints under
 `<workspace>/runtime/index-timing-<profile>.json`; profiles separate model/endpoints,
 chunk settings and concurrency, and contain no credentials or media paths.
-ETA follows the longest remaining dependency path, including parallel OCR, speech,
-scene analysis and downstream work, instead of adding concurrent stage times. Unmeasured reuse and failed stages do
-not train timings. Successful scene timings are saved at scene completion, independently of the
-following overview. Timing files are optional caches, never authoritative data.
+ETA follows the longest remaining dependency path through OCR, speech, embedding,
+and publication, instead of adding concurrent stage times. Unmeasured reuse and
+failed stages do not train timings. Timing files are optional caches, never
+authoritative data.
 The estimate counts down between updates and is revised as work completes. If a
 request exceeds the prediction, `ETA updating` indicates the estimate is overdue;
 the approximate bar remains bounded within active work. API latency, retries, cache reuse and data
 complexity can still make these approximate estimates inaccurate.
 
 Stage labels describe the work: Screen text is local OCR; Speech transcribes
-audio; Search index embeds video windows for semantic retrieval; Understanding
-creates scene descriptions; Summarizing builds the overview and sections;
-Descriptions embeds scene text; Saving
+audio; Search index embeds video and text for semantic retrieval; Saving
 index prepares the final searchable records and local text index. Disabled or
 inapplicable stages are omitted from the plan. `--json` includes an additive
 `index_progress` event for the whole run and preserves individual stage events.
@@ -210,7 +203,7 @@ example keeps its source record and time range; extractive choices span the
 available timeline and avoid repeating the same scene. No model call is needed to
 select examples, including for an existing index.
 
-Default examples describe actions or scenes. They do not mix in OCR logos, prices,
+When existing visual annotations are available, examples describe actions or scenes. They do not mix in OCR logos, prices,
 isolated words or short transcript fragments just to reach three commands. If
 visual examples are unavailable, current subtask descriptions or substantive
 transcript phrases provide a fallback. With no useful evidence, the CLI shows one
@@ -229,6 +222,10 @@ A partial result keeps completed work and prints the original command to retry.
 
 ## Inspect video understanding
 
+Run `cerul analyze ./demo.mp4` to generate or refresh analysis, then inspect it
+with these commands. `index` preserves analysis but does not generate it.
+`annotate` produces embodied semantic labels instead.
+
 ```sh
 cerul status ./demo.mp4 --timeline --type summary
 cerul status ./demo.mp4 --timeline --type scene
@@ -236,7 +233,7 @@ cerul status ./demo.mp4 --timeline --type section
 cerul status ./demo.mp4 --timeline --type summary --json
 ```
 
-The sidecar stores `semantic.scene.jsonl`, `semantic.section.jsonl`, and
+Analysis sidecars contain `semantic.scene.jsonl`, `semantic.section.jsonl`, and
 `semantic.summary.jsonl` using the existing `annotation/1` envelope. Scenes
 contain visible descriptions, objects, actions, a content kind, and input sample
 times. Lighting and camera movement may appear in the description when visible;
@@ -255,16 +252,13 @@ evidence and time range. Missing tracks are skipped. Use `--json` to inspect
 Set `[search] hybrid = false` to compare the previous three-track baseline.
 See [configuration](configuration.md) for score and threshold semantics.
 
-Without ASR, visual scenes and suggestions still work. Adding or correcting ASR
-invalidates the dependent overview; compatible visual generation is reused.
-A failed refresh preserves valid previous evidence for unchanged inputs. Source
-revisions are retained under the sidecar's `revisions/` directory.
+Changed source evidence can invalidate a dependent legacy overview. Run analyze to regenerate it; indexing does not. Source revisions remain in the sidecar's `revisions/` directory.
 
 Manual scene edits belong in `corrections/semantic.scene.json`, using the
 [generated correction schema](../schemas/scene-corrections.json). Each edit pins
 the original record ID and its `base_revision` (the timeline entry's `revision`
-from `status --timeline --type scene --json`). Re-indexing applies the edits without
-changing their IDs or intervals. Generation never writes this correction file.
+from `status --timeline --type scene --json`). Analysis applies edits without changing IDs or intervals; ordinary CLI indexing
+does not apply scene corrections. Generation never writes this correction file.
 When a new generation conflicts or re-segments the scene, Cerul reports that the
 edit needs rebasing and withholds the disputed replacement.
 

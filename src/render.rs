@@ -294,7 +294,8 @@ fn station_label(station: &str) -> String {
     match station {
         "screen_text" => "Screen text".into(),
         "transcript" => "Speech".into(),
-        "embed" => "Search index".into(),
+        "video_embed" => "Video vectors".into(),
+        "embed" => "Text vectors / Save".into(),
         "understanding" => "Understanding".into(),
         "overview" => "Summarizing".into(),
         "description" => "Descriptions".into(),
@@ -1297,6 +1298,79 @@ pub fn open(
                 "This player starts from the beginning; the moment is at {}. Install mpv or IINA to jump straight to it.",
                 clock(start_us)
             ))
+        )?;
+    }
+    Ok(())
+}
+
+pub fn analyze(
+    out: &mut dyn Write,
+    palette: &Palette,
+    report: &cerul::analyze::Report,
+    elapsed: Duration,
+) -> io::Result<()> {
+    for item in &report.streams {
+        let name = short_name(&file_name(&item.source));
+        if report.dry_run {
+            writeln!(out, "Would analyze {name} · {}", item.stream)?;
+            continue;
+        }
+        let status = if item.errors.is_empty() {
+            "analyzed"
+        } else {
+            "partially analyzed"
+        };
+        let symbol = if item.errors.is_empty() {
+            palette.ok("✓")
+        } else {
+            palette.warn("!")
+        };
+        if let Some(response) = &item.response {
+            writeln!(
+                out,
+                "{symbol} {name} {status} · {}–{}{}",
+                clock(response.range_us[0]),
+                clock(response.range_us[1]),
+                if item.cached { " · cached" } else { "" }
+            )?;
+            if !report.streaming {
+                writeln!(out, "{}", response.answer.answer)?;
+            }
+            for evidence in &response.answer.evidence {
+                writeln!(
+                    out,
+                    "  {}  {}",
+                    clock(evidence.time_us),
+                    evidence.description
+                )?;
+            }
+            for limitation in &response.answer.limitations {
+                writeln!(out, "  {limitation}")?;
+            }
+            writeln!(out, "  {}", tilde(&item.sidecar))?;
+            continue;
+        }
+        writeln!(
+            out,
+            "{symbol} {name} {status} · {} scenes · {} chapters",
+            item.scenes.len(),
+            item.sections.len()
+        )?;
+        if let Some(summary) = &item.summary
+            && let Some(text) = summary.fields.get("summary").and_then(|v| v.as_str())
+        {
+            writeln!(out, "{text}")?;
+        }
+        for error in &item.errors {
+            writeln!(out, "  {error}")?;
+        }
+        writeln!(out, "  {}", tilde(&item.sidecar))?;
+    }
+    if !report.dry_run {
+        writeln!(
+            out,
+            "  {} elapsed",
+            clock(elapsed.as_micros().min(i64::MAX as u128) as i64)
         )?;
     }
     Ok(())

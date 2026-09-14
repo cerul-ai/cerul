@@ -151,6 +151,7 @@ struct EmbeddingContext<'a> {
     transcript: Option<&'a AnnotationFile>,
     screen: Option<&'a AnnotationFile>,
     fingerprint: &'a str,
+    video_prepared: bool,
 }
 impl EmbeddingContext<'_> {
     async fn vector(
@@ -160,6 +161,7 @@ impl EmbeddingContext<'_> {
         input: Input,
         excerpt: String,
         text_part: Option<usize>,
+        precomputed: Option<Vec<f32>>,
     ) -> Result<VectorRow> {
         let mut identity = json!({"space":self.space,"kind":kind,"range":range,"text":excerpt,"text_recipe":if matches!(kind, Kind::Video) {None} else {Some(super::text::RECIPE)},"document_template":if matches!(kind, Kind::Video) {None} else {Some(crate::config::DOCUMENT_TEMPLATE)},"proxy_recipe":if matches!(kind, Kind::Video) { Some(media::proxy::RECIPE_VERSION) } else { None }});
         if let Some(part) = text_part {
@@ -167,7 +169,7 @@ impl EmbeddingContext<'_> {
         }
         let key = stations::station_key(self.episode, self.stream, "embedding-row", &identity)?;
         let checkpoints = Checkpoints::new(self.sidecar);
-        if !self.options.recompute
+        if (!self.options.recompute || (self.video_prepared && kind == Kind::Video))
             && let Some(mut row) = checkpoints.load::<VectorRow>(&key)?
         {
             row.validate(self.provider.endpoint.dims.context("missing dimensions")?)?;
@@ -175,14 +177,19 @@ impl EmbeddingContext<'_> {
             return Ok(row);
         }
         cancelled(self.provider)?;
-        probes::check(
-            self.provider,
-            probes::Capability::Embedding,
-            self.workspace,
-            false,
-        )
-        .await?;
-        let vector = self.provider.embed(input, false).await?;
+        let vector = match precomputed {
+            Some(vector) => vector,
+            None => {
+                probes::check(
+                    self.provider,
+                    probes::Capability::Embedding,
+                    self.workspace,
+                    false,
+                )
+                .await?;
+                self.provider.embed(input, false).await?
+            }
+        };
         let identity = (
             &self.episode.episode_id,
             self.stream,
@@ -270,6 +277,7 @@ impl EmbeddingContext<'_> {
                 Input::Video(fs::read(&clip)?, "video/mp4".into()),
                 String::new(),
                 None,
+                None,
             )
             .await;
         let video = match first {
@@ -293,6 +301,7 @@ impl EmbeddingContext<'_> {
                         range,
                         Input::Video(fs::read(&clip)?, "video/mp4".into()),
                         String::new(),
+                        None,
                         None,
                     )
                     .await
@@ -319,26 +328,145 @@ impl EmbeddingContext<'_> {
             Err(error) => return Err(error),
         };
         let mut rows = vec![video];
+        let mut chunks = Vec::new();
         for (kind, file) in [(Kind::Speech, self.transcript), (Kind::Screen, self.screen)] {
             for (part, chunk) in super::text::chunks(file, range, kind == Kind::Screen)?
                 .into_iter()
                 .enumerate()
             {
-                rows.push(
-                    self.vector(
-                        kind,
-                        chunk.range,
-                        Input::Text(chunk.text.clone()),
-                        chunk.text,
-                        Some(part),
-                    )
-                    .await?,
-                );
+                chunks.push((kind, part, chunk));
             }
+        }
+        let texts: Vec<_> = chunks.iter().map(|(_, _, c)| c.text.clone()).collect();
+        let vectors = self
+            .provider
+            .embed_documents(self.sidecar, &texts, self.options.recompute)
+            .await?;
+        for ((kind, part, chunk), vector) in chunks.into_iter().zip(vectors) {
+            rows.push(
+                self.vector(
+                    kind,
+                    chunk.range,
+                    Input::Text(chunk.text.clone()),
+                    chunk.text,
+                    Some(part),
+                    Some(vector),
+                )
+                .await?,
+            );
         }
         checkpoints.save(&root_key, &rows)?;
         Ok(rows)
     }
+}
+
+pub(super) async fn withdraw(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    config: &Config,
+    error: &anyhow::Error,
+) -> Result<()> {
+    let space = config.space_id()?;
+    let path = state_path(sidecar, stream, &episode.time.reference, &space);
+    let mut state = fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<State>(&b).ok())
+        .unwrap_or(State {
+            input_hash: String::new(),
+            complete: false,
+            error: None,
+        });
+    state.complete = false;
+    state.error = Some(error.to_string());
+    storage::write_json(&path, &state)?;
+    super::lance::VectorIndex::open(
+        workspace,
+        &space,
+        config.embedding.dims.context("missing dimensions")?,
+        true,
+    )
+    .await?
+    .replace(&episode.episode_id, stream, &[])
+    .await?;
+    Ok(())
+}
+
+/// Generate only reusable video checkpoints; publication waits for text stations.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn prepare_video(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    config: &Config,
+    provider: &Provider,
+    options: &Options,
+    events: &mut dyn EventSink,
+) -> Result<()> {
+    crate::diagnostics::stage(
+        "video_embedding",
+        &episode.episode_id,
+        stream,
+        Box::pin(prepare_video_measured(
+            episode, stream, sidecar, workspace, config, provider, options, events,
+        )),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn prepare_video_measured(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    config: &Config,
+    provider: &Provider,
+    options: &Options,
+    events: &mut dyn EventSink,
+) -> Result<()> {
+    let space = config.space_id()?;
+    let fingerprint = fingerprint(episode, stream, &space, options, None, None)?;
+    let context = EmbeddingContext {
+        episode,
+        stream,
+        sidecar,
+        workspace,
+        provider,
+        space: &space,
+        options,
+        transcript: None,
+        screen: None,
+        fingerprint: &fingerprint,
+        video_prepared: false,
+    };
+    let ranges = media::chunks(episode.duration_us()?, options.chunk_us, options.overlap_us)?;
+    let mut work = futures::stream::iter(ranges.iter().copied())
+        .map(|range| context.unit(range))
+        .buffer_unordered(provider.concurrency());
+    let mut done = 0;
+    let mut error = None;
+    while let Some(result) = work.next().await {
+        if let Err(failed) = result {
+            cancelled(provider)?;
+            if error.is_none() {
+                error = Some(failed);
+            }
+        }
+        done += 1;
+        events.emit(Event::Progress {
+            episode: episode.episode_id.clone(),
+            station: "video_embed".into(),
+            done,
+            total: ranges.len() as u64,
+        });
+    }
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -352,6 +480,62 @@ pub async fn run(
     options: &Options,
     transcript: Option<&AnnotationFile>,
     screen: Option<&AnnotationFile>,
+    events: &mut dyn EventSink,
+) -> Result<usize> {
+    run_prepared(
+        episode, stream, sidecar, workspace, config, provider, options, transcript, screen, false,
+        events,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn run_prepared(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    config: &Config,
+    provider: &Provider,
+    options: &Options,
+    transcript: Option<&AnnotationFile>,
+    screen: Option<&AnnotationFile>,
+    video_prepared: bool,
+    events: &mut dyn EventSink,
+) -> Result<usize> {
+    crate::diagnostics::stage(
+        "text_embedding_and_publication",
+        &episode.episode_id,
+        stream,
+        Box::pin(run_prepared_measured(
+            episode,
+            stream,
+            sidecar,
+            workspace,
+            config,
+            provider,
+            options,
+            transcript,
+            screen,
+            video_prepared,
+            events,
+        )),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn run_prepared_measured(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    config: &Config,
+    provider: &Provider,
+    options: &Options,
+    transcript: Option<&AnnotationFile>,
+    screen: Option<&AnnotationFile>,
+    video_prepared: bool,
     events: &mut dyn EventSink,
 ) -> Result<usize> {
     ensure!(
@@ -378,6 +562,7 @@ pub async fn run(
     } else {
         false
     };
+    crate::diagnostics::cache("complete_index", previous_complete && !options.recompute);
     if previous_complete && !options.recompute {
         let rows: Vec<_> = vectors::read(&path, dims)?
             .into_iter()
@@ -409,6 +594,7 @@ pub async fn run(
         transcript,
         screen,
         fingerprint: &input_hash,
+        video_prepared,
     };
     let mut rows = Vec::new();
     let mut errors = Vec::new();
@@ -522,7 +708,7 @@ mod tests {
         let (base, server) =
             crate::providers::tests::server(vec![
                 (200, json!({"embedding":{"values":[0.5,0.5]}}));
-                6
+                5
             ]);
         let mut config = Config::default();
         config.embedding.base_url = base;
@@ -551,12 +737,13 @@ mod tests {
             transcript: Some(&transcript),
             screen: None,
             fingerprint: "repeated-text-test",
+            video_prepared: false,
         };
         let rows = context
             .unit(TimeRange::new(0, 2_000_000).unwrap())
             .await
             .unwrap();
-        assert_eq!(server.join().unwrap().len(), 6);
+        assert_eq!(server.join().unwrap().len(), 5);
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[1].text, rows[2].text);
         assert_ne!(rows[1].id, rows[2].id);

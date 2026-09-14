@@ -1,8 +1,8 @@
 # Annotate actions and demonstrations
 
-Use Cerul to describe what happens in ordinary videos, egocentric recordings,
-or LeRobot robot demonstrations. You can annotate media directly: **indexing is
-not required**. These are semantic labels, not pose, depth, or 3D trajectories.
+Use Cerul to label embodied human or robot demonstrations, including egocentric
+recordings and LeRobot datasets. Indexing is not required. For general-video
+scenes, chapters and summaries, use [analyze](analyze.md).
 
 ## Start with one video
 
@@ -13,39 +13,31 @@ model processing may incur API charges.
 For embodied action steps, events, interactions, and state changes:
 
 ```sh
-cerul annotate ./video.mp4 --embodied
-```
-
-Replace the path with your recording, or pass a directory to process its videos.
-In an interactive terminal, the annotation command without a path asks for it
-and then starts with the general defaults. Use explicit flags for embodied semantics,
-hands, episode selection or camera selection; there are no follow-up menus.
-To see the plan before making model calls or writing results:
-
-```sh
-cerul annotate ./video.mp4 --embodied --dry-run
-```
-
-For a smaller default set of task, subtask, and quality flag labels:
-
-```sh
 cerul annotate ./video.mp4
 ```
 
-No mode flag means general video, regardless of storage format. `--embodied`
-selects demonstration-specific prompts and four default labels. Optional
-`--semantic task,event` overrides the labels without changing the mode. Mode,
-prompt recipe and ontology are included in cache identity.
+Replace the path with your recording, or pass a directory to process its videos.
+From the interactive home menu, Annotate asks only for the path and uses embodied
+defaults: subtask, event, interaction and state. Explicit semantic types override
+this set. The old `--embodied` flag remains accepted as a compatibility no-op.
+There is no general annotation mode; old general records remain readable.
+
+```sh
+cerul annotate ./video.mp4 --dry-run
+cerul annotate ./video.mp4 --semantic task,subtask,event,interaction,state,flag,progress
+```
+
+Mode, prompt recipe and ontology participate in cache identity. Old general
+checkpoints are not reused as embodied labels.
 
 ## Optional local hands for embodied demonstrations
 
-General video annotation never runs hand inference. `--embodied` changes semantic
-prompts only; add `--hands` explicitly for videos containing human hands. Human
-hands are not robot grippers. `--hands` without `--embodied` is an argument error.
+Add `--hands` explicitly for recordings containing human hands. Human hands are
+not robot grippers. Semantic labeling alone never enables hand inference.
 
 ```sh
-cerul annotate ./video.mp4 --embodied --hands
-cerul annotate ./video.mp4 --embodied --hands --semantic none
+cerul annotate ./video.mp4 --hands
+cerul annotate ./video.mp4 --hands --semantic none
 ```
 
 The first command combines cloud semantic labels with local hands. The second
@@ -81,7 +73,7 @@ and does not call inference. Cyan means predicted left; amber means predicted ri
 | `flag` | Quality issues and noteworthy conditions |
 | `progress` | Progress through the task |
 
-To request all seven types for an ordinary video, list them explicitly:
+To request all seven types for an embodied demonstration, list them explicitly:
 
 ```sh
 cerul annotate ./video.mp4 --semantic task,subtask,event,interaction,state,flag,progress
@@ -92,11 +84,10 @@ See [annotation schemas](../schemas/annotation-record.json) for the record forma
 
 ## Start with one LeRobot episode
 
-Pass the dataset root, containing its `meta/` directory. Select embodied mode
-explicitly, just as for an ordinary demonstration video:
+Pass the dataset root, containing its `meta/` directory. Embodied annotation is the default for datasets as well:
 
 ```sh
-cerul annotate ./dataset --embodied --only 0
+cerul annotate ./dataset --only 0
 ```
 
 `--only 0` selects episode index 0. Omit it to process all episodes. The default
@@ -198,7 +189,7 @@ cerul render ./dataset/.cerul/episodes/0/annotations.json --stream observation.i
 Camera timelines with non-unit time scaling are rejected. Source hashes and
 annotation provenance must still match. A rendered MP4 is for inspection and
 sharing; raw annotations remain available for training workflows. Hands require explicit `--embodied --hands` annotation before rendering.
-Depth is not implemented. `--embodied` alone never enables hand inference.
+Depth is not implemented. Hand inference is never automatic.
 
 ## Progress and resuming
 

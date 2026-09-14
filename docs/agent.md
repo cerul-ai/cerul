@@ -56,6 +56,13 @@ Exit 6 is not success. Some work finished and the rest did not; read `retry`.
 
 ## Events
 
+With `analyze --stream --json`, `analysis_delta` carries `episode`, `stream`,
+`text` and `cached` on stderr. Concatenate text per episode/stream for display.
+These are provisional answer fragments, not JSON fragments or validated evidence.
+Only the final stdout report establishes successful analysis; a truncated stream
+returns an error without publishing that response. A cached answer is emitted
+once with `cached: true`.
+
 Annotation runs emit `annotation_progress` with `episode`, `phase`, `done`,
 `total` and `cached`. Count cached units as complete but exclude them from
 throughput estimates. Totals include model passes and publication; a partial

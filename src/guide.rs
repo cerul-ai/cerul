@@ -283,6 +283,10 @@ pub fn complete(arguments: Vec<OsString>, palette: &Palette, entry: Entry) -> Gu
     let extra = match command.to_string_lossy().as_ref() {
         "annotate" => annotate(palette),
         "index" => index(palette),
+        "analyze" => pick_input(palette, "Analyze · input")
+            .ok()
+            .flatten()
+            .map(|path| vec![path]),
         "search" => search(palette),
         _ => return Guided::Untouched,
     };
@@ -331,6 +335,7 @@ pub fn home_menu(palette: &Palette, arguments: &[OsString]) -> Option<Vec<OsStri
     let choices = [
         Choice::new("Index", "", Some("index")),
         Choice::new("Search", "", Some("search")),
+        Choice::new("Analyze", "", Some("analyze")),
         Choice::new("Annotate", "", Some("annotate")),
         Choice::new("Help", "", Some("help")),
         Choice::new("Exit", "", None),

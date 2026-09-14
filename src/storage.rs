@@ -113,6 +113,11 @@ impl Checkpoints {
         write_json(&self.path(key)?, value)
     }
     pub fn load<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
+        let result = self.load_inner(key);
+        crate::diagnostics::cache("checkpoint", matches!(&result, Ok(Some(_))));
+        result
+    }
+    fn load_inner<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
         let current = self.path(key)?;
         let bytes = match fs::read(&current) {
             Ok(bytes) => bytes,

@@ -1,5 +1,57 @@
 # Index performance
 
+As of 2026-09-15, CLI indexing runs OCR, speech, video/text embedding and local
+publication only. It does not call vision or generate descriptions and overviews.
+The local-API regression below now verifies bounded speech/embedding concurrency,
+zero vision requests, cache reuse, and preservation of failed legacy analysis.
+The earlier analysis pipeline and benchmark below are historical, not the current
+CLI workload or a current throughput claim.
+
+## Current execution and diagnostics
+
+Video embedding now starts alongside OCR and speech. It saves reusable row
+checkpoints; the combined Parquet/Lance generation publishes after text is ready.
+A complete cached index still rebuilds with zero model calls. Failed recomputes
+retain prior files but withdraw the incomplete search projection.
+
+Text documents are cached by exact content, endpoint/model, dimensions and document
+template. Rows retain their independent time ranges and provenance. Identical
+concurrent documents coalesce through ordered locks. Gemini and OpenAI-compatible endpoints receive synchronous batches of up to
+32 distinct documents. Response counts, dimensions and OpenAI response indexes
+are validated before publication.
+The shared jobs/RPM limit still applies. An explicit unsupported HTTP response falls back to bounded individual requests
+and disables batching for that provider instance. Malformed successful batches
+fail validation rather than silently assigning vectors to the wrong text.
+
+Default analyze retains a full-video overview. Repeated evidence content is stored
+once per request, and short wire references resolve locally to exact source IDs
+and revisions. Generation is bounded to 12 coarse sections, 800 summary characters,
+100-character titles and 16 references per claim. Duplicate references are removed;
+unique references are never silently truncated. An over-limit response gets one
+bounded regeneration attempt, then remains a reported failure if still invalid.
+
+```sh
+cerul diagnostics
+cerul diagnostics --json
+```
+
+The command reads the latest index/analyze measurements under
+`runtime/diagnostics/<command>-latest.json` in the workspace, without model calls.
+Each stage reports elapsed wall time, HTTP attempt count, summed/max request
+latency, retries and cache hits/misses by category. Request latency excludes
+rate-limit queues and retry backoff; stage wall time includes its waits. The
+invocation stage spans the entire run, while nested/parallel stages overlap:
+**do not add stage durations to obtain total time**. Counts include capability
+probes and attempts that failed or were cancelled. Cache counts measure lookups,
+not unique frames or seconds; a zero-model rebuild is confirmed by zero requests.
+
+Diagnostics contain no prompts, API keys or model response bodies. They are
+best-effort local records and cannot fail a published operation; dry runs do not
+write them. A new run replaces the corresponding latest report. These are actual
+measurements, separate from estimated progress/ETA history.
+
+## Historical analysis-inclusive pipeline
+
 Cerul keeps visual evidence, the whole-video overview, and description retrieval
 in the default indexing workflow. These products serve different purposes:
 
@@ -43,7 +95,7 @@ CERUL_TEST_BINARY="$PWD/target/debug/cerul" python3 -m unittest discover -s test
 ```
 
 The test generates a 301-second 64x64 synthetic video with audio and uses a local
-HTTP server. It verifies the shared limit, overlapping scene/speech work,
+HTTP server. The original version verified the shared limit, overlapping scene/speech work,
 overlapping overview/vector work, concurrent groups, sorted publication,
 zero-call cached replay, and recovery of one invalid scene window without
 repeating completed speech or scene requests. No external model is called.
@@ -78,8 +130,6 @@ insight count as factors and recommends measuring representative user media.
 Its [scale guidance](https://learn.microsoft.com/en-us/azure/azure-video-indexer/considerations-when-use-at-scale)
 also identifies upload conditions and resolution as performance factors.
 
-Potential further optimizations include exact-input embedding reuse, compacting
-redundant overview context while preserving source references, and benchmarking
-faster vision or native video embedding models. Changes to scene granularity,
+Further work includes benchmarking faster vision or native video embedding models. Changes to scene granularity,
 sampling or retrieval products require quality evaluation; scheduler speedups
 alone do not establish equivalent recall to a different provider.

@@ -9,7 +9,7 @@ use crate::{
     config::Config,
     episode::Episode,
     events::{Event, EventSink},
-    providers::{Input, Provider, probes},
+    providers::{Provider, probes},
     storage::{self, Checkpoints},
 };
 use anyhow::{Context, Result, ensure};
@@ -218,6 +218,29 @@ pub async fn run(
     recompute: bool,
     events: &mut dyn EventSink,
 ) -> Result<usize> {
+    crate::diagnostics::stage(
+        "description_embedding",
+        &episode.episode_id,
+        stream,
+        Box::pin(run_measured(
+            episode, stream, sidecar, workspace, config, provider, scenes, recompute, events,
+        )),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_measured(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    config: &Config,
+    provider: &Provider,
+    scenes: &AnnotationFile,
+    recompute: bool,
+    events: &mut dyn EventSink,
+) -> Result<usize> {
     ensure!(
         scenes.header.name == "semantic.scene"
             && scenes.header.stream == stream
@@ -267,10 +290,9 @@ pub async fn run(
         done: 0,
         total: scenes.records.len() as u64,
     });
-    let work = futures_stream::iter(scenes.records.iter().enumerate().map(|(i, record)| {
-        let (space, input_hash, checkpoints) = (&space, &input_hash, &checkpoints);
-        async move {
-        crate::media::check_cancellation()?;
+    let mut jobs = Vec::new();
+    let mut texts = Vec::new();
+    for (i, record) in scenes.records.iter().enumerate() {
         let text = record
             .fields
             .get("description")
@@ -280,48 +302,71 @@ pub async fn run(
             episode,
             stream,
             "description-row",
-            &json!({"space":space,"recipe":RECIPE,"document_template":crate::config::DOCUMENT_TEMPLATE,"start_us":record.start_us,"end_us":record.end_us,"text":text}),
+            &json!({"space":space,"recipe":RECIPE,"document_template":crate::config::DOCUMENT_TEMPLATE,
+            "start_us":record.start_us,"end_us":record.end_us,"text":text}),
         )?;
         let cached = if recompute {
             None
         } else {
             checkpoints.load::<VectorRow>(&key)?
         };
-        let mut row = if let Some(row) = cached {
-            row
-        } else {
-            probes::check(provider, probes::Capability::Embedding, workspace, false).await?;
-            let vector = provider.embed(Input::Text(text.into()), false).await?;
-            VectorRow {
-                id: key.clone(),
-                episode: episode.episode_id.clone(),
-                stream: stream.into(),
-                kind: Kind::Description,
-                start_us: record.start_us,
-                end_us: record.end_us,
-                vector,
-                text: text.into(),
-                still: false,
-                space_id: space.to_owned(),
-                params_hash: input_hash.to_owned(),
+        if cached.is_none() {
+            texts.push(text.to_owned());
+        }
+        jobs.push((i, record, key, cached));
+    }
+    if !texts.is_empty() {
+        probes::check(provider, probes::Capability::Embedding, workspace, false).await?;
+    }
+    let vectors = provider.embed_documents(sidecar, &texts, recompute).await?;
+    let vectors: BTreeMap<_, _> = texts.into_iter().zip(vectors).collect();
+    let work = futures_stream::iter(jobs)
+        .map(|(i, record, key, cached)| {
+            let (space, input_hash, checkpoints, vectors) =
+                (&space, &input_hash, &checkpoints, &vectors);
+            async move {
+                crate::media::check_cancellation()?;
+                let text = record.fields["description"]
+                    .as_str()
+                    .context("missing description")?;
+                let mut row = if let Some(row) = cached {
+                    row
+                } else {
+                    VectorRow {
+                        id: key.clone(),
+                        episode: episode.episode_id.clone(),
+                        stream: stream.into(),
+                        kind: Kind::Description,
+                        start_us: record.start_us,
+                        end_us: record.end_us,
+                        vector: vectors
+                            .get(text)
+                            .context("missing description vector")?
+                            .clone(),
+                        text: text.into(),
+                        still: false,
+                        space_id: space.clone(),
+                        params_hash: input_hash.clone(),
+                    }
+                };
+                row.validate(dims)?;
+                ensure!(
+                    row.id == key
+                        && row.kind == Kind::Description
+                        && row.start_us == record.start_us
+                        && row.end_us == record.end_us
+                        && row.text == text
+                        && row.space_id == *space
+                        && row.episode == episode.episode_id
+                        && row.stream == stream,
+                    "cached description identity mismatch"
+                );
+                row.params_hash = input_hash.clone();
+                checkpoints.save(&key, &row)?;
+                Ok::<_, anyhow::Error>((i, record, row))
             }
-        };
-        row.validate(dims)?;
-        ensure!(
-            row.id == key
-                && row.kind == Kind::Description
-                && row.start_us == record.start_us
-                && row.end_us == record.end_us
-                && row.text == text
-                && row.space_id == *space
-                && row.episode == episode.episode_id
-                && row.stream == stream,
-            "cached description identity mismatch"
-        );
-        row.params_hash = input_hash.to_owned();
-        checkpoints.save(&key, &row)?;
-        Ok::<_, anyhow::Error>((i, record, row))
-    }})).buffer_unordered(provider.concurrency());
+        })
+        .buffer_unordered(provider.concurrency());
     tokio::pin!(work);
     while let Some(result) = work.next().await {
         let (i, record, row) = result?;

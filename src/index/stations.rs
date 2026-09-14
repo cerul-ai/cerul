@@ -162,8 +162,10 @@ pub(crate) fn screen_text_with_workspace(
     let directory = stream_directory(sidecar, stream, &episode.time.reference);
     let path = directory.join("screen_text.jsonl");
     if let Some(file) = existing(&path, &key, duration, recompute)? {
+        crate::diagnostics::cache("annotation", true);
         return Ok(file);
     }
+    crate::diagnostics::cache("annotation", false);
     let Stream::Video {
         path: source,
         range_us,
@@ -425,6 +427,27 @@ pub fn transcript_pending(
 }
 
 pub async fn transcript(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    workspace: &Path,
+    provider: &Provider,
+    recompute: bool,
+    events: &mut dyn EventSink,
+) -> Result<AnnotationFile> {
+    crate::diagnostics::stage(
+        "speech",
+        &episode.episode_id,
+        stream,
+        Box::pin(transcript_measured(
+            episode, stream, sidecar, workspace, provider, recompute, events,
+        )),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn transcript_measured(
     episode: &Episode,
     stream: &str,
     sidecar: &Path,
