@@ -645,7 +645,7 @@ async fn run_inner(
                         }
                         Err(error) => {
                             interrupted(&cancel)?;
-                            if !report.modules.iter().any(|module| {
+                            if !report.modules[module_start..].iter().any(|module| {
                                 module.complete && module.annotation == super::hands::NAME
                             }) && error.downcast_ref::<ProviderError>().is_some_and(|e| {
                                 matches!(e.kind, Failure::MissingKey | Failure::Unsupported)
@@ -828,12 +828,29 @@ mod tests {
             items: vec!["event".into()],
             ..Default::default()
         };
+        let earlier = dir.path().join("earlier.mp4");
+        crate::media::run(
+            crate::media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=red:size=32x32:rate=1:duration=1",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&earlier),
+        )
+        .unwrap();
+        let failing_episode = discover::ordinary_episode(&source).unwrap().episode_id;
         let original = fs::read(&source).unwrap();
         let mut decode_started = false;
         let mut restored = false;
-        let error = run(std::slice::from_ref(&source), &dir.path().join("workspace"), &config, &options,
+        let error = run(&[earlier.clone(), source.clone()], &dir.path().join("workspace"), &config, &options,
             CancellationToken::new(), &mut |event| {
-                if matches!(event, Event::AnnotationProgress { ref phase, .. } if phase.ends_with("hands · decoding")) {
+                if matches!(event, Event::AnnotationProgress { ref episode, ref phase, .. } if episode == &failing_episode && phase.ends_with("hands · decoding")) {
                     // Simulate local decode failure after successful discovery/planning.
                     fs::write(&source, b"invalid video after planning").unwrap();
                     decode_started = true;
@@ -844,6 +861,18 @@ mod tests {
                 }
             }).await.unwrap_err();
         assert!(decode_started && restored);
+        // A previous episode's successful hands must not authorize an empty
+        // partial export for the current failed episode.
+        let previous: super::super::export::Bundle = serde_json::from_slice(
+            &fs::read(earlier.with_extension("mp4.cerul").join("annotations.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            previous
+                .annotations
+                .iter()
+                .any(|file| file.header.name == super::super::hands::NAME)
+        );
         assert_eq!(
             error.downcast_ref::<ProviderError>().unwrap().kind,
             Failure::MissingKey
