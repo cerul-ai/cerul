@@ -151,12 +151,31 @@ configured embedding endpoint.
 
 After choosing Index and a path in the interactive guide, processing starts
 immediately. Explicit `--dry-run` remains available for inspecting planned work.
-Live terminal output shows the current stage, a progress bar, and an estimated
-remaining time for that stage after its first measured work unit. The estimate
-counts down between measured completions and is revised when more work finishes;
-an overrun returns to `ETA --:--` until another useful measurement is available. Preparation and single-request stages show
-`ETA --:--` until a meaningful estimate is available. Percentages represent
-completed stage work, not a predicted overall completion percentage.
+Live indexing uses one progress bar across all selected videos, cameras and
+stages. The current operation appears as a status label; changing stages does not
+reset the percentage. The bar advances from observed work and completed or
+skipped stages, weighted using the fixed plan. It reaches 100% only after the
+whole run succeeds, including final index publication.
+
+ETA covers the remaining invocation. Once the video inventory is known, a rough
+prior based on work size and configured concurrency is available before the first
+API response. Successful measured stages refine local timing hints under
+`<workspace>/runtime/index-timing-<profile>.json`; profiles separate model/endpoints,
+chunk settings and concurrency, and contain no credentials or media paths.
+OCR and speech run concurrently, so their remaining times are combined with a
+maximum instead of being added together. Unmeasured reuse and failed stages do
+not train timings. Timing files are optional caches, never authoritative data.
+The estimate counts down between updates and is revised as work completes. If a
+request exceeds the prediction, `ETA updating` indicates the estimate is overdue;
+it does not falsely advance the bar. API latency, retries, cache reuse and data
+complexity can still make these approximate estimates inaccurate.
+
+Stage labels describe the work: Screen text is local OCR; Speech transcribes
+audio; Search index embeds video windows for semantic retrieval; Understanding
+creates scene descriptions and summaries; Descriptions embeds that text; Saving
+index prepares the final searchable records and local text index. Disabled or
+inapplicable stages are omitted from the plan. `--json` includes an additive
+`index_progress` event for the whole run and preserves individual stage events.
 
 Completed bars disappear before the final receipt is written. Routine model
 notices and station summaries are hidden by default; `-v` enables diagnostics.

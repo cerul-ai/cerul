@@ -54,7 +54,7 @@ Then: cerul search \"describe a moment\"
 No path is needed when searching. --workspace DIR selects a separate library.
 Screen text runs locally; embeddings, speech, and descriptions use configured APIs.
 Compatible completed work is reused. --recompute processes it again.
-Progress percentages and ETA describe each active stage; ETA starts after measured work.";
+One progress bar covers the whole index run. ETA starts with a rough estimate, then uses local timing history and measured work; API latency can change it.";
 
 const SEARCH_HELP: &str = "\
 Examples:

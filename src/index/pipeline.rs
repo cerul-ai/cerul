@@ -355,6 +355,9 @@ async fn run_inner(
         });
     }
     let _lock = storage::WorkspaceLock::acquire(workspace)?;
+    let mut progress =
+        super::progress::RunProgress::new(&episodes, workspace, config, options, events)?;
+    let events = &mut progress;
     for (root, members) in datasets {
         discover::reconcile_dataset(workspace, &root, &members)?;
     }
@@ -399,6 +402,7 @@ async fn run_inner(
         dry_run: false,
     };
     for episode in episodes {
+        events.begin(&episode.episode_id, "", "prepare");
         interrupted(&cancel)?;
         let selected = streams(&episode, &options.streams)?;
         let planned = discover::sidecar_path(
@@ -502,9 +506,12 @@ async fn run_inner(
             suggestions: Vec::new(),
             title: None,
         };
+        events.end(&episode.episode_id, "", "prepare", true);
         for stream in selected {
             interrupted(&cancel)?;
             let mut errors = Vec::new();
+            events.begin(&episode.episode_id, &stream, "screen_text");
+            events.begin(&episode.episode_id, &stream, "transcript");
             let (screen_result, transcript_result) = text_stations(
                 &episode,
                 &stream,
@@ -517,6 +524,18 @@ async fn run_inner(
                 &cancel,
             )
             .await;
+            events.end(
+                &episode.episode_id,
+                &stream,
+                "screen_text",
+                screen_result.is_ok(),
+            );
+            events.end(
+                &episode.episode_id,
+                &stream,
+                "transcript",
+                transcript_result.is_ok(),
+            );
             let mut screen = match screen_result {
                 Ok(file) => file,
                 Err(error) => {
@@ -546,6 +565,7 @@ async fn run_inner(
                 errors.push(error.clone());
             }
             let mut embedding_succeeded = false;
+            events.begin(&episode.episode_id, &stream, "embed");
             let count = if !blocked.contains_key(&stream) {
                 match embed::run(
                     &episode,
@@ -584,6 +604,7 @@ async fn run_inner(
             } else {
                 0
             };
+            events.end(&episode.episode_id, &stream, "embed", embedding_succeeded);
             if !errors.is_empty() {
                 report.partial = true;
                 let state_path =
@@ -678,6 +699,7 @@ async fn run_inner(
                 super::understanding::mark_status(&episode, &stream, &sidecar, "disabled")?;
                 UnderstandingStatus::Disabled
             } else {
+                events.begin(&episode.episode_id, &stream, "understanding");
                 match super::understanding::run(
                     &episode,
                     &stream,
@@ -692,7 +714,14 @@ async fn run_inner(
                 .await
                 {
                     Ok(product) => {
+                        events.end(
+                            &episode.episode_id,
+                            &stream,
+                            "understanding",
+                            product.errors.is_empty(),
+                        );
                         if embedding_succeeded {
+                            events.begin(&episode.episode_id, &stream, "description");
                             match super::descriptions::run(
                                 &episode,
                                 &stream,
@@ -740,6 +769,13 @@ async fn run_inner(
                     }
                 }
             };
+            events.end(&episode.episode_id, &stream, "understanding", false);
+            events.end(
+                &episode.episode_id,
+                &stream,
+                "description",
+                embedding_succeeded && description_rows > 0 && errors.is_empty(),
+            );
             if embedding_succeeded && result.suggestions.len() < 3 {
                 for suggestion in super::suggestions::collect(
                     &episode,
@@ -772,6 +808,7 @@ async fn run_inner(
         }
         report.episodes.push(result);
     }
+    events.begin("", "", "finalize");
     if workspace.join("index").join(&space).is_dir() {
         super::records::RecordIndex::rebuild(workspace, &space).await?;
     }
@@ -788,6 +825,8 @@ async fn run_inner(
             stream.errors.push(format!("lexical index: {error}"));
         }
     }
+    events.end("", "", "finalize", !report.partial);
+    events.finish(report.partial);
     Ok(report)
 }
 

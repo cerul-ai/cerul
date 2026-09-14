@@ -316,6 +316,7 @@ pub struct Progress {
     bars: HashMap<(String, String), ProgressBar>,
     estimates: HashMap<(String, String), (Instant, u64)>,
     spinner: Option<ProgressBar>,
+    indexing: bool,
     names: HashMap<String, String>,
     resolved: std::collections::HashSet<String>,
 }
@@ -357,6 +358,7 @@ impl Progress {
             bars: HashMap::new(),
             estimates: HashMap::new(),
             spinner: None,
+            indexing: false,
             names: HashMap::new(),
             resolved: std::collections::HashSet::new(),
         }
@@ -383,10 +385,7 @@ impl Progress {
         self.stop_spinner();
         let Some(multi) = &self.multi else { return };
         let bar = ProgressBar::hidden();
-        bar.set_style(
-            ProgressStyle::with_template("  {wide_msg}  [────────]  --%  ETA --:--")
-                .expect("static template"),
-        );
+        bar.set_style(ProgressStyle::with_template("  {wide_msg}").expect("static template"));
         bar.set_message(message.to_owned());
         let bar = multi.add(bar);
         bar.enable_steady_tick(Duration::from_millis(100));
@@ -470,8 +469,104 @@ impl Progress {
             self.println(&format!("✓ {name} · {label}"));
         }
     }
+    fn index_progress(
+        &mut self,
+        episode: String,
+        phase: String,
+        done: u64,
+        total: u64,
+        eta_seconds: f64,
+        finished: bool,
+    ) {
+        self.indexing = true;
+        self.stop_spinner();
+        if self.quiet {
+            return;
+        }
+        let name = if episode.is_empty() {
+            String::new()
+        } else {
+            self.name(&episode)
+        };
+        let phase = phase
+            .split('+')
+            .map(|station| match station {
+                "prepare" | "preparing" => "Preparing".into(),
+                "finalize" => "Saving index".into(),
+                _ => station_label(station),
+            })
+            .collect::<Vec<_>>()
+            .join(" / ");
+        let message = if name.is_empty() {
+            phase
+        } else {
+            format!("{name} · {phase}")
+        };
+        let Some(multi) = &self.multi else {
+            return;
+        };
+        let key = (String::new(), "index".into());
+        if finished {
+            if let Some(bar) = self.bars.remove(&key) {
+                bar.finish_and_clear();
+                multi.remove(&bar);
+            }
+            return;
+        }
+        let sampled = Instant::now();
+        let template = if console::Term::stderr().size().1 >= 72 {
+            "  Indexing [{bar:18.cyan/black}] {percent:>3}%  ETA {remaining:>8}  {wide_msg}"
+        } else {
+            "Index [{bar:8.cyan/black}] {percent:>3}% ETA {remaining:>8}"
+        };
+        let style = ProgressStyle::with_template(template)
+            .expect("static template")
+            .progress_chars("━╸─")
+            .with_key(
+                "remaining",
+                move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                    let left = eta_seconds - sampled.elapsed().as_secs_f64();
+                    let text = if left > 0. {
+                        format!("~{}", clock((left.ceil() as i64).saturating_mul(1_000_000)))
+                    } else {
+                        "updating".into()
+                    };
+                    let _ = out.write_str(&text);
+                },
+            );
+        let first = !self.bars.contains_key(&key);
+        let bar = self.bars.entry(key).or_insert_with(|| {
+            let bar = ProgressBar::hidden();
+            bar.set_style(style.clone());
+            bar.set_length(total);
+            bar.set_message(message.clone());
+            multi.add(bar)
+        });
+        bar.set_style(style);
+        bar.set_message(message);
+        bar.set_position(done);
+        if first {
+            bar.enable_steady_tick(Duration::from_millis(100));
+        }
+    }
+
     pub fn handle(&mut self, event: Event) {
         match event {
+            Event::IndexProgress {
+                episode,
+                source,
+                phase,
+                done,
+                total,
+                eta_seconds,
+                finished,
+            } => {
+                if let Some(source) = source {
+                    self.names.insert(episode.clone(), file_name(&source));
+                }
+                self.index_progress(episode, phase, done, total, eta_seconds, finished);
+            }
+            Event::Progress { .. } if self.indexing => {}
             Event::Log { level, msg } => {
                 match level.as_str() {
                     "warn" | "warning" => {
@@ -2020,6 +2115,60 @@ mod tests {
         bar.set_position(1);
         assert!(terminal.0.lock().unwrap().last().is_some());
         bar.finish_and_clear();
+    }
+
+    #[test]
+    fn indexing_keeps_one_bar_and_has_an_initial_total_eta() {
+        let terminal = RecordedTerminal::default();
+        let dir = tempfile::tempdir().unwrap();
+        let mut progress = Progress::new(dir.path(), false, false, Palette::new(false));
+        progress.multi = Some(MultiProgress::with_draw_target(
+            ProgressDrawTarget::term_like(Box::new(terminal.clone())),
+        ));
+        for (phase, done) in [
+            ("prepare", 0),
+            ("screen_text+transcript", 1200),
+            ("embed", 4200),
+            ("understanding", 7000),
+            ("finalize", 9800),
+        ] {
+            progress.handle(Event::IndexProgress {
+                episode: "internal-dataset/0".into(),
+                source: Some("/fixture/video.mp4".into()),
+                phase: phase.into(),
+                done,
+                total: 10_000,
+                eta_seconds: 80.,
+                finished: false,
+            });
+            progress.handle(Event::Progress {
+                episode: "video.mp4".into(),
+                station: "embed".into(),
+                done: 0,
+                total: 1,
+            });
+            assert_eq!(progress.bars.len(), 1);
+            let bar = progress.bars.values().next().unwrap();
+            bar.disable_steady_tick();
+            bar.tick();
+        }
+        let output = terminal.0.lock().unwrap().join("");
+        assert!(output.contains("Indexing"), "{output}");
+        assert!(output.contains("~01:20"), "{output}");
+        assert!(output.contains("video.mp4"), "{output}");
+        assert!(!output.contains("internal-dataset"), "{output}");
+        assert!(!output.contains("--:--"), "{output}");
+        progress.handle(Event::IndexProgress {
+            episode: String::new(),
+            source: None,
+            phase: "finalize".into(),
+            done: 10_000,
+            total: 10_000,
+            eta_seconds: 0.,
+            finished: true,
+        });
+        assert!(progress.bars.is_empty());
+        progress.finish();
     }
 
     #[test]
