@@ -30,12 +30,18 @@ const ADVANCED: &str = "Advanced";
 const GLOBAL: &str = "Global";
 const EXAMPLES: &str = "\
 Common workflows:
-  cerul index ./video.mp4                          add to your search workspace
-  cerul search \"a person holding a cup\"            search all indexed videos
-  cerul annotate ./video.mp4                       general semantic labels
-  cerul annotate ./video.mp4 --embodied --hands    embodied labels + local hands
-  cerul render ./video.mp4 --out ./review.mp4      export an annotated video
-  cerul status                                     inspect the workspace
+  Add to your search workspace
+  cerul index ./video.mp4
+  Search all indexed videos
+  cerul search \"a person holding a cup\"
+  General semantic labels
+  cerul annotate ./video.mp4
+  Embodied labels + local hands
+  cerul annotate ./video.mp4 --embodied --hands
+  Export an annotated video
+  cerul render ./video.mp4 --out ./review.mp4
+  Inspect the workspace
+  cerul status
 
 Help: cerul help <command> or cerul <command> --help
 All folders share ~/.cerul by default; --workspace DIR selects another workspace.
@@ -44,13 +50,19 @@ Use -v for diagnostic output, --json for scripts, --dry-run to preview work.";
 
 const INDEX_HELP: &str = "\
 Examples:
-  cerul index ./video.mp4               index one video
-  cerul index ./videos                  index a folder
-  cerul index ./dataset                 index a LeRobot dataset
-  cerul index ./video.mp4 --no-audio    skip speech transcription
-  cerul index ./video.mp4 --dry-run     preview without processing
+  Index one video
+  cerul index ./video.mp4
+  Index a folder
+  cerul index ./videos
+  Index a LeRobot dataset
+  cerul index ./dataset
+  Skip speech transcription
+  cerul index ./video.mp4 --no-audio
+  Preview without processing
+  cerul index ./video.mp4 --dry-run
 
-Then: cerul search \"describe a moment\"
+Then search your workspace:
+  cerul search \"describe a moment\"
 No path is needed when searching. --workspace DIR selects a separate library.
 Screen text runs locally; embeddings, speech, and descriptions use configured APIs.
 Compatible completed work is reused. --recompute processes it again.
@@ -58,12 +70,18 @@ One progress bar covers the whole index run. ETA starts with a rough estimate, t
 
 const SEARCH_HELP: &str = "\
 Examples:
-  cerul search \"washing vegetables\"                     search the whole workspace
-  cerul search --text \"ERROR 500\"                       exact screen text or speech
-  cerul search --image ./reference.jpg                  search by reference image
-  cerul search \"washing vegetables\" --in ./video.mp4    restrict to one video
-  cerul search \"washing vegetables\" --save ./clips      export matching clips
-  cerul open 2                                          open result 2
+  Search the whole workspace
+  cerul search \"washing vegetables\"
+  Exact screen text or speech
+  cerul search --text \"ERROR 500\"
+  Search by reference image
+  cerul search --image ./reference.jpg
+  Restrict to one video
+  cerul search \"washing vegetables\" --in ./video.mp4
+  Export matching clips
+  cerul search \"washing vegetables\" --save ./clips
+  Open result 2
+  cerul open 2
 
 Run index first. Quote a multi-word query as one argument.
 --in is optional; source videos remain in their original locations.
@@ -149,7 +167,7 @@ enum Command {
     Search(SearchArgs),
     /// Show indexed videos, model configuration, and storage.
     #[command(
-        after_help = "Examples:\n  cerul status                           list indexed videos\n  cerul status ./video.mp4                inspect one video\n  cerul status ./video.mp4 --timeline     read annotations\n  cerul status --providers                check configured endpoints (may call APIs)"
+        after_help = "Examples:\n  List indexed videos\n  cerul status\n  Inspect one video\n  cerul status ./video.mp4\n  Read annotations\n  cerul status ./video.mp4 --timeline\n  Check configured endpoints (may call APIs)\n  cerul status --providers"
     )]
     Status {
         /// Only report videos under this path.
@@ -212,7 +230,7 @@ enum Command {
     },
     /// Remove indexed videos, or free the disk they and their caches use.
     #[command(
-        after_help = "Examples:\n  cerul remove ./video.mp4     forget indexed results; keep the source video\n  cerul remove --cache         clear regenerable caches\nAdd --dry-run to preview changes."
+        after_help = "Examples:\n  Forget indexed results; keep the source video\n  cerul remove ./video.mp4\n  Clear regenerable caches\n  cerul remove --cache\nAdd --dry-run to preview changes."
     )]
     Remove(RemoveArgs),
     /// Install the newest published release of Cerul over this one.
@@ -920,12 +938,10 @@ impl Outcome {
                 match action {
                     Some("set") => {
                         writeln!(out, "{} Gemini key saved.", palette.ok("✓"))?;
-                        writeln!(out)?;
-                        writeln!(
+                        render::next_block(
                             out,
-                            "Next: {}   {}",
-                            palette.cmd("cerul index ./video.mp4"),
-                            palette.dim("index a video, then search it")
+                            palette,
+                            &[("cerul index ./video.mp4", "Index a video, then search it")],
                         )?;
                     }
                     Some("removed") => {

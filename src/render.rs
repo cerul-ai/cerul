@@ -631,26 +631,25 @@ impl Progress {
 }
 
 fn next_steps(out: &mut dyn Write, palette: &Palette, items: &[(&str, &str)]) -> io::Result<()> {
-    let width = items
-        .iter()
-        .map(|(cmd, _)| measure_text_width(cmd))
-        .max()
-        .unwrap_or(0);
-    for (cmd, note) in items {
-        let pad = " ".repeat(width - measure_text_width(cmd) + 4);
-        writeln!(
-            out,
-            "  {}{pad}{}",
-            palette.cmd(cmd),
-            palette.dim(note).trim_end()
-        )?;
+    for (i, (cmd, note)) in items.iter().enumerate() {
+        if i > 0 {
+            writeln!(out)?;
+        }
+        if !note.is_empty() {
+            writeln!(out, "  {}", palette.dim(note))?;
+        }
+        writeln!(out, "  {}", palette.cmd(cmd))?;
     }
     Ok(())
 }
 
 /// The closing block of a result: what to run now that this finished. Three
 /// commands is the most anyone reads, so callers pass their best three.
-fn next_block(out: &mut dyn Write, palette: &Palette, items: &[(&str, &str)]) -> io::Result<()> {
+pub fn next_block(
+    out: &mut dyn Write,
+    palette: &Palette,
+    items: &[(&str, &str)],
+) -> io::Result<()> {
     if items.is_empty() {
         return Ok(());
     }
@@ -1150,17 +1149,19 @@ pub fn auth(out: &mut dyn Write, palette: &Palette, key: &KeyState) -> io::Resul
         writeln!(out)?;
         writeln!(
             out,
-            "Get a key at https://aistudio.google.com/apikey, then run {} or export ${}.",
-            palette.cmd("cerul auth set"),
+            "Get a key at https://aistudio.google.com/apikey, then save it below or set ${}.",
             key.env
         )?;
+        next_steps(out, palette, &[("cerul auth set", "Save your key")])?;
     } else {
         writeln!(out)?;
-        writeln!(
+        next_steps(
             out,
-            "{}",
-            palette
-                .dim("cerul auth set replaces the key · cerul auth remove deletes the saved one")
+            palette,
+            &[
+                ("cerul auth set", "Replace your key"),
+                ("cerul auth remove", "Remove the saved key"),
+            ],
         )?;
     }
     Ok(())
@@ -1296,7 +1297,7 @@ pub fn index(
     if report.partial {
         writeln!(
             out,
-            "\nRetry: {}",
+            "\nRetry\n  {}",
             palette.cmd(&shell_command(&context.retry))
         )?;
     }
@@ -1562,10 +1563,7 @@ pub fn search(
         .enumerate()
         .find(|(_, hit)| hit.media.is_some())
     {
-        steps.push((
-            format!("cerul open {}", number + 1),
-            "play that moment in your player",
-        ));
+        steps.push((format!("cerul open {}", number + 1), "Play this moment"));
     }
     match (&context.saved_to, &context.query) {
         (Some(directory), _) => {
@@ -1583,7 +1581,7 @@ pub fn search(
             let flag = if context.text { " --text" } else { "" };
             steps.push((
                 format!("cerul search{flag} {} --save ./clips", shell_quote(query)),
-                "save these moments as clips",
+                "Save matching clips",
             ));
         }
         (None, None) => {}
@@ -2264,7 +2262,7 @@ mod tests {
                 .unwrap()
                 .contains(&"long-name-".repeat(8))
         );
-        assert!(output.contains("Retry: cerul index 'video with spaces.mp4' --no-ocr"));
+        assert!(output.contains("Retry\n  cerul index 'video with spaces.mp4' --no-ocr"));
         assert!(output.contains("cerul --workspace '/tmp/my workspace' search"));
         assert!(output.contains(&shell_quote("worker's cup $(touch danger)")));
         assert!(!output.contains("--in"));
@@ -2385,6 +2383,19 @@ mod tests {
         // numbered result and `cerul open` are what actually play the moment.
         assert!(!text.contains("Open video"), "{text}");
         assert!(text.contains("cerul open 1"), "{text}");
+        let commands: Vec<_> = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("cerul "))
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                "cerul open 1",
+                "cerul search 'a person holding a cup' --save ./clips"
+            ]
+        );
+        assert!(text.contains("Play this moment\n  cerul open 1"));
         // No colour, hyperlink, or image control sequences without support.
         assert!(!text.contains('\u{1b}'), "{text}");
     }

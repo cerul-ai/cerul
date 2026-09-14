@@ -189,6 +189,9 @@ suggestions cite scene records; speech and screen suggestions cite their own
 tracks. The displayed commands preserve workspace/model overrides and search the
 whole workspace. Showing these existing suggestions makes no additional model calls. `--in` is optional and only restricts an explicitly scoped search.
 The examples show supported content; they do not guarantee a retrieval rank.
+Next-step hints put the description above the command. Each command occupies its
+own line, without a prompt prefix or trailing explanation, so copying the line
+produces a runnable command.
 
 If understanding is unavailable or explicitly skipped, Cerul uses extractive
 examples from current annotations, speech, or OCR. Extractive OCR examples use
