@@ -1301,21 +1301,32 @@ pub fn index(
         )?;
     }
     if ready > 0 {
-        let suggestion = report
+        let mut seen = std::collections::BTreeSet::new();
+        let suggestions: Vec<_> = report
             .episodes
             .iter()
             .flat_map(|episode| &episode.suggestions)
-            .next();
-        let mut argv = context.search_prefix.clone();
-        if suggestion.is_some_and(|item| item.exact) {
-            argv.push("--text".into());
+            .filter(|item| {
+                let query = item.query.split_whitespace().collect::<Vec<_>>().join(" ");
+                !query.is_empty() && seen.insert(query.to_lowercase())
+            })
+            .take(3)
+            .collect();
+        writeln!(out)?;
+        if suggestions.is_empty() {
+            let mut argv = context.search_prefix.clone();
+            argv.push("describe a moment".into());
+            writeln!(out, "{}", palette.cmd(&shell_command(&argv)))?;
+        } else {
+            for suggestion in suggestions {
+                let mut argv = context.search_prefix.clone();
+                if suggestion.exact {
+                    argv.push("--text".into());
+                }
+                argv.push(suggestion.query.clone());
+                writeln!(out, "{}", palette.cmd(&shell_command(&argv)))?;
+            }
         }
-        argv.push(
-            suggestion
-                .map(|item| item.query.clone())
-                .unwrap_or_else(|| "describe a moment".into()),
-        );
-        writeln!(out, "{}", palette.cmd(&shell_command(&argv)))?;
         let speech: Vec<_> = report.episodes.iter().flat_map(|e| &e.streams).collect();
         if speech
             .iter()
@@ -2205,13 +2216,25 @@ mod tests {
     }
 
     #[test]
-    fn index_example_searches_the_workspace_and_partial_results_offer_retry() {
-        let report: index::pipeline::Report = serde_json::from_value(serde_json::json!({
+    fn index_examples_search_the_workspace_and_partial_results_offer_retry() {
+        let mut report: index::pipeline::Report = serde_json::from_value(serde_json::json!({
             "episodes": [{"episode_id":"example", "sidecar":"/media/example.cerul",
                 "streams":[{"stream":"video", "indexed":true, "speech":"failed", "vector_rows":3, "errors":["speech unavailable"]}],
                 "suggestions":[{"query":"worker's cup $(touch danger)","exact":false,"source":"semantic.subtask","stream":"video","record_id":"step-1","start_us":2000000,"end_us":5000000,"input_hash":"current"}]
             }], "partial":true,"dry_run":false
         })).unwrap();
+        let seed = report.episodes[0].suggestions[0].clone();
+        for (query, exact) in [
+            ("WORKER'S  CUP $(touch danger)", false),
+            ("washing green peppers", false),
+            ("Invoice 123", true),
+            ("fourth distinct example", false),
+        ] {
+            let mut suggestion = seed.clone();
+            suggestion.query = query.into();
+            suggestion.exact = exact;
+            report.episodes[0].suggestions.push(suggestion);
+        }
         let context = IndexContext {
             names: BTreeMap::from([(
                 "example".into(),
@@ -2251,8 +2274,12 @@ mod tests {
                 .lines()
                 .filter(|line| line.starts_with("cerul --workspace"))
                 .count(),
-            1
+            3
         );
+        assert!(output.contains("search 'washing green peppers'"));
+        assert!(output.contains("search --text 'Invoice 123'"));
+        assert!(!output.contains("WORKER'S"));
+        assert!(!output.contains("fourth distinct example"));
         assert!(!output.contains("describe a visual moment"));
     }
 

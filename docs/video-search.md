@@ -182,12 +182,12 @@ notices and station summaries are hidden by default; `-v` enables diagnostics.
 Warnings and errors remain visible. Redirected output contains a plain final
 receipt; `--json` retains the structured progress and diagnostic events.
 
-The completion message names the source file and shows one copyable search
-command. Long names are shortened; source files are never renamed. Each episode stores zero to
+The completion message names the source file and shows up to three distinct, copyable search
+commands. Long names are shortened; source files are never renamed. Each episode stores zero to
 three generated suggestions with source record IDs and revisions. Visual
 suggestions cite scene records; speech and screen suggestions cite their own
-tracks. The displayed command preserves workspace/model overrides and searches the
-whole workspace. `--in` is optional and only restricts an explicitly scoped search.
+tracks. The displayed commands preserve workspace/model overrides and search the
+whole workspace. Showing these existing suggestions makes no additional model calls. `--in` is optional and only restricts an explicitly scoped search.
 The examples show supported content; they do not guarantee a retrieval rank.
 
 If understanding is unavailable or explicitly skipped, Cerul uses extractive
