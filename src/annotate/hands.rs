@@ -536,6 +536,11 @@ mod tests {
             media::frame_pts(&output).unwrap()
         );
         assert_eq!(
+            media::probe(&output).unwrap().duration_us,
+            media::probe(&source).unwrap().duration_us,
+            "the last hand frame must retain its display duration"
+        );
+        assert_eq!(
             crate::index::records::sidecars(&workspace).unwrap()[0]
                 .header
                 .name,

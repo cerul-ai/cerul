@@ -41,9 +41,10 @@ dataset conversion, or LeRobot writeback.
 
 Apply the explicit-mode rule to LeRobot inputs too; announce the change from
 the previous seven-type default in release notes. Dataset detection still
-controls reading, camera selection, and writeback compatibility. The guide
-defaults to general video, offers an embodied toggle, displays the resolved
-mode/types, and starts directly after input selection. Keep dry-run explicit.
+controls reading, camera selection, and writeback compatibility. The guide asks
+only for a path and starts with normal command defaults. Domain, hands, episode
+scope and cameras are explicit command-line options, without extra menus.
+Keep dry-run explicit.
 
 Version domain-specific prompts and include mode, ontology, and recipe in
 cache identity. General prompts must allow videos without a task or action;

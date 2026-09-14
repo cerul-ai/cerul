@@ -395,13 +395,12 @@ fn ctrl_c_stops_media_subprocess_and_exits_cancelled() {
     )
     .unwrap();
     fs::set_permissions(&probe, fs::Permissions::from_mode(0o755)).unwrap();
-    let mut paths = vec![bin];
-    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     let mut child = Command::new(env!("CARGO_BIN_EXE_cerul"))
         .current_dir(dir.path())
         .env_clear()
         .env("HOME", dir.path())
-        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env("CERUL_FFPROBE", &probe)
         .env("CERUL_TEST_MARKER", &marker)
         .args(["--json", "index", "sample.mp4"])
         .stdout(Stdio::piped())
@@ -897,6 +896,40 @@ fn printing_and_redirecting_the_skill_need_no_home_directory() {
         "{}",
         String::from_utf8_lossy(&both.stderr)
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn media_dependency_errors_identify_overrides_without_recommending_cli_reinstall() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("old-ffmpeg");
+    std::fs::write(
+        dir.path().join("unused.mp4"),
+        b"not decoded by dependency checks",
+    )
+    .unwrap();
+    std::fs::write(&old, "#!/bin/sh\necho 'ffmpeg version 4.2.2 Copyright'\n").unwrap();
+    std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for tool in [&old, &dir.path().join("missing-ffmpeg")] {
+        let output = Command::new(env!("CARGO_BIN_EXE_cerul"))
+            .current_dir(dir.path())
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", dir.path())
+            .env("CERUL_FFMPEG", tool)
+            .args(["annotate", "unused.mp4", "--dry-run"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(3));
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(tool.to_str().unwrap()), "{error}");
+        assert!(error.contains("CERUL_FFMPEG"), "{error}");
+        assert!(!error.contains("install.sh"), "{error}");
+        if tool == &old {
+            assert!(error.contains("4.2.2"), "{error}");
+        }
+    }
 }
 
 #[test]

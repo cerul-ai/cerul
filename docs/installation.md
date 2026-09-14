@@ -90,7 +90,7 @@ semantic-search setup. Configure a key and rerun the same command to finish.
 | Symptom | Next step |
 | --- | --- |
 | An older Cerul version runs after installation | Run `type -a cerul` to find competing installations, then put the new installer's directory first on PATH and open a new terminal |
-| `ffmpeg` or `ffprobe` missing/too old | Reinstall the complete Cerul bundle and keep all three executables together; for custom tools, check the overrides below |
+| `ffmpeg` or `ffprobe` missing/too old | Check the executable path and version printed in the error; select compatible tools with the overrides below |
 | Unknown encoder `libx264` | Use a build that includes this encoder |
 | Missing model credential | Set the endpoint's configured key environment variable without exposing the value |
 | Provider quota or rate limit | Lower `--jobs`, set an account-appropriate `--rpm`, and resume after quota is available |
@@ -107,10 +107,14 @@ Continue with the [video tutorial](video-search.md) or the
 ## Custom media tools and development builds
 
 Resolution order is `CERUL_FFMPEG` / `CERUL_FFPROBE`, then the bundled
-`cerul-ffmpeg` / `cerul-ffprobe` next to the running CLI, then system PATH.
+`cerul-ffmpeg` / `cerul-ffprobe` next to the running CLI, then installed
+`cerul-ffmpeg` / `cerul-ffprobe` on PATH, then system `ffmpeg` / `ffprobe` on PATH.
 Overrides select an executable path, not a shell command. An invalid override
 fails instead of silently selecting another tool. Source-only developers may
-use `cargo build --release --locked` with system FFmpeg/ffprobe 6.0+ and libx264.
+use `cargo build --release --locked` with system FFmpeg/ffprobe 6.0+ and libx264,
+or reuse the media tools from an existing Cerul installation on PATH.
+Git builds with `N-...` version names are checked using their loaded libavutil
+version; an unfamiliar release label alone does not mean the tools are too old.
 The bundled executables intentionally disable FFmpeg network input protocols;
 Cerul processes local media files.
 

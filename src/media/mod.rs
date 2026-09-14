@@ -11,7 +11,7 @@ use std::{
 };
 
 /// Prefer an explicit override, then the tools shipped alongside this executable.
-/// Source builds can use ffmpeg/ffprobe from PATH.
+/// Source builds can reuse an installed Cerul media bundle on PATH, then system tools.
 pub fn command(tool: &str) -> Command {
     let variable = match tool {
         "ffmpeg" => "CERUL_FFMPEG",
@@ -22,6 +22,7 @@ pub fn command(tool: &str) -> Command {
         tool,
         std::env::var_os(variable),
         std::env::current_exe().ok(),
+        std::env::var_os("PATH"),
     );
     Command::new(executable)
 }
@@ -29,6 +30,7 @@ fn resolve_tool(
     tool: &str,
     override_path: Option<std::ffi::OsString>,
     executable: Option<std::path::PathBuf>,
+    search_path: Option<std::ffi::OsString>,
 ) -> std::path::PathBuf {
     if let Some(path) = override_path {
         return path.into();
@@ -39,7 +41,16 @@ fn resolve_tool(
             return bundled;
         }
     }
-    tool.into()
+    let find = |name: &str| {
+        search_path.as_ref().and_then(|paths| {
+            std::env::split_paths(paths)
+                .map(|directory| directory.join(name))
+                .find(|path| path.is_file())
+        })
+    };
+    find(&format!("cerul-{tool}"))
+        .or_else(|| find(tool))
+        .unwrap_or_else(|| tool.into())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -185,23 +196,47 @@ pub fn run_cancellable(
 
 pub fn check_dependencies() -> Result<()> {
     for executable in ["ffmpeg", "ffprobe"] {
-        let output = run(command(executable).arg("-version"))?;
+        let mut command = command(executable);
+        let path = std::path::PathBuf::from(command.get_program());
+        let output = run(command.arg("-version"))
+            .with_context(|| format!("cannot run {executable} at {}", path.display()))?;
         let version = String::from_utf8_lossy(&output.stdout);
-        let major = version
-            .split_whitespace()
-            .nth(2)
-            .unwrap_or("")
-            .trim_start_matches('n')
-            .split('.')
-            .next()
-            .unwrap_or("")
-            .parse::<u32>();
         ensure!(
-            major.is_ok_and(|major| major >= 6),
-            "{executable} >= 6.0 is required"
+            supported_version(&version),
+            "{executable} >= 6.0 is required; selected {} reports: {}",
+            path.display(),
+            version.lines().next().unwrap_or("no version information")
         );
     }
     Ok(())
+}
+
+fn supported_version(output: &str) -> bool {
+    let version = output.split_whitespace().nth(2).unwrap_or("");
+    if let Some(major) = version
+        .trim_start_matches('n')
+        .split('.')
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+    {
+        return major >= 6;
+    }
+    // Git builds use N-<revision> or git-<hash> instead of release numbers.
+    // FFmpeg n6.0 ships libavutil 58.2.100; inspect the loaded library version.
+    output
+        .lines()
+        .find_map(|line| {
+            let line = line.trim().strip_prefix("libavutil")?;
+            let loaded = line.split_once('/')?.1;
+            let compact: String = loaded.chars().filter(|c| !c.is_whitespace()).collect();
+            let parts = compact
+                .split('.')
+                .map(str::parse::<u32>)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .ok()?;
+            (parts.len() == 3).then(|| (parts[0], parts[1], parts[2]) >= (58, 2, 100))
+        })
+        .unwrap_or(false)
 }
 
 pub fn probe(path: &Path) -> Result<Probe> {
@@ -496,18 +531,75 @@ pub mod contact_proxy;
 mod tool_resolution_tests {
     use super::*;
     #[test]
+    fn release_and_git_build_versions_use_the_actual_loaded_library() {
+        for text in [
+            "ffmpeg version 6.0 Copyright",
+            "ffprobe version n7.1.4 Copyright",
+            "ffmpeg version 8.1.2 Copyright",
+            "ffmpeg version N-112813-gfb52070848-tessus\nlibavutil 58. 32.100 / 58. 32.100",
+            "ffprobe version git-abcdef\nlibavutil 58. 2.100 / 58. 2.100",
+        ] {
+            assert!(supported_version(text), "{text}");
+        }
+        for text in [
+            "ffmpeg version 4.2.2 Copyright",
+            "ffprobe version 5.1.8 Copyright\nlibavutil 58. 2.100 / 58. 2.100",
+            "ffmpeg version N-999\nlibavutil 58. 2.100 / 57. 28.100",
+            "ffmpeg version N-999\nlibavutil 58. 1.100 / 58. 1.100",
+            "ffmpeg version N-999",
+            "unrecognized output",
+        ] {
+            assert!(!supported_version(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn source_build_reuses_a_path_bundle_before_an_older_system_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let conda = dir.path().join("conda");
+        let installed = dir.path().join("installed");
+        std::fs::create_dir_all(&conda).unwrap();
+        std::fs::create_dir_all(&installed).unwrap();
+        let paths = std::env::join_paths([&conda, &installed]).unwrap();
+        for name in ["ffmpeg", "ffprobe"] {
+            let old = conda.join(name);
+            std::fs::write(&old, b"old fixture").unwrap();
+            assert_eq!(resolve_tool(name, None, None, Some(paths.clone())), old);
+            let bundled = installed.join(format!("cerul-{name}"));
+            std::fs::write(&bundled, b"bundle fixture").unwrap();
+            assert_eq!(resolve_tool(name, None, None, Some(paths.clone())), bundled);
+            assert_eq!(
+                resolve_tool(
+                    name,
+                    Some(old.clone().into_os_string()),
+                    None,
+                    Some(paths.clone())
+                ),
+                old
+            );
+        }
+    }
+    #[test]
     fn bundle_precedes_path_but_explicit_override_is_authoritative() {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("cerul");
         let bundled = dir.path().join("cerul-ffmpeg");
         assert_eq!(
-            resolve_tool("ffmpeg", None, Some(exe.clone())),
+            resolve_tool("ffmpeg", None, Some(exe.clone()), None),
             Path::new("ffmpeg")
         );
         std::fs::write(&bundled, b"fixture").unwrap();
-        assert_eq!(resolve_tool("ffmpeg", None, Some(exe.clone())), bundled);
         assert_eq!(
-            resolve_tool("ffmpeg", Some("/missing/explicit-tool".into()), Some(exe)),
+            resolve_tool("ffmpeg", None, Some(exe.clone()), None),
+            bundled
+        );
+        assert_eq!(
+            resolve_tool(
+                "ffmpeg",
+                Some("/missing/explicit-tool".into()),
+                Some(exe),
+                None
+            ),
             Path::new("/missing/explicit-tool")
         );
     }

@@ -341,10 +341,10 @@ fn render_inner(
         .suffix(".mp4")
         .tempfile_in(parent)?;
     let start = source_start as f64 / 1e6;
-    let end = source_end as f64 / 1e6;
+    let duration = (source_end - source_start) as f64 / 1e6;
     let overlay_y = if hand_frames.is_empty() { height } else { 0 };
     let filter = format!(
-        "[0:v:0]trim=start={start:.6}:end={end:.6},setpts=PTS-({start:.6})/TB,pad={width}:{}:0:0[video];[video][1:v:0]overlay=x=0:y={overlay_y}:eof_action=repeat:shortest=0[out]",
+        "[0:v:0]trim=start=0:end={duration:.6},pad={width}:{}:0:0[video];[video][1:v:0]overlay=x=0:y={overlay_y}:eof_action=repeat:shortest=0[out]",
         height + panel_height
     );
     let mut command = media::command("ffmpeg");
@@ -356,6 +356,10 @@ fn render_inner(
             "-nostdin",
             "-y",
             "-copyts",
+            // Shift both streams at input. FFmpeg 6/7 setpts clears frame
+            // durations, which can make the MP4 muxer discard the last frame.
+            "-itsoffset",
+            &format!("{:.6}", -start),
             "-i",
         ])
         .arg(&source)
@@ -386,7 +390,7 @@ fn render_inner(
     if probe.has_audio {
         command.args([
             "-af",
-            &format!("atrim=start={start:.6}:end={end:.6},asetpts=PTS-({start:.6})/TB"),
+            &format!("atrim=start=0:end={duration:.6}"),
             "-c:a",
             "aac",
         ]);

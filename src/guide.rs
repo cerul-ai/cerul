@@ -241,10 +241,7 @@ fn pick_input(palette: &Palette, title: &str) -> io::Result<Option<String>> {
 /// already wrote, so a global flag they chose appears in the command too.
 fn show_command(palette: &Palette, typed: &[String], extra: &[String]) -> io::Result<()> {
     let term = Term::stderr();
-    let argv: Vec<String> = std::iter::once("cerul".to_owned())
-        .chain(typed.iter().cloned())
-        .chain(extra.iter().cloned())
-        .collect();
+    let argv: Vec<String> = typed.iter().cloned().chain(extra.iter().cloned()).collect();
     term.write_line("")?;
     term.write_line(&format!("  {}", palette.cmd(&render::shell_command(&argv))))?;
     Ok(())
@@ -298,7 +295,6 @@ pub fn complete(arguments: Vec<OsString>, palette: &Palette, entry: Entry) -> Gu
     // that runs: a global flag chosen before the subcommand belongs in it.
     let typed: Vec<String> = arguments
         .iter()
-        .skip(1)
         .map(|argument| argument.to_string_lossy().into_owned())
         .collect();
     let extra = match command.to_string_lossy().as_ref() {
@@ -319,104 +315,10 @@ pub fn complete(arguments: Vec<OsString>, palette: &Palette, entry: Entry) -> Gu
     }
 }
 
-/// Real episode indices and camera keys, or nothing when the dataset cannot be
-/// read. A dataset this build does not support should fail in the run, with its
-/// own error, rather than be hidden behind a menu that cannot offer anything.
-fn dataset(path: &str) -> Option<Vec<cerul::episode::Episode>> {
-    let root = Path::new(path);
-    if !root.join("meta/info.json").is_file() {
-        return None;
-    }
-    cerul::lerobot::read(root).ok().filter(|e| !e.is_empty())
-}
-
-/// Which episode and which cameras, from what the dataset actually contains.
-fn lerobot_scope(palette: &Palette, episodes: &[cerul::episode::Episode]) -> Option<Vec<String>> {
-    let mut argv = Vec::new();
-    // Indexes are not always consecutive and do not always start at zero, so the
-    // first one has to come from the dataset rather than from an assumption.
-    let first = episodes.first()?.local_id.clone();
-    let scope = [
-        Choice::new(
-            format!("Episode {first} only"),
-            "start small: one episode is one set of model calls",
-            Some(first.clone()),
-        ),
-        Choice::new(
-            format!("All {} episodes", episodes.len()),
-            "every episode in the dataset",
-            None,
-        ),
-    ];
-    if let Some(only) = select(palette, "Which episodes?", &scope).ok()?? {
-        argv.push("--only".to_owned());
-        argv.push(only);
-    }
-    let cameras: Vec<&str> = episodes
-        .first()
-        .map(|episode| {
-            episode
-                .streams
-                .iter()
-                .filter(|stream| matches!(stream, cerul::episode::Stream::Video { .. }))
-                .map(|stream| stream.id())
-                .collect()
-        })
-        .unwrap_or_default();
-    if cameras.len() > 1 {
-        let primary = &episodes.first()?.time.reference;
-        let choices = [
-            Choice::new(format!("Primary camera ({primary})"), "", false),
-            Choice::new(
-                format!("All {} cameras", cameras.len()),
-                "one set of results per camera",
-                true,
-            ),
-        ];
-        if select(palette, "Which cameras?", &choices).ok()?? {
-            argv.push("--streams".to_owned());
-            argv.push("all".to_owned());
-        }
-    }
-    Some(argv)
-}
-
-/// What a person has in front of them, named the way they would describe it
-/// rather than by the label names the flag happens to use.
+/// Ask only for the input; the normal CLI defaults and explicit flags decide the work.
 fn annotate(palette: &Palette, typed: &[String]) -> Option<Vec<String>> {
     let path = pick_input(palette, "Annotate · which video or dataset?").ok()??;
-    let episodes = dataset(&path);
-    let choices = [
-        Choice::new("A general video", "task, subtask, flag", false),
-        Choice::new(
-            "An embodied demonstration",
-            "subtask, event, interaction, state",
-            true,
-        ),
-    ];
-    let embodied = select(palette, "Annotation mode", &choices).ok()??;
-    let mut extra = vec![path];
-    if embodied {
-        extra.push("--embodied".to_owned());
-        let choices = [
-            Choice::new(
-                "Semantic labels only",
-                "human or robot demonstrations",
-                false,
-            ),
-            Choice::new(
-                "Also track human hands",
-                "local CPU · 21 keypoints per hand",
-                true,
-            ),
-        ];
-        if select(palette, "Human-hand annotation", &choices).ok()?? {
-            extra.push("--hands".to_owned());
-        }
-    }
-    if let Some(episodes) = &episodes {
-        extra.extend(lerobot_scope(palette, episodes)?);
-    }
+    let extra = vec![path];
     show_command(palette, typed, &extra).ok()?;
     Some(extra)
 }

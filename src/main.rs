@@ -1718,9 +1718,13 @@ fn hint(code: u8, error: &anyhow::Error, env: &str) -> Option<String> {
             "run `cerul auth set` to save a Gemini key, or export {env}"
         ));
     }
-    if message.contains("ffmpeg") || message.contains("ffprobe") {
+    if message.contains("ffmpeg >= 6.0")
+        || message.contains("ffprobe >= 6.0")
+        || message.contains("cannot run ffmpeg")
+        || message.contains("cannot run ffprobe")
+    {
         return Some(
-            "reinstall with `curl -fsSL https://cerul.ai/install.sh | sh`, or put ffmpeg 6+ on PATH"
+            "set CERUL_FFMPEG and CERUL_FFPROBE to compatible FFmpeg 6+ executables; source builds can also reuse cerul-ffmpeg and cerul-ffprobe on PATH"
                 .into(),
         );
     }

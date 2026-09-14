@@ -17,6 +17,9 @@ cerul annotate ./video.mp4 --embodied
 ```
 
 Replace the path with your recording, or pass a directory to process its videos.
+In an interactive terminal, the annotation command without a path asks for it
+and then starts with the general defaults. Use explicit flags for embodied semantics,
+hands, episode selection or camera selection; there are no follow-up menus.
 To see the plan before making model calls or writing results:
 
 ```sh
