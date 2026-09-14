@@ -152,7 +152,9 @@ configured embedding endpoint.
 After choosing Index and a path in the interactive guide, processing starts
 immediately. Explicit `--dry-run` remains available for inspecting planned work.
 Live indexing uses one progress bar across all selected videos, cameras and
-stages. The current operation appears as a status label; changing stages does not
+stages. The filename and phase sit above a high-contrast block bar, which expands
+to 60 cells on wide terminals. Elapsed time and remaining ETA sit together beside
+the percentage; narrow terminals use `elapsed / remaining`. The current operation appears as a status label; changing stages does not
 reset the percentage. The terminal labels its percentage with `~`: it eases large
 completion jumps and estimates movement only within the current active work unit.
 It never estimates completion of a future stage. A spinner and elapsed time remain
@@ -171,7 +173,8 @@ API response. Successful measured stages refine local timing hints under
 chunk settings and concurrency, and contain no credentials or media paths.
 OCR and speech run concurrently, so their remaining times are combined with a
 maximum instead of being added together. Unmeasured reuse and failed stages do
-not train timings. Timing files are optional caches, never authoritative data.
+not train timings. Successful scene timings are saved after the complete product
+confirms success, using the scene interval without the following overview wait. Timing files are optional caches, never authoritative data.
 The estimate counts down between updates and is revised as work completes. If a
 request exceeds the prediction, `ETA updating` indicates the estimate is overdue;
 the approximate bar remains bounded within active work. API latency, retries, cache reuse and data

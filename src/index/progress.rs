@@ -231,7 +231,10 @@ impl<'a> RunProgress<'a> {
     }
     pub fn end(&mut self, episode: &str, stream: &str, station: &str, successful: bool) {
         if let Some(stage) = self.stages.iter_mut().find(|s| {
-            s.episode == episode && s.stream == stream && s.station == station && !s.finished
+            s.episode == episode
+                && s.stream == stream
+                && s.station == station
+                && (!s.finished || (successful && s.observed && s.measured_end.is_some()))
         }) {
             // Unmeasured reuse, failed and cancelled work must not train estimates.
             if successful
@@ -256,6 +259,9 @@ impl<'a> RunProgress<'a> {
                         .seconds_per_unit
                         .insert(station.into(), old * 0.7 + sample * 0.3);
                 }
+            }
+            if successful {
+                stage.observed = false; // A deferred successful end may train this stage only once.
             }
             stage.fraction = 1.;
             stage.finished = true;
@@ -595,6 +601,38 @@ mod tests {
         assert_eq!(phase, "overview");
         assert!(*done < total * 3 / 4);
         assert!(*ceiling > *done && *ceiling < *total);
+    }
+
+    #[test]
+    fn successful_product_trains_scene_time_after_overview_boundary_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sink = |_: Event| {};
+        let mut run = empty(&mut sink, dir.path().join("history.json"));
+        run.add("one", "front", "understanding", 0, 2., 25.);
+        run.add("one", "front", "overview", 1, 1., 30.);
+        run.begin("one", "front", "understanding");
+        run.stages[0].started = Some(Instant::now() - Duration::from_secs(8));
+        run.emit(Event::Progress {
+            episode: "one".into(),
+            station: "understanding".into(),
+            done: 2,
+            total: 3,
+        });
+        run.emit(Event::Progress {
+            episode: "one".into(),
+            station: "overview".into(),
+            done: 0,
+            total: 1,
+        });
+        assert!(run.history.seconds_per_unit.is_empty());
+        // Publication confirms success later; only the scene interval is learned.
+        run.end("one", "front", "understanding", true);
+        let learned = run.history.seconds_per_unit["understanding"];
+        assert!((learned - 4.).abs() < 0.2);
+        run.end("one", "front", "understanding", true);
+        assert_eq!(run.history.seconds_per_unit["understanding"], learned);
+        run.add("two", "front", "understanding", 2, 2., 25.);
+        assert!((run.stages[2].weight - 8.).abs() < 0.4);
     }
 
     #[test]

@@ -353,6 +353,61 @@ impl SmoothIndex {
             (eta * (self.ceiling - self.confirmed) / (self.total - self.confirmed).max(1.)).max(1.);
     }
 }
+
+fn index_style(
+    estimate: Arc<Mutex<SmoothIndex>>,
+    columns: u16,
+    eta_seconds: f64,
+    sampled: Instant,
+) -> ProgressStyle {
+    let wide = columns >= 72;
+    let width = usize::from(columns.saturating_sub(if wide { 46 } else { 30 })).clamp(8, 60);
+    let template = if wide {
+        "  {spinner} Indexing · {wide_msg}\n  [{smooth_bar:.cyan}] {smooth_percent:>4}  {spent} elapsed · ETA {remaining}"
+    } else {
+        "  {spinner} Indexing · {wide_msg}\n  [{smooth_bar:.cyan}] {smooth_percent:>4}  {spent} / {remaining}"
+    };
+    let bar_estimate = estimate.clone();
+    let percent_estimate = estimate.clone();
+    ProgressStyle::with_template(template)
+        .expect("static template")
+        .progress_chars("━╸─")
+        .with_key(
+            "smooth_bar",
+            move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                let ratio = bar_estimate.lock().unwrap().sample(Instant::now());
+                let filled = (ratio * width as f64).floor() as usize;
+                let _ = write!(out, "{}{}", "█".repeat(filled), "░".repeat(width - filled));
+            },
+        )
+        .with_key(
+            "smooth_percent",
+            move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                let ratio = percent_estimate.lock().unwrap().sample(Instant::now());
+                let _ = write!(out, "~{}%", (ratio * 100.).floor() as u64);
+            },
+        )
+        .with_key(
+            "spent",
+            |state: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                let _ = out.write_str(&clock(
+                    (state.elapsed().as_secs() as i64).saturating_mul(1_000_000),
+                ));
+            },
+        )
+        .with_key(
+            "remaining",
+            move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                let left = eta_seconds - sampled.elapsed().as_secs_f64();
+                let text = if left > 0. {
+                    format!("~{}", clock((left.ceil() as i64).saturating_mul(1_000_000)))
+                } else {
+                    "updating".into()
+                };
+                let _ = out.write_str(&text);
+            },
+        )
+}
 /// Terminal-only progress; durable results are printed once by the final receipt.
 pub struct Progress {
     palette: Palette,
@@ -567,45 +622,12 @@ impl Progress {
             .lock()
             .unwrap()
             .update(done, ceiling, total, eta_seconds, sampled);
-        let wide = console::Term::stderr().size().1 >= 72;
-        let width = if wide { 18 } else { 8 };
-        let template = if wide {
-            "  {spinner} Indexing [{smooth_bar.cyan/black}] {smooth_percent:>4}  ETA {remaining:>8}  {wide_msg} · {elapsed_precise}"
-        } else {
-            "{spinner} [{smooth_bar.cyan/black}] {smooth_percent:>4} ETA {remaining:>8}"
-        };
-        let bar_estimate = self.index_estimate.clone();
-        let percent_estimate = self.index_estimate.clone();
-        let style = ProgressStyle::with_template(template)
-            .expect("static template")
-            .progress_chars("━╸─")
-            .with_key(
-                "smooth_bar",
-                move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
-                    let ratio = bar_estimate.lock().unwrap().sample(Instant::now());
-                    let filled = (ratio * width as f64).floor() as usize;
-                    let _ = write!(out, "{}{}", "━".repeat(filled), "─".repeat(width - filled));
-                },
-            )
-            .with_key(
-                "smooth_percent",
-                move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
-                    let ratio = percent_estimate.lock().unwrap().sample(Instant::now());
-                    let _ = write!(out, "~{}%", (ratio * 100.).floor() as u64);
-                },
-            )
-            .with_key(
-                "remaining",
-                move |_: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
-                    let left = eta_seconds - sampled.elapsed().as_secs_f64();
-                    let text = if left > 0. {
-                        format!("~{}", clock((left.ceil() as i64).saturating_mul(1_000_000)))
-                    } else {
-                        "updating".into()
-                    };
-                    let _ = out.write_str(&text);
-                },
-            );
+        let style = index_style(
+            self.index_estimate.clone(),
+            console::Term::stderr().size().1,
+            eta_seconds,
+            sampled,
+        );
         let first = !self.bars.contains_key(&key);
         let bar = self.bars.entry(key).or_insert_with(|| {
             let bar = ProgressBar::hidden();
@@ -2222,6 +2244,44 @@ mod tests {
         estimate.update(8500, 9500, 10_000, 30., start + Duration::from_secs(300));
         assert!(estimate.sample(start + Duration::from_secs(301)) >= overdue);
         assert!(estimate.sample(start + Duration::from_secs(600)) < 0.95);
+    }
+
+    #[test]
+    fn index_layout_draws_a_visible_bar_with_adjacent_times_at_each_width() {
+        for (columns, width) in [(48, 18), (80, 34), (100, 54), (140, 60)] {
+            let terminal = RecordedTerminal::default();
+            let now = Instant::now();
+            let mut estimate = SmoothIndex::new(now);
+            estimate.update(600, 1000, 10_000, 532., now);
+            estimate.shown = 600.;
+            let bar = ProgressBar::with_draw_target(
+                Some(10_000),
+                ProgressDrawTarget::term_like(Box::new(terminal.clone())),
+            );
+            bar.set_style(index_style(
+                Arc::new(Mutex::new(estimate)),
+                columns,
+                532.,
+                now,
+            ));
+            bar.set_message("moshi.mp4 · Screen text / Speech");
+            bar.tick();
+            let output = terminal.0.lock().unwrap().join("");
+            let start = output.find('[').unwrap() + 1;
+            let end = output[start..].find(']').unwrap() + start;
+            let cells = &output[start..end];
+            assert_eq!(cells.chars().count(), width, "{output}");
+            assert!(cells.contains('█') && cells.contains('░'), "{output}");
+            assert!(output.contains("~6%"), "{output}");
+            let times = if columns >= 72 {
+                "00:00 elapsed · ETA ~08:52"
+            } else {
+                "00:00 / ~08:52"
+            };
+            assert!(output.contains(times), "{output}");
+            assert!(output.contains("moshi.mp4"), "{output}");
+            bar.finish_and_clear();
+        }
     }
 
     #[test]
