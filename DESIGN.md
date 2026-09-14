@@ -339,8 +339,11 @@ measured work. Completion output keeps full paths in copyable commands and JSON,
 while shortening display names.
 
 Index reports may include up to three source-referenced suggestions per episode.
-They use the current generated summary when available and extractive evidence
-otherwise; collecting saved suggestions makes no model calls. Missing speech,
+They prefer current visual summary queries and distinct scene descriptions,
+then fall back to substantive subtask or speech phrases when visual examples are
+unavailable. OCR tokens and fragmentary speech do not fill a visual list. Local
+selection retains source/time provenance, samples across the available timeline,
+and makes no model calls or authoritative-record changes. Missing speech,
 disabled ASR, no audio, successful empty transcription, and failures remain
 distinguishable. The [hybrid retrieval plan](docs/design/hybrid-video-search.md)
 records the initial default fusion and follow-up evaluation work. Automatic ANN

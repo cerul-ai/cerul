@@ -119,7 +119,7 @@
           "format": "int64"
         },
         "exact": {
-          "description": "OCR examples use literal search; other examples use semantic search.",
+          "description": "Whether this example requires literal rather than semantic search.",
           "type": "boolean"
         },
         "input_hash": {

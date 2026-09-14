@@ -1735,9 +1735,12 @@ mod tests {
         publish(&next_sections, &sidecar, coverage).unwrap();
         assert!(!current_dependencies(&sidecar, &summary).unwrap());
         assert!(!current_dependencies(&sidecar, &next_sections).unwrap());
-        assert!(
-            super::super::suggestions::collect(&episode, &sidecar, "primary", None, None)
-                .is_empty()
+        let fallback =
+            super::super::suggestions::collect(&episode, &sidecar, "primary", None, None);
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(
+            fallback[0].query,
+            "A synthetic color test pattern is displayed."
         );
         publish(&next_summary, &sidecar, coverage).unwrap();
         assert!(current_dependencies(&sidecar, &next_sections).unwrap());
@@ -1809,7 +1812,8 @@ mod tests {
                 None
             )
             .iter()
-            .all(|s| s.source != "semantic.scene")
+            .all(|s| s.source == "semantic.scene"
+                && s.query == "A synthetic color test pattern is displayed.")
         );
     }
     #[test]

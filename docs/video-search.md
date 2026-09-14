@@ -182,20 +182,28 @@ notices and station summaries are hidden by default; `-v` enables diagnostics.
 Warnings and errors remain visible. Redirected output contains a plain final
 receipt; `--json` retains the structured progress and diagnostic events.
 
-The completion message names the source file and shows up to three distinct, copyable search
-commands. Long names are shortened; source files are never renamed. Each episode stores zero to
-three generated suggestions with source record IDs and revisions. Visual
-suggestions cite scene records; speech and screen suggestions cite their own
-tracks. The displayed commands preserve workspace/model overrides and search the
-whole workspace. Showing these existing suggestions makes no additional model calls. `--in` is optional and only restricts an explicitly scoped search.
-The examples show supported content; they do not guarantee a retrieval rank.
-Next-step hints put the description above the command. Each command occupies its
-own line, without a prompt prefix or trailing explanation, so copying the line
-produces a runnable command.
+The completion message names the source file and shows up to three distinct,
+copyable search commands. It prefers current visual suggestions from the overview,
+then fills remaining places with descriptions of other observed scenes. Each
+example keeps its source record and time range; extractive choices span the
+available timeline and avoid repeating the same scene. No model call is needed to
+select examples, including for an existing index.
 
-If understanding is unavailable or explicitly skipped, Cerul uses extractive
-examples from current annotations, speech, or OCR. Extractive OCR examples use
-`--text`. With no usable evidence, it shows one generic visual-search command.
+Default examples describe actions or scenes. They do not mix in OCR logos, prices,
+isolated words or short transcript fragments just to reach three commands. If
+visual examples are unavailable, current subtask descriptions or substantive
+transcript phrases provide a fallback. With no useful evidence, the CLI shows one
+generic visual-search command. Original OCR and speech remain searchable; use
+`--text` for literal words. The overview retains its original generated suggestions
+for inspection; recommendation filtering does not rewrite authoritative records.
+
+Long names are shortened; source files are never renamed. Commands preserve
+workspace/model overrides and search the whole workspace. `--in` is optional and
+only restricts an explicitly scoped search. Examples show supported content; they
+do not guarantee a retrieval rank. Next-step hints put the description above the
+command. Each command occupies its own line without a prompt prefix or trailing
+explanation, so copying the line produces a runnable command.
+
 A partial result keeps completed work and prints the original command to retry.
 
 ## Inspect video understanding
