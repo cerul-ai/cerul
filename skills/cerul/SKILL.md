@@ -1,8 +1,8 @@
 ---
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
-generated-by: cerul 0.0.10
-generated-sha256: 58decd0b2381f2a87e6ecc71e5df0ceea6da5e1a232430d86c91e4b1987f2b5b
+generated-by: cerul 0.0.11
+generated-sha256: 0e6de57b531aba77f76ebbb4d5ff298300ab6b301967d18b13524d982a9e27d6
 ---
 
 # Cerul
@@ -182,8 +182,8 @@ Index videos so they can be searched (screen text, speech, visual search)
   --skip-still                Skip windows where the picture does not change
   --streams <STREAMS>         Streams to index, comma-separated (default primary)
   --only <ONLY>               Only these episodes (ids or local indexes), comma-separated
-  --jobs <JOBS>               Parallel model requests (default 4)
-  --rpm <RPM>                 Cap on model requests per minute
+  --jobs <JOBS>               Maximum model requests in flight across indexing stages (default 4)
+  --rpm <RPM>                 Shared cap on model requests per minute across indexing stages
   --sidecar-dir <DIR>         Store sidecars here instead of beside the videos
 
 ### cerul search

@@ -88,6 +88,13 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
             }
             let directory = stream_directory(&entry.sidecar, stream.id(), &episode.time.reference);
             for path in crate::annotate::layout::files(&directory)? {
+                // Dense hand frames are read explicitly by status and rendering.
+                if path
+                    .file_stem()
+                    .is_some_and(|name| name == crate::annotate::hands::NAME)
+                {
+                    continue;
+                }
                 let file = AnnotationFile::read(&path)?;
                 if file.header.stream != stream.id()
                     || !crate::index::stations::has_current_input(&episode, &file)?

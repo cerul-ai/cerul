@@ -405,6 +405,20 @@ impl<'a> RunProgress<'a> {
 }
 impl EventSink for RunProgress<'_> {
     fn emit(&mut self, event: Event) {
+        if let Event::Checkpoint {
+            episode,
+            station,
+            window,
+            total,
+        } = &event
+            && station == "understanding"
+            && let Some(stage) = self.stages.iter_mut().find(|s| {
+                s.episode == *episode && s.station == station && s.started.is_some() && !s.finished
+            })
+        {
+            // Only wholly fresh scene work can calibrate model latency.
+            stage.observed = *window == *total && *total > 0;
+        }
         if let Event::Progress {
             episode,
             station,
@@ -435,7 +449,9 @@ impl EventSink for RunProgress<'_> {
                 s.episode == *episode && s.station == station && s.started.is_some() && !s.finished
             })
         {
-            stage.observed = true;
+            if station != "understanding" {
+                stage.observed = true;
+            }
             let total = if station == "understanding" {
                 total.saturating_sub(1).max(1)
             } else {
@@ -652,6 +668,12 @@ mod tests {
         run.add("one", "front", "overview", 1, 1., 30.);
         run.begin("one", "front", "understanding");
         run.stages[0].started = Some(Instant::now() - Duration::from_secs(8));
+        run.emit(Event::Checkpoint {
+            episode: "one".into(),
+            station: "understanding".into(),
+            window: 2,
+            total: 2,
+        });
         run.emit(Event::Progress {
             episode: "one".into(),
             station: "understanding".into(),
@@ -673,6 +695,24 @@ mod tests {
         assert_eq!(run.history.seconds_per_unit["understanding"], learned);
         run.add("two", "front", "understanding", 2, 2., 25.);
         assert!((run.stages[2].weight - 8.).abs() < 0.4);
+    }
+
+    #[test]
+    fn cached_scene_progress_does_not_train_model_latency() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sink = |_: Event| {};
+        let mut run = empty(&mut sink, dir.path().join("history.json"));
+        run.add("one", "front", "understanding", 0, 2., 25.);
+        run.begin("one", "front", "understanding");
+        run.stages[0].started = Some(Instant::now() - Duration::from_secs(8));
+        run.emit(Event::Progress {
+            episode: "one".into(),
+            station: "understanding".into(),
+            done: 2,
+            total: 3,
+        });
+        run.end("one", "front", "understanding", true);
+        assert!(run.history.seconds_per_unit.is_empty());
     }
 
     #[test]

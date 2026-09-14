@@ -27,15 +27,15 @@ fn query(text: &str) -> Option<String> {
         .split_whitespace()
         .filter(|word| word.chars().any(char::is_alphabetic))
         .count();
-    let cjk = excerpt
+    let unspaced = excerpt
         .chars()
-        .filter(|c| matches!(*c as u32, 0x3040..=0x30ff | 0x3400..=0x9fff | 0xac00..=0xd7af))
+        .filter(|c| matches!(*c as u32, 0x0e00..=0x0eff | 0x1780..=0x17ff | 0x3040..=0x30ff | 0x3400..=0x9fff | 0xac00..=0xd7af))
         .count();
     // Require a phrase rather than promoting a logo, amount or isolated token.
     // This is a presentation filter, not a judgment of transcription accuracy.
     if !(4..=160).contains(&excerpt.chars().count())
         || excerpt.starts_with("http")
-        || (words < 3 && cjk < 4)
+        || (words < 3 && unspaced < 4)
     {
         return None;
     }
@@ -349,6 +349,10 @@ mod tests {
             Some("Cars moving through an intersection".into())
         );
         assert_eq!(query("打开抽屉。然后放入杯子"), Some("打开抽屉".into()));
+        for phrase in ["เปิดประตูแล้วหยิบแก้ว", "ເປີດປະຕູ", "បើកទ្វារ"]
+        {
+            assert_eq!(query(phrase), Some(phrase.into()));
+        }
         assert!(query("\x1b[31munsafe").is_none());
         assert!(query("https://example.org").is_none());
         assert!(query(&"a".repeat(161)).is_none());

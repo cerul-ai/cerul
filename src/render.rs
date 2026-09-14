@@ -864,7 +864,7 @@ pub fn status(
         let mut names: Vec<String> = episode
             .annotations
             .iter()
-            .filter(|name| name.contains("semantic."))
+            .filter(|name| name.contains("semantic.") || name.ends_with("grounding.hand"))
             .map(|name| item_name(name).to_owned())
             .collect();
         names.sort();
@@ -1306,6 +1306,7 @@ pub struct IndexContext {
     pub names: BTreeMap<String, PathBuf>,
     pub retry: Vec<String>,
     pub search_prefix: Vec<String>,
+    pub elapsed: Duration,
 }
 
 pub fn index(
@@ -1395,6 +1396,11 @@ pub fn index(
             palette.dim("in your workspace")
         )?;
     }
+    writeln!(
+        out,
+        "  {} elapsed",
+        clock(context.elapsed.as_micros().min(i64::MAX as u128) as i64)
+    )?;
     if report.partial {
         writeln!(
             out,
@@ -2411,11 +2417,13 @@ mod tests {
                 "/tmp/my workspace".into(),
                 "search".into(),
             ],
+            elapsed: Duration::from_secs(95),
         };
         let mut output = Vec::new();
         index(&mut output, &Palette::new(false), &report, &context).unwrap();
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("partially indexed"));
+        assert!(output.contains("\n  01:35 elapsed\n"));
         assert!(
             !output
                 .lines()
@@ -2440,6 +2448,21 @@ mod tests {
         assert!(!output.contains("WORKER'S"));
         assert!(!output.contains("fourth distinct example"));
         assert!(!output.contains("describe a visual moment"));
+
+        // A batch has one invocation clock, regardless of individual outcomes.
+        report.partial = false;
+        report.episodes[0].streams[0].errors.clear();
+        report.episodes.push(report.episodes[0].clone());
+        let mut output = Vec::new();
+        index(&mut output, &Palette::new(false), &report, &context).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("2 videos ready to search"));
+        assert_eq!(output.matches("01:35 elapsed").count(), 1);
+
+        report.dry_run = true;
+        let mut output = Vec::new();
+        index(&mut output, &Palette::new(false), &report, &context).unwrap();
+        assert!(!String::from_utf8(output).unwrap().contains("elapsed"));
     }
 
     #[test]
@@ -2453,7 +2476,7 @@ mod tests {
             media: PathBuf::from("/videos/demo.mp4"),
             sidecar: PathBuf::from("/videos/demo.mp4.cerul"),
             media_present: true,
-            annotations: vec!["semantic.subtask".into()],
+            annotations: vec!["semantic.subtask".into(), "grounding.hand".into()],
             embedding_spaces: Vec::new(),
             embeddings: Vec::new(),
         });
@@ -2484,6 +2507,7 @@ mod tests {
         super::status(&mut out, &palette, &status, &models, false, false).unwrap();
         let overview = String::from_utf8(out).unwrap();
         assert!(overview.contains("demo.mp4"), "{overview}");
+        assert!(overview.contains("hand frames"), "{overview}");
         assert!(!overview.contains("/videos/demo.mp4.cerul"), "{overview}");
         let mut out = Vec::new();
         super::status(&mut out, &palette, &status, &models, false, true).unwrap();

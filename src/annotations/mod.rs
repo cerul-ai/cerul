@@ -249,7 +249,7 @@ impl AnnotationFile {
                 _ => bail!("unsupported annotation"),
             }
         }
-        if matches!(h.name.as_str(), "semantic.subtask" | "semantic.task") {
+        if h.name == "semantic.subtask" || (h.name == "semantic.task" && !self.records.is_empty()) {
             ensure!(
                 expected_subtask_start == coverage.end_us,
                 "tasks or subtasks do not cover the whole episode"
@@ -332,6 +332,9 @@ mod tests {
         file.records[1].start_us = 50;
         file.validate(100, None).unwrap();
         file.records.clear();
+        file.validate(100, None).unwrap();
+        file.header.name = "semantic.subtask".into();
+        file.header.record_schema = "semantic.subtask/1".into();
         assert!(file.validate(100, None).is_err());
     }
     #[test]

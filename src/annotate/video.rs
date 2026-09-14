@@ -114,7 +114,7 @@ fn display_dimensions(source: &Path) -> Result<(u32, u32)> {
             .arg(source)
             .args([
                 "-map",
-                "0:v:0",
+                "0:V:0",
                 "-frames:v",
                 "1",
                 "-an",
@@ -344,7 +344,7 @@ fn render_inner(
     let duration = (source_end - source_start) as f64 / 1e6;
     let overlay_y = if hand_frames.is_empty() { height } else { 0 };
     let filter = format!(
-        "[0:v:0]trim=start=0:end={duration:.6},pad={width}:{}:0:0[video];[video][1:v:0]overlay=x=0:y={overlay_y}:eof_action=repeat:shortest=0[out]",
+        "[0:V:0]trim=start=0:end={duration:.6},pad={width}:{}:0:0[video];[video][1:v:0]overlay=x=0:y={overlay_y}:eof_action=repeat:shortest=0[out]",
         height + panel_height
     );
     let mut command = media::command("ffmpeg");

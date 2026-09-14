@@ -599,6 +599,7 @@ pub(super) async fn analyze(
         let (key, checkpoints, params, source, unavailable) =
             (&key, &checkpoints, &params, &source, &unavailable);
         let work = futures_stream::iter(windows.iter().map(|window| async move {
+            let mut reused = false;
             let result: Result<Vec<Record>> = async {
                 media::check_cancellation()?;
                 let unit_key = storage::cache_key(&(&key, window))?;
@@ -608,6 +609,7 @@ pub(super) async fn analyze(
                     checkpoints.load::<Vec<Record>>(&unit_key)?
                 };
                 if let Some(records) = cached {
+                    reused = true;
                     let cached = file(
                         episode,
                         stream,
@@ -761,14 +763,24 @@ pub(super) async fn analyze(
                 Ok(checked.records)
             }
             .await;
-            (*window, result)
+            (*window, result, reused)
         }))
         .buffer_unordered(provider.concurrency());
         tokio::pin!(work);
         let mut completed = 0;
-        while let Some((window, result)) = work.next().await {
+        let mut generated = 0;
+        while let Some((window, result, reused)) = work.next().await {
             match result {
                 Ok(unit) => {
+                    if !reused {
+                        generated += 1;
+                        events.emit(Event::Checkpoint {
+                            episode: episode.episode_id.clone(),
+                            station: "understanding".into(),
+                            window: generated,
+                            total: windows.len() as u64,
+                        });
+                    }
                     successful.push(window);
                     records.extend(unit);
                 }

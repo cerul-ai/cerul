@@ -410,6 +410,7 @@ async fn run_inner(
     };
     let mut completion = Vec::new();
     for episode in episodes {
+        let module_start = report.modules.len();
         let dataset = episode.source.format.starts_with("lerobot/");
         let vocabulary = ontology(options)?;
         let mut items = if options.no_semantic {
@@ -447,7 +448,7 @@ async fn run_inner(
                 )?
                 .len() as u64;
                 Ok(total
-                    + if options.hands {
+                    + if options.hands && !options.dry_run {
                         super::hands::plan(&episode, stream)?.times.len() as u64 + 1
                     } else {
                         0
@@ -644,9 +645,11 @@ async fn run_inner(
                         }
                         Err(error) => {
                             interrupted(&cancel)?;
-                            if error.downcast_ref::<ProviderError>().is_some_and(|e| {
-                                matches!(e.kind, Failure::MissingKey | Failure::Unsupported)
-                            }) {
+                            if !options.hands
+                                && error.downcast_ref::<ProviderError>().is_some_and(|e| {
+                                    matches!(e.kind, Failure::MissingKey | Failure::Unsupported)
+                                })
+                            {
                                 return Err(error);
                             }
                             report.partial = true;
@@ -684,9 +687,11 @@ async fn run_inner(
             }
         }
         if !options.dry_run {
-            report
-                .exports
-                .push(super::export::publish(&episode, &sidecar, &report.modules)?);
+            report.exports.push(super::export::publish(
+                &episode,
+                &sidecar,
+                &report.modules[module_start..],
+            )?);
             completion.push((episode.episode_id.clone(), done, total, cached));
         }
     }

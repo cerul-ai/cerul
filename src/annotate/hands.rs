@@ -540,12 +540,55 @@ mod tests {
             media::probe(&source).unwrap().duration_us,
             "the last hand frame must retain its display duration"
         );
-        assert_eq!(
-            crate::index::records::sidecars(&workspace).unwrap()[0]
-                .header
-                .name,
-            NAME
+        assert!(
+            crate::index::records::sidecars(&workspace)
+                .unwrap()
+                .is_empty()
         );
+        // Identical input instances must each export one copy of the hand track.
+        let duplicate = directory.path().join("duplicate.mp4");
+        std::fs::copy(&source, &duplicate).unwrap();
+        let repeated = super::super::pipeline::run(
+            &[source.clone(), duplicate],
+            &workspace,
+            &config,
+            &options,
+            tokio_util::sync::CancellationToken::new(),
+            &mut |_: Event| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(repeated.exports.len(), 2);
+        for export in &repeated.exports {
+            let bundle: super::super::export::Bundle =
+                serde_json::from_slice(&std::fs::read(&export.annotations).unwrap()).unwrap();
+            assert_eq!(bundle.annotations.len(), 1);
+            assert_eq!(bundle.annotations[0].records.len(), 7);
+        }
+        // A missing semantic key must not discard completed local hands.
+        let combined = super::super::pipeline::Options {
+            no_semantic: false,
+            items: vec!["event".into()],
+            ..options
+        };
+        let partial = super::super::pipeline::run(
+            std::slice::from_ref(&source),
+            &workspace,
+            &config,
+            &combined,
+            tokio_util::sync::CancellationToken::new(),
+            &mut |_: Event| {},
+        )
+        .await
+        .unwrap();
+        assert!(partial.partial);
+        assert_eq!(partial.exports.len(), 1);
+        let bundle: super::super::export::Bundle =
+            serde_json::from_slice(&std::fs::read(&partial.exports[0].annotations).unwrap())
+                .unwrap();
+        assert_eq!(bundle.annotations.len(), 1);
+        assert_eq!(bundle.annotations[0].header.name, NAME);
+        assert_eq!(bundle.incomplete.len(), 1);
         let mut corrupt = frame.clone();
         corrupt.hands[0].keypoints[0] = Some([1.1, 0.]);
         assert!(corrupt.validate().is_err());

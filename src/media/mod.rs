@@ -385,7 +385,7 @@ fn frame_pts_uncached(path: &Path) -> Result<Vec<i64>> {
             "-v",
             "error",
             "-select_streams",
-            "v:0",
+            "V:0",
             "-show_frames",
             "-show_entries",
             "frame=best_effort_timestamp_time",
