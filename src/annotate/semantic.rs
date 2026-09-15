@@ -29,7 +29,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            embodied: false,
+            embodied: true,
             window_us: 30_000_000,
             fps: 2.,
             recompute: false,
@@ -208,17 +208,17 @@ pub async fn run(
         "invalid semantic FPS"
     );
     let common = include_str!("../../prompts/semantic-common.md");
-    let domain = if options.embodied {
-        "This is an embodied demonstration. Describe visible manipulation, hand-object contacts and state transitions. Do not infer robot controls, calibrated geometry, or hidden state."
-    } else {
-        "This is a general video. Do not assume a robot or manipulation task. Describe visible activities; task, event, interaction, state and flag records may be empty when inapplicable. Subtasks describe chronological phases of the visible video."
-    };
+    ensure!(
+        options.embodied,
+        "annotation is embodied-only; use analyze for general video understanding"
+    );
+    let domain = "This is an embodied demonstration. Describe visible manipulation, hand-object contacts and state transitions. Do not infer robot controls, calibrated geometry, or hidden state.";
     let common = format!("{common}\n{domain}");
     let instruction = prompt(item)?;
     let name = format!("semantic.{item}");
     let ontology = (item == "event").then_some(&options.ontology);
     let ontology = ontology.and_then(|value| value.as_ref());
-    let params = json!({"stream_coverage_recipe":1,"contact_recipe":media::contact_proxy::RECIPE_VERSION,"window_us":options.window_us,"overlap_us":5_000_000,"fps":options.fps,"ontology":ontology,"mode":if options.embodied {"embodied"} else {"general"},"prompt_hash":storage::cache_key(&(&common,instruction,2))?,"kind":provider.endpoint.kind,"base_url":provider.endpoint.base_url,"model":provider.endpoint.model});
+    let params = json!({"stream_coverage_recipe":1,"contact_recipe":media::contact_proxy::RECIPE_VERSION,"window_us":options.window_us,"overlap_us":5_000_000,"fps":options.fps,"ontology":ontology,"mode":"embodied","prompt_hash":storage::cache_key(&(&common,instruction,2))?,"kind":provider.endpoint.kind,"base_url":provider.endpoint.base_url,"model":provider.endpoint.model});
     let key = station_key(episode, stream, &name, &params)?;
     let directory = stream_directory(sidecar, stream, &episode.time.reference);
     let path = super::layout::annotation(&directory, &name);

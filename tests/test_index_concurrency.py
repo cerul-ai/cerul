@@ -31,9 +31,10 @@ class ModelHandler(http.server.BaseHTTPRequestHandler):
         data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         parts = data.get("contents", [{}])[0].get("parts", [])
         prompt = "\n".join(p.get("text", "") for p in parts)
-        if "embedContent" in self.path:
+        if "embedContent" in self.path or "batchEmbedContents" in self.path:
             kind = "embedding"
-            value = {"embedding": {"values": [1., 0.]}}
+            value = ({"embeddings":[{"values":[1.,0.]} for _ in data["requests"]]}
+                if "requests" in data else {"embedding": {"values": [1., 0.]}})
         elif "audioTranscriptionConfig" in data.get("generationConfig", {}):
             kind = "speech"
             value = {"candidates": [{"finishReason": "STOP", "content": {"parts": [{
@@ -121,33 +122,45 @@ class ConcurrencyTests(unittest.TestCase):
         def overlaps(a, b):
             return any(x is not y and x["start"] < y["end"] and y["start"] < x["end"]
                 for x in calls if x["kind"] == a for y in calls if y["kind"] == b)
-        self.assertTrue(overlaps("scene", "speech"))
-        self.assertTrue(overlaps("overview", "embedding"))
-        self.assertTrue(overlaps("scene", "scene"))
+        self.assertFalse(any(c["kind"] in ("scene", "overview", "probe") for c in calls))
         self.assertTrue(overlaps("speech", "speech"))
-        self.assertTrue(overlaps("overview", "overview"))
         self.assertTrue(overlaps("embedding", "embedding"))
+        self.assertTrue(overlaps("speech", "embedding"), "video embeddings must begin before all speech finishes")
+        diagnostics=json.loads((self.root / "parallel/runtime/diagnostics/index-latest.json").read_text())
+        self.assertEqual(sum(stage["requests"] for stage in diagnostics["stages"]),len(calls))
+        self.assertTrue(any(stage["name"]=="video_embedding" and stage["requests"]>0 for stage in diagnostics["stages"]))
+        self.assertTrue(all(stage["elapsed_ms"]<=diagnostics["elapsed_ms"] for stage in diagnostics["stages"]))
+        self.assertGreater(sum(stage["request_elapsed_ms"] for stage in diagnostics["stages"]),0)
         sidecar = Path(str(source) + ".cerul")
-        for name in ("semantic.scene", "transcript"):
+        for name in ("transcript",):
             records = [json.loads(x) for x in (sidecar / (name + ".jsonl")).read_text().splitlines()][1:]
             self.assertEqual([r["start_us"] for r in records], sorted(r["start_us"] for r in records))
+        for name in ("semantic.scene.jsonl", "semantic.summary.jsonl", "semantic.section.jsonl", "understanding.status.json"):
+            self.assertFalse((sidecar / name).exists(), name)
+        events = [json.loads(line) for line in result.stderr.splitlines() if line.startswith("{")]
+        self.assertFalse(any(e.get("station") in ("understanding", "overview", "description") for e in events))
         count = len(calls)
         self.run_index("parallel", 4)
         self.assertEqual(len(calls), count)
+        cached=json.loads((self.root / "parallel/runtime/diagnostics/index-latest.json").read_text())
+        self.assertEqual(sum(stage["requests"] for stage in cached["stages"]),0)
+        self.assertGreater(sum(cache["hits"] for stage in cached["stages"] for cache in stage["caches"].values()),0)
+        shown=subprocess.run([os.environ["CERUL_TEST_BINARY"],"--workspace",str(self.root/"parallel"),"diagnostics","--json"],env={"PATH":os.environ["PATH"]},capture_output=True,text=True,timeout=30)
+        self.assertEqual(shown.returncode,0,shown.stderr)
+        self.assertEqual(json.loads(shown.stdout)["index"],cached)
         print(f"Parallel fixture: {elapsed:.2f}s; peak {self.server.peak}; calls {dict(collections.Counter(x['kind'] for x in calls))}; cached replay 0 calls")
 
-    def test_failed_window_retains_other_checkpoints_and_retry_only_repairs_gap(self):
-        self.server.fail_scene = True
-        source, result, _ = self.run_index("retry", 4)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        sidecar = Path(str(source) + ".cerul")
-        state = json.loads((sidecar / "understanding.status.json").read_text())
-        self.assertEqual(len(state["failed"]), 1)
-        before = collections.Counter(c["kind"] for c in self.server.calls)
-        _, result, _ = self.run_index("retry", 4)
+    def test_cached_index_preserves_failed_legacy_analysis_without_retrying_it(self):
+        source, result, _ = self.run_index("legacy", 4)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        after = collections.Counter(c["kind"] for c in self.server.calls)
-        self.assertEqual(after["scene"] - before["scene"], 1)
-        self.assertEqual(after["speech"], before["speech"])
-        state = json.loads((sidecar / "understanding.status.json").read_text())
-        self.assertEqual(state["status"], "complete")
+        sidecar = Path(str(source) + ".cerul")
+        status = sidecar / "understanding.status.json"
+        previous = json.dumps({"status": "incomplete", "successful": [], "failed": [],
+            "errors": ["understanding overview: too many overview references"]}) + "\n"
+        status.write_text(previous)
+        count = len(self.server.calls)
+        _, result, _ = self.run_index("legacy", 4)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(status.read_text(), previous)
+        self.assertEqual(len(self.server.calls), count)
+        self.assertNotIn("too many overview references", result.stdout)

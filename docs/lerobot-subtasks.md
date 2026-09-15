@@ -26,14 +26,13 @@ and state are preserved.
 For all seven semantic modules, list them explicitly:
 
 ```sh
-cerul annotate ./dataset --embodied --semantic task,subtask,event,interaction,state,flag,progress
+cerul annotate ./dataset --semantic task,subtask,event,interaction,state,flag,progress
 cerul search --filter 'semantic.event.verb=regrasp' --in ./dataset
 cerul search --filter 'semantic.event.verb=regrasp' --in ./dataset --count
 ```
 
 Event verbs are unrestricted by default. Use `--ontology FILE` to validate a
-specific vocabulary. `--embodied` chooses demonstration prompts independently
-of LeRobot storage format.
+specific vocabulary. Annotation always uses embodied prompts, independently of storage format.
 Time intervals use each episode's origin even when several episodes occupy the
 same source MP4. A dataset UUID separates identically numbered episodes in
 different datasets.

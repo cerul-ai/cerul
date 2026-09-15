@@ -56,7 +56,7 @@ impl<'a> RunProgress<'a> {
     ) -> Result<Self> {
         // Store only a hash: no credentials, URLs, media paths, or request bodies.
         let profile = storage::cache_key(&(
-            "index-timing/3",
+            "index-timing/4",
             std::env::consts::ARCH,
             std::env::consts::OS,
             (
@@ -141,10 +141,18 @@ impl<'a> RunProgress<'a> {
                 result.add(
                     &episode.episode_id,
                     &stream,
+                    "video_embed",
+                    group - 1,
+                    windows,
+                    8. / (options.jobs as f64).min(windows),
+                );
+                result.add(
+                    &episode.episode_id,
+                    &stream,
                     "embed",
                     group,
                     windows,
-                    12. / (options.jobs as f64).min(windows),
+                    4. / (options.jobs as f64).min(windows),
                 );
                 group += 1;
                 if !options.no_understanding && config.vision.enabled != Some(false) {
@@ -232,7 +240,12 @@ impl<'a> RunProgress<'a> {
                     let same = before.episode == stage.episode && before.stream == stage.stream;
                     let required = match stage.station {
                         "prepare" | "finalize" => true,
-                        "embed" => same && matches!(before.station, "screen_text" | "transcript"),
+                        "embed" => {
+                            same && matches!(
+                                before.station,
+                                "screen_text" | "transcript" | "video_embed"
+                            )
+                        }
                         "overview" => {
                             same && matches!(
                                 before.station,
@@ -775,7 +788,6 @@ mod tests {
         let options = Options {
             no_ocr: true,
             no_audio: true,
-            no_understanding: true,
             ..Default::default()
         };
         let first = RunProgress::new(
@@ -788,7 +800,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             first.stages.iter().map(|s| s.station).collect::<Vec<_>>(),
-            ["prepare", "embed", "finalize"]
+            ["prepare", "video_embed", "embed", "finalize"]
         );
         assert!(first.snapshot().1 > 0.);
         let first_path = first.history_path.clone();

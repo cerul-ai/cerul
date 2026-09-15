@@ -169,6 +169,35 @@
       ]
     },
     {
+      "description": "Provisional answer text. Only the final report confirms validated success.",
+      "type": "object",
+      "properties": {
+        "cached": {
+          "type": "boolean"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "analysis_delta"
+        },
+        "stream": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "episode",
+        "stream",
+        "text",
+        "cached"
+      ]
+    },
+    {
       "type": "object",
       "properties": {
         "done": {

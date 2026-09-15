@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
 generated-by: cerul 0.0.12
-generated-sha256: 0e6de57b531aba77f76ebbb4d5ff298300ab6b301967d18b13524d982a9e27d6
+generated-sha256: e727ea1e200eef0b13c856c163b43e692e8323a5abb05fc12991aa6f729f9815
 ---
 
 # Cerul
@@ -84,13 +84,12 @@ Result numbers are global, so `cerul open 1` plays the first moment in the user'
 video player and `cerul open 3` plays the third. `score` is a ranking similarity, not a probability that the
 moment is the right one; do not present it as a confidence or an accuracy.
 
-Indexing also runs visual understanding by default. It saves visible scene
-descriptions, coarse sections, and a grounded overview with up to three search
-suggestions. This uses the configured vision endpoint in addition to embedding
-and any enabled ASR. `--no-understanding` explicitly skips that work. Missing ASR
-does not prevent visual descriptions; failed understanding can leave base search
-usable while returning partial success. Do not treat suggested queries as
-verified retrieval results.
+Indexing builds video embeddings, OCR, and available speech/text search data.
+It does not call the vision model or generate scene descriptions, sections, or
+summaries. Use `cerul analyze ./video.mp4` for scenes and an overview, or `cerul annotate ./video.mp4` for embodied labels. Existing analysis and cached
+description vectors remain readable and searchable; indexing does not refresh
+them. Search suggestions reuse current evidence without model generation.
+Do not treat suggested queries as verified retrieval results.
 
 ```sh
 cerul --json status ./video.mp4 --timeline --type summary
@@ -103,20 +102,46 @@ and OCR for visible words. Sparse visual samples cannot establish exact motion
 boundaries, success, intent, or camera trajectories. Scene descriptions do not
 replace the task and action annotations below.
 
+**Inspect performance.** `cerul --json diagnostics` reads the latest index/analyze
+stage timings, request latency and cache counts. Stage wall times overlap; use
+invocation elapsed time for total throughput. This makes no model calls.
+
+**Analyze a video.** No indexing step is needed.
+
+```sh
+cerul --json analyze ./video.mp4
+cerul --json --dry-run analyze ./dataset --only 0
+```
+
+Without options, returns scenes, chapters and an overview. Add `--prompt "Question"`
+for a focused answer, repeat `--image ./reference.png` for comparison images, and
+use `--from 00:30 --to 01:10` for a half-open episode time range. No embeddings
+are generated. Focused answers use at most 120 sampled frames and valid cached
+in-range text; sparse samples cannot establish continuous motion or absence.
+Results include the actual sample timestamps, reference hashes and limitations.
+Reference images are not evidence of occurrence in the video.
+
+`--stream --json` emits provisional `analysis_delta` NDJSON on stderr; stdout
+contains only the final structured report. Never treat a delta as validated
+evidence. Exit 6 and per-stream errors mean incomplete analysis. Cached answers
+emit one delta marked `cached: true`. Question-specific results preserve full
+video scene/overview records; `--recompute` refreshes the selected request.
+The fixed response schema is published; arbitrary user JSON schemas are not
+accepted. Preserve errors and coverage when interpreting results.
+
 **Annotate actions.** No indexing step is needed.
 
 ```sh
-cerul --json --dry-run annotate ./video.mp4 --embodied
-cerul --json annotate ./video.mp4 --embodied
+cerul --json --dry-run annotate ./video.mp4
+cerul --json annotate ./video.mp4
 cerul --json status ./video.mp4 --timeline
 ```
 
-Every input format defaults to `task,subtask,flag`. Use `--embodied` for
-demonstration prompts and `subtask,event,interaction,state`, or list `--semantic`
-items explicitly. Available items: task, subtask, event, interaction, state, flag,
-progress. `--embodied --hands` adds local human-hand keypoints; add
-`--semantic none` for offline hand-only inference. Hands require embodied mode
-and are never enabled automatically. Depth, segmentation, calibrated 3D poses
+Annotation is embodied-only for every input format, defaulting to
+subtask,event,interaction,state. Explicit --semantic types can also include task,
+flag and progress. Use analyze for general-video understanding. `--hands` adds
+local human-hand keypoints; add `--semantic none` for hand-only processing.
+Hands are never enabled automatically. Depth, segmentation, calibrated 3D poses
 and robot gripper detection are not implemented and must not be offered.
 
 Each episode exports `annotations.json` and `summary.md` with Cerul provenance.
@@ -128,7 +153,7 @@ replaced. Rendering reuses published hand keypoints; it does not generate new in
 **Annotate a LeRobot dataset.** Pass the dataset root that contains `meta/`.
 
 ```sh
-cerul --json annotate ./dataset --embodied --only 0
+cerul --json annotate ./dataset --only 0
 cerul --json status ./dataset --timeline
 ```
 
@@ -176,7 +201,6 @@ Index videos so they can be searched (screen text, speech, visual search)
   <PATHS>...                  Videos, directories, or LeRobot datasets
   --no-audio                  Skip speech transcription
   --no-ocr                    Skip screen text recognition
-  --no-understanding          Skip visual descriptions, sections, and the episode overview
   --chunk <DURATION>          Length of each searchable window, for example 30s (default 30s)
   --overlap <DURATION>        Overlap between windows (default 5s)
   --skip-still                Skip windows where the picture does not change
@@ -213,6 +237,11 @@ Show indexed videos, model configuration, and storage
   --type <ITEM>               One semantic item (for example event), or hand to expand hand frames
   --limit <N>                 Most annotation records to show per video (default 50)
 
+### cerul diagnostics
+
+Read saved stage timings, request latency and cache counts (no model calls)
+
+
 ### cerul open
 
 Open a result from the last search in a video player, at its moment
@@ -232,13 +261,27 @@ Manage the saved Gemini API key
 Configure the required Gemini key and optional default speech transcription
 
 
+### cerul analyze
+
+Analyze scenes, chapters, and a grounded overview without indexing
+
+  --prompt <TEXT>             Ask a question or specify the desired analysis
+  --image <PATH>              Reference image, repeat up to four times (PNG or JPEG)
+  --from <TIME>               Start on the episode timeline, e.g. 00:30 or 30s
+  --to <TIME>                 Exclusive end on the episode timeline, e.g. 01:10
+  --stream                    Stream answer text; with --json, deltas go to stderr and final JSON to stdout
+  <PATHS>...                  Videos, folders, or LeRobot datasets
+  --streams <STREAMS>         Camera selection: primary, all, or comma-separated ids (default primary)
+  --only <ONLY>               Selected episode ids or local indexes
+  --jobs <JOBS>               Parallel model requests (default 4)
+  --rpm <RPM>                 Model requests per minute
+
 ### cerul annotate
 
 Generate semantic labels and optional local hands for embodied videos
 
   <PATHS>...                  Videos, directories, or LeRobot datasets
   --semantic <ITEMS>          Semantic items, comma-separated; use none with --hands for offline hand annotation
-  --embodied                  Annotate embodied demonstrations (subtask, event, interaction, state)
   --hands                     Add local human-hand keypoints to an embodied demonstration (CPU, no API calls)
   --write-lerobot             Write subtask annotations back into the LeRobot dataset
   --out <DIR>                 New output LeRobot dataset (requires --write-lerobot)
@@ -290,9 +333,11 @@ Print this message or the help of the given subcommand(s)
   cerul help index                 Index videos so they can be searched (screen text, speech, visual search)
   cerul help search                Find moments by description, exact words, or a reference image
   cerul help status                Show indexed videos, model configuration, and storage
+  cerul help diagnostics           Read saved stage timings, request latency and cache counts (no model calls)
   cerul help open                  Open a result from the last search in a video player, at its moment
   cerul help auth                  Manage the saved Gemini API key
   cerul help config                Configure the required Gemini key and optional default speech transcription
+  cerul help analyze               Analyze scenes, chapters, and a grounded overview without indexing
   cerul help annotate              Generate semantic labels and optional local hands for embodied videos
   cerul help render                Render published semantic labels and hand skeletons without model calls
   cerul help remove                Remove indexed videos, or free the disk they and their caches use

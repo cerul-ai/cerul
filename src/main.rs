@@ -23,7 +23,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -35,10 +35,12 @@ Common workflows:
   cerul index ./video.mp4
   Search all indexed videos
   cerul search \"a person holding a cup\"
-  General semantic labels
+  Analyze scenes and summarize a video
+  cerul analyze ./video.mp4
+  Embodied semantic labels
   cerul annotate ./video.mp4
   Embodied labels + local hands
-  cerul annotate ./video.mp4 --embodied --hands
+  cerul annotate ./video.mp4 --hands
   Export an annotated video
   cerul render ./video.mp4 --out ./review.mp4
   Inspect the workspace
@@ -65,11 +67,13 @@ Examples:
 Then search your workspace:
   cerul search \"describe a moment\"
 No path is needed when searching. --workspace DIR selects a separate library.
-Screen text runs locally; embeddings, speech, and descriptions use configured APIs.
+Screen text runs locally; embeddings and speech use configured APIs.
+Indexing does not generate scene descriptions, chapters, or summaries.
+Use cerul annotate for semantic labels. Existing annotations remain available.
 Compatible completed work is reused. --recompute processes it again.
 Independent model work shares --jobs (default 4) and --rpm across stages.
 The final receipt keeps total indexing time, excluding setup and prompts.
-One bar covers the whole run; ~ marks estimated progress within active work. Summarizing has its own budget. ETA uses rough estimates, local timings and measured work; API latency can change it. --json exposes confirmed progress.";
+One bar covers the whole run; ~ marks estimated progress within active work. ETA uses rough estimates, local timings and measured work; API latency can change it. --json exposes confirmed progress.";
 
 const SEARCH_HELP: &str = "\
 Examples:
@@ -93,25 +97,25 @@ Run index first. Quote a multi-word query as one argument.
 const ANNOTATE_EXAMPLES: &str = "\
 Examples:
   cerul annotate ./video.mp4 --semantic
-      Label tasks, steps, and quality flags in a video (no index step needed).
+      Label embodied steps, events, interactions, and states (no index step needed).
   cerul annotate ./video.mp4 --semantic subtask,event,interaction,state
       Label action steps, events, contacts, and state changes in a demonstration.
   cerul annotate ./dataset --semantic --only 0
-      Label the first LeRobot episode with the general defaults. Add --embodied for demonstrations.
+      Label the first LeRobot episode with embodied defaults.
   cerul annotate ./video.mp4 --semantic --dry-run
       Preview the work without writing files or calling models.
-  cerul annotate ./video.mp4 --embodied --hands --semantic none
+  cerul annotate ./video.mp4 --hands --semantic none
       Track human hands locally on CPU, with no model key required.
 
 Types: task, subtask, event, interaction, state, flag, progress.
-Defaults: task,subtask,flag for every format; --embodied selects subtask,event,interaction,state.
+Defaults: subtask,event,interaction,state. Annotation is embodied-only; use analyze for general videos.
 Outputs: annotations.json and summary.md; internal semantic.<type>.jsonl sidecars retain provenance.
 LeRobot: annotations live in .cerul/episodes/<episode_index>/ inside the dataset.
 --out is a new LeRobot dataset copy and requires --write-lerobot; it is not a
 JSONL export directory. See the LeRobot guide for supported writeback versions.
 
 Semantic labels use your configured vision endpoint (Gemini by default): cerul auth set.
---hands requires --embodied and is never enabled automatically. Add --semantic none for hands only.
+--hands is optional and never enabled automatically. Add --semantic none for hands only.
 Depth, calibrated 3D poses, and robot gripper detection are not supported.
 Guide: https://github.com/cerul-ai/cerul/blob/main/docs/annotation.md";
 
@@ -188,6 +192,8 @@ enum Command {
         #[arg(long, default_value_t = 50, value_name = "N", requires = "timeline")]
         limit: usize,
     },
+    /// Read saved stage timings, request latency and cache counts (no model calls).
+    Diagnostics,
     /// Open a result from the last search in a video player, at its moment.
     #[command(
         after_help = "Example: cerul open 2\nOpens result 2 from the last search; the default is result 1."
@@ -207,6 +213,12 @@ enum Command {
         after_help = "Run cerul config in a terminal to configure model endpoints and speech transcription. Run cerul auth set to save a model key. Use --workspace DIR to choose a separate workspace."
     )]
     Config,
+    /// Analyze scenes, chapters, and a grounded overview without indexing.
+    #[command(
+        arg_required_else_help = true,
+        after_help = "Examples:\n  cerul analyze ./video.mp4\n  cerul analyze ./dataset --only 0\n  cerul analyze ./video.mp4 --json\nNo index is required. Uses the vision endpoint, reusing existing OCR and speech. Saves semantic.scene, semantic.section and semantic.summary sidecars. Does not generate embeddings or transcribe audio. Use --prompt for a question, --image for reference images, --from/--to to select a range, and --stream for incremental answers. With --json, deltas go to stderr and a validated final JSON object goes to stdout."
+    )]
+    Analyze(AnalyzeArgs),
     /// Generate semantic labels and optional local hands for embodied videos.
     #[command(
         arg_required_else_help = true,
@@ -311,11 +323,11 @@ struct AnnotateArgs {
     /// Semantic items, comma-separated; use none with --hands for offline hand annotation.
     #[arg(long,num_args=0..=1,default_missing_value="default", value_name = "ITEMS")]
     semantic: Option<String>,
-    /// Annotate embodied demonstrations (subtask, event, interaction, state).
-    #[arg(long)]
+    /// Compatibility flag: annotation is always embodied.
+    #[arg(long, hide = true, default_value_t = true)]
     embodied: bool,
     /// Add local human-hand keypoints to an embodied demonstration (CPU, no API calls).
-    #[arg(long, requires = "embodied")]
+    #[arg(long)]
     hands: bool,
     /// Write subtask annotations back into the LeRobot dataset.
     #[arg(long)]
@@ -407,6 +419,39 @@ struct RemoveArgs {
     compact: bool,
 }
 #[derive(Args)]
+struct AnalyzeArgs {
+    /// Ask a question or specify the desired analysis.
+    #[arg(long, alias = "question", value_name = "TEXT")]
+    prompt: Option<String>,
+    /// Reference image, repeat up to four times (PNG or JPEG).
+    #[arg(long = "image", value_name = "PATH")]
+    images: Vec<PathBuf>,
+    /// Start on the episode timeline, e.g. 00:30 or 30s.
+    #[arg(long = "from", value_parser = timestamp, value_name = "TIME")]
+    from_us: Option<i64>,
+    /// Exclusive end on the episode timeline, e.g. 01:10.
+    #[arg(long = "to", value_parser = timestamp, value_name = "TIME")]
+    to_us: Option<i64>,
+    /// Stream answer text; with --json, deltas go to stderr and final JSON to stdout.
+    #[arg(long)]
+    stream: bool,
+    /// Videos, folders, or LeRobot datasets.
+    #[arg(required = true)]
+    paths: Vec<PathBuf>,
+    /// Camera selection: primary, all, or comma-separated ids.
+    #[arg(long, default_value = "primary", help_heading = ADVANCED)]
+    streams: String,
+    /// Selected episode ids or local indexes.
+    #[arg(long, help_heading = ADVANCED)]
+    only: Option<String>,
+    /// Parallel model requests.
+    #[arg(long, default_value_t = 4, help_heading = ADVANCED)]
+    jobs: usize,
+    /// Model requests per minute.
+    #[arg(long, help_heading = ADVANCED)]
+    rpm: Option<u32>,
+}
+#[derive(Args)]
 struct IndexArgs {
     /// Videos, directories, or LeRobot datasets.
     #[arg(required = true)]
@@ -417,8 +462,8 @@ struct IndexArgs {
     /// Skip screen text recognition.
     #[arg(long)]
     no_ocr: bool,
-    /// Skip visual descriptions, sections, and the episode overview.
-    #[arg(long)]
+    /// Compatibility flag: indexing no longer generates visual descriptions.
+    #[arg(long, hide = true, default_value_t = true)]
     no_understanding: bool,
     /// Length of each searchable window, for example 30s.
     #[arg(long, default_value="30s", value_parser=duration, value_name = "DURATION", help_heading = ADVANCED)]
@@ -445,6 +490,59 @@ struct IndexArgs {
     #[arg(long, value_name = "DIR", help_heading = ADVANCED)]
     sidecar_dir: Option<PathBuf>,
 }
+fn timestamp(raw: &str) -> std::result::Result<i64, String> {
+    if !raw.contains(':') {
+        return if raw.chars().last().is_some_and(|c| c.is_ascii_alphabetic()) {
+            duration(raw)
+        } else {
+            duration(&format!("{raw}s"))
+        };
+    }
+    let parts: Vec<_> = raw.split(':').collect();
+    if !(2..=3).contains(&parts.len()) {
+        return Err("time must be MM:SS or HH:MM:SS".into());
+    }
+    let seconds = duration(&format!("{}s", parts[parts.len() - 1]))?;
+    if seconds >= 60_000_000 {
+        return Err("seconds must be less than 60".into());
+    }
+    let mut minutes = 0i64;
+    for (i, part) in parts[..parts.len() - 1].iter().enumerate() {
+        let value = part.parse::<i64>().map_err(|_| "invalid time")?;
+        if value < 0 || (parts.len() == 3 && i == 1 && value >= 60) {
+            return Err("invalid time component".into());
+        }
+        minutes = minutes
+            .checked_mul(60)
+            .and_then(|n| n.checked_add(value))
+            .ok_or("time overflow")?;
+    }
+    minutes
+        .checked_mul(60_000_000)
+        .and_then(|n| n.checked_add(seconds))
+        .ok_or_else(|| "time overflow".into())
+}
+
+#[cfg(test)]
+mod analysis_time_tests {
+    use super::timestamp;
+
+    #[test]
+    fn accepts_episode_times_without_losing_microseconds() {
+        for (input, expected) in [
+            ("30", 30_000_000),
+            ("30s", 30_000_000),
+            ("00:30.000001", 30_000_001),
+            ("01:02:03.5", 3_723_500_000),
+        ] {
+            assert_eq!(timestamp(input).unwrap(), expected);
+        }
+        for input in ["-1", "00:60", "01:60:00", "nan", "1:2:3:4"] {
+            assert!(timestamp(input).is_err(), "{input}");
+        }
+    }
+}
+
 fn duration(raw: &str) -> std::result::Result<i64, String> {
     let (number, factor) = if let Some(value) = raw.strip_suffix("ms") {
         (value, 1_000i64)
@@ -827,6 +925,7 @@ fn retry_after(
 
 /// Everything a command can produce. JSON mode serializes it; human mode renders it.
 enum Outcome {
+    Diagnostics(Value),
     Home(cerul::status::Status, render::ModelSummary),
     Status {
         status: cerul::status::Status,
@@ -853,6 +952,7 @@ enum Outcome {
         seeks: bool,
         opened: bool,
     },
+    Analyze(cerul::analyze::Report, Duration),
     Index(pipeline::Report, render::IndexContext),
     Search(cerul::search::Report, render::SearchContext),
     Annotate(cerul::annotate::pipeline::Report, BTreeMap<String, PathBuf>),
@@ -861,6 +961,7 @@ enum Outcome {
 impl Outcome {
     fn json(&self) -> Result<Value> {
         Ok(match self {
+            Outcome::Diagnostics(value) => value.clone(),
             Outcome::Configured(saved) => json!({"configured":saved}),
             Outcome::Home(status, _) | Outcome::Status { status, .. } => {
                 serde_json::to_value(status)?
@@ -881,6 +982,7 @@ impl Outcome {
             } => {
                 json!({"media": media, "start_us": start_us, "player": player, "seeks": seeks, "opened": opened})
             }
+            Outcome::Analyze(report, _) => serde_json::to_value(report)?,
             Outcome::Index(report, _) => serde_json::to_value(report)?,
             Outcome::Search(report, _) => serde_json::to_value(report)?,
             Outcome::Remove(report, _, _) => serde_json::to_value(report)?,
@@ -897,6 +999,11 @@ impl Outcome {
     }
     fn render(&self, out: &mut dyn Write, palette: &Palette) -> io::Result<()> {
         match self {
+            Outcome::Diagnostics(value) => writeln!(
+                out,
+                "{}",
+                serde_json::to_string_pretty(value).map_err(io::Error::other)?
+            ),
             Outcome::Render(report) => writeln!(
                 out,
                 "{} {}",
@@ -966,6 +1073,7 @@ impl Outcome {
                 seeks,
                 opened,
             } => render::open(out, palette, media, *start_us, player, *seeks, *opened),
+            Outcome::Analyze(report, elapsed) => render::analyze(out, palette, report, *elapsed),
             Outcome::Index(report, names) => render::index(out, palette, report, names),
             Outcome::Search(report, context) => render::search(out, palette, report, context),
             Outcome::Remove(report, names, unknown) => {
@@ -1246,6 +1354,10 @@ async fn execute(
         })
         .map_err(|e| category(2, e))?;
     match &cli.command {
+        Some(Command::Diagnostics) => Ok((
+            Outcome::Diagnostics(serde_json::to_value(cerul::diagnostics::read(&workspace)?)?),
+            0,
+        )),
         None => {
             let status = cerul::status::inspect(&workspace, None)?;
             let config = config(cli).map_err(|e| category(2, e))?;
@@ -1432,6 +1544,84 @@ async fn execute(
             )?;
             sink.finish();
             Ok((Outcome::Render(report), 0))
+        }
+        Some(Command::Analyze(args)) => {
+            anyhow::ensure!(
+                args.jobs > 0 && args.rpm != Some(0),
+                CliError(2, "jobs and RPM must be positive".into())
+            );
+            readable(&args.paths)?;
+            let config = config(cli).map_err(|e| category(2, e))?;
+            prepare_media(cli, &workspace, sink, &cancel).await?;
+            let started = Instant::now();
+            if !cli.dry_run {
+                sink.spinner("Analyzing video");
+            }
+            let events = sink.clone();
+            let mut streamed: Option<(String, String)> = None;
+            let mut stream_error = None;
+            let report = cerul::analyze::run(
+                &args.paths,
+                &workspace,
+                &config,
+                &cerul::analyze::Options {
+                    prompt: args.prompt.clone(),
+                    images: args.images.clone(),
+                    from_us: args.from_us,
+                    to_us: args.to_us,
+                    stream: args.stream,
+                    streams: args.streams.clone(),
+                    only: args.only.clone(),
+                    jobs: args.jobs,
+                    rpm: args.rpm,
+                    recompute: cli.recompute,
+                    dry_run: cli.dry_run,
+                    request_notice: (!cli.yes).then(|| sink.notice(MEDIA_NOTICE)),
+                },
+                cancel,
+                &mut |event| {
+                    if let Event::AnalysisDelta {
+                        episode,
+                        stream,
+                        text,
+                        ..
+                    } = &event
+                        && !cli.json
+                        && !cli.quiet
+                    {
+                        let identity = (episode.clone(), stream.clone());
+                        let mut out = io::stdout().lock();
+                        let result = (|| -> io::Result<()> {
+                            if streamed.as_ref() != Some(&identity) {
+                                events.finish();
+                                if streamed.is_some() {
+                                    writeln!(out, "\n")?;
+                                }
+                                writeln!(out, "{episode} · {stream}")?;
+                                streamed = Some(identity);
+                            }
+                            out.write_all(text.as_bytes())?;
+                            out.flush()
+                        })();
+                        if let Err(error) = result {
+                            stream_error = Some(error);
+                        }
+                    } else if cli.json || !matches!(event, Event::Progress { .. }) {
+                        events.emit(event);
+                    }
+                },
+            )
+            .await?;
+            if streamed.is_some() {
+                writeln!(io::stdout().lock())?;
+            }
+            if let Some(error) = stream_error {
+                return Err(error.into());
+            }
+            let elapsed = started.elapsed();
+            sink.finish();
+            let code = if report.partial { 6 } else { 0 };
+            Ok((Outcome::Analyze(report, elapsed), code))
         }
         Some(Command::Annotate(args)) => {
             if args.grounding.is_some() || args.world.is_some() {
@@ -1981,7 +2171,9 @@ async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::pr
             let hint = if code == 5 {
                 matches!(
                     &cli.command,
-                    Some(Command::Index(_)) | Some(Command::Annotate(_))
+                    Some(Command::Index(_))
+                        | Some(Command::Analyze(_))
+                        | Some(Command::Annotate(_))
                 )
                 .then(|| format!("retry with {}", render::shell_command(&invocation)))
             } else {

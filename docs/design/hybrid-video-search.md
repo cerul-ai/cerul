@@ -1,5 +1,10 @@
 # Hybrid video retrieval proposal
 
+Update 2026-09-15: CLI indexing no longer generates visual descriptions or
+overviews. Existing description vectors remain in hybrid retrieval. The
+analysis-generation proposal below is historical; see DESIGN.md for the current
+index/annotation boundary.
+
 Status: default hybrid retrieval is connected. See [DESIGN.md](../../DESIGN.md)
 for implemented behavior. On 2026-09-13 the owner explicitly requested activation
 after lightweight acceptance, replacing the earlier held-out activation gate.

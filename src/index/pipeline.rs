@@ -24,6 +24,8 @@ pub struct Options {
     pub embedding: embed::Options,
     pub no_audio: bool,
     pub no_ocr: bool,
+    /// Skip legacy scene and overview generation. The CLI always skips it;
+    /// library callers may explicitly opt in for compatibility.
     pub no_understanding: bool,
     pub streams: String,
     pub only: Option<String>,
@@ -39,7 +41,7 @@ impl Default for Options {
             embedding: Default::default(),
             no_audio: false,
             no_ocr: false,
-            no_understanding: false,
+            no_understanding: true,
             streams: "primary".into(),
             only: None,
             jobs: 4,
@@ -253,9 +255,14 @@ pub async fn run(
     cancel: CancellationToken,
     events: &mut dyn EventSink,
 ) -> Result<Report> {
-    crate::media::with_cancellation(
-        cancel.clone(),
-        run_inner(paths, workspace, config, options, cancel, events),
+    crate::diagnostics::run(
+        workspace,
+        "index",
+        options.dry_run,
+        crate::media::with_cancellation(
+            cancel.clone(),
+            Box::pin(run_inner(paths, workspace, config, options, cancel, events)),
+        ),
     )
     .await
 }
@@ -458,6 +465,7 @@ async fn run_inner(
         }
         let mut blocked = std::collections::BTreeMap::new();
         // Preflight before expensive local processing, but never for a complete cached product.
+        let mut completed_embeddings = std::collections::BTreeSet::new();
         for stream in &selected {
             let transcript =
                 existing_annotation(&planned, &episode, stream, "transcript", options.no_audio)?;
@@ -483,6 +491,9 @@ async fn run_inner(
             } else {
                 false
             };
+            if complete {
+                completed_embeddings.insert(stream.clone());
+            }
             if !complete && !options.embedding.skip_still {
                 match probes::check(&embedding, probes::Capability::Embedding, workspace, false)
                     .await
@@ -530,6 +541,7 @@ async fn run_inner(
                 &vision,
                 speech_blocked.get(&stream),
                 blocked.contains_key(&stream),
+                completed_embeddings.contains(&stream),
                 events,
                 &cancel,
             ))
@@ -680,7 +692,7 @@ async fn run_inner(
             let mut description_rows = 0;
             let understanding = if options.no_understanding || config.vision.enabled == Some(false)
             {
-                super::understanding::mark_status(&episode, &stream, &sidecar, "disabled")?;
+                // Indexing must not overwrite the state of existing analysis.
                 UnderstandingStatus::Disabled
             } else {
                 match semantic_result.context("missing understanding work")? {
@@ -789,6 +801,7 @@ async fn run_inner(
         }
     }
     events.end("", "", "finalize", !report.partial);
+    crate::diagnostics::partial(report.partial);
     events.finish(report.partial);
     Ok(report)
 }
@@ -820,6 +833,7 @@ async fn stream_work(
     vision: &Provider,
     speech_blocked: Option<&String>,
     embedding_blocked: bool,
+    embedding_complete: bool,
     events: &mut super::progress::RunProgress<'_>,
     cancel: &CancellationToken,
 ) -> Result<StreamWork> {
@@ -831,36 +845,74 @@ async fn stream_work(
         };
         let _ = sender.send(WorkEvent::Begin("screen_text"));
         let _ = sender.send(WorkEvent::Begin("transcript"));
-        let (screen, speech) = text_stations(
-            episode,
-            stream,
-            sidecar,
-            workspace,
-            transcription,
-            options,
-            speech_blocked,
-            &mut sink,
-            cancel,
-        )
-        .await;
-        let _ = sender.send(WorkEvent::End("screen_text", screen.is_ok()));
-        let _ = sender.send(WorkEvent::End("transcript", speech.is_ok()));
-        let screen_input = match &screen {
-            Ok(Some(file)) => Some(file.clone()),
-            _ if !options.no_ocr => retained_annotation(sidecar, episode, stream, "screen_text")?,
-            _ => None,
+        let text = async {
+            let (screen, speech) = text_stations(
+                episode,
+                stream,
+                sidecar,
+                workspace,
+                transcription,
+                options,
+                speech_blocked,
+                &mut sink,
+                cancel,
+            )
+            .await;
+            let _ = sender.send(WorkEvent::End("screen_text", screen.is_ok()));
+            let _ = sender.send(WorkEvent::End("transcript", speech.is_ok()));
+            let screen_input = match &screen {
+                Ok(Some(file)) => Some(file.clone()),
+                _ if !options.no_ocr => {
+                    retained_annotation(sidecar, episode, stream, "screen_text")?
+                }
+                _ => None,
+            };
+            let speech_input = match &speech {
+                Ok(Some(file)) => Some(file.clone()),
+                _ if !options.no_audio => {
+                    retained_annotation(sidecar, episode, stream, "transcript")?
+                }
+                _ => None,
+            };
+            let _ = text_sender.send((screen_input.clone(), speech_input.clone()));
+            Ok::<_, anyhow::Error>((screen, speech, screen_input, speech_input))
         };
-        let speech_input = match &speech {
-            Ok(Some(file)) => Some(file.clone()),
-            _ if !options.no_audio => retained_annotation(sidecar, episode, stream, "transcript")?,
-            _ => None,
+        let video = async {
+            let _ = sender.send(WorkEvent::Begin("video_embed"));
+            let mut sink = |event| {
+                let _ = sender.send(WorkEvent::Data(Box::new(event)));
+            };
+            let result = if embedding_blocked || embedding_complete {
+                Ok(())
+            } else {
+                embed::prepare_video(
+                    episode,
+                    stream,
+                    sidecar,
+                    workspace,
+                    config,
+                    embedding,
+                    &options.embedding,
+                    &mut sink,
+                )
+                .await
+            };
+            let _ = sender.send(WorkEvent::End(
+                "video_embed",
+                !embedding_blocked && result.is_ok(),
+            ));
+            result
         };
-        let _ = text_sender.send((screen_input.clone(), speech_input.clone()));
+        let (text, prepared) = tokio::join!(text, video);
+        let (screen, speech, screen_input, speech_input) = text?;
         let _ = sender.send(WorkEvent::Begin("embed"));
         let vectors = if embedding_blocked {
             Ok(0)
+        } else if let Err(error) = prepared {
+            embed::withdraw(episode, stream, sidecar, workspace, config, &error).await?;
+            Err(error)
         } else {
-            embed::run(
+            embed::run_prepared(
                 episode,
                 stream,
                 sidecar,
@@ -870,6 +922,7 @@ async fn stream_work(
                 &options.embedding,
                 speech_input.as_ref(),
                 screen_input.as_ref(),
+                true,
                 &mut sink,
             )
             .await
@@ -1003,7 +1056,8 @@ async fn text_stations(
     Result<Option<AnnotationFile>>,
 ) {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-    let ocr = {
+    let ocr = crate::diagnostics::stage("ocr", &episode.episode_id, stream, async {
+        let context = crate::diagnostics::current();
         let (episode, stream, sidecar, workspace, options, cancel, sender) = (
             episode.clone(),
             stream.to_owned(),
@@ -1015,28 +1069,31 @@ async fn text_stations(
         );
         let tools = crate::media::current_tools();
         tokio::task::spawn_blocking(move || {
-            crate::media::with_sync_tools(tools, || {
-                if options.no_ocr {
-                    return Ok(None);
-                }
-                crate::media::with_sync_cancellation(cancel.clone(), || {
-                    stations::screen_text_with_workspace(
-                        &episode,
-                        &stream,
-                        &sidecar,
-                        &workspace,
-                        options.embedding.recompute,
-                        options.jobs,
-                        &mut |event| {
-                            let _ = sender.send(event);
-                        },
-                        &cancel,
-                    )
-                    .map(Some)
+            crate::diagnostics::sync(context, || {
+                crate::media::with_sync_tools(tools, || {
+                    if options.no_ocr {
+                        return Ok(None);
+                    }
+                    crate::media::with_sync_cancellation(cancel.clone(), || {
+                        stations::screen_text_with_workspace(
+                            &episode,
+                            &stream,
+                            &sidecar,
+                            &workspace,
+                            options.embedding.recompute,
+                            options.jobs,
+                            &mut |event| {
+                                let _ = sender.send(event);
+                            },
+                            &cancel,
+                        )
+                        .map(Some)
+                    })
                 })
             })
         })
-    };
+        .await
+    });
     let speech = async {
         if options.no_audio {
             return Ok(None);
