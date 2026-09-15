@@ -40,6 +40,15 @@ impl Decoder {
     }
 }
 
+fn is_event_stream(value: &str) -> bool {
+    value
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .eq_ignore_ascii_case("text/event-stream")
+}
+
 pub(super) async fn consume(
     mut response: reqwest::Response,
     gemini: bool,
@@ -51,7 +60,7 @@ pub(super) async fn consume(
         .headers()
         .get("content-type")
         .and_then(|h| h.to_str().ok())
-        .is_some_and(|v| v.starts_with("text/event-stream"))
+        .is_some_and(is_event_stream)
     {
         return Err(failure(
             Failure::Unsupported,
@@ -147,6 +156,13 @@ pub(super) async fn consume(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn media_type_is_case_insensitive_and_exact() {
+        assert!(is_event_stream("Text/Event-Stream; charset=utf-8"));
+        assert!(is_event_stream("text/event-stream ; charset=UTF-8"));
+        assert!(!is_event_stream("text/event-streaming"));
+        assert!(!is_event_stream("application/json"));
+    }
     #[test]
     fn split_utf8_crlf_comments_and_multiline_events() {
         let input = ": heartbeat\r\ndata: {\"text\":\"中文\"}\r\n\r\ndata: one\ndata: two\n\n";

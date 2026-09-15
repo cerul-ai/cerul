@@ -36,7 +36,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not stream:
             value={'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':raw}]}}]} if gemini else {'choices':[{'finish_reason':'stop','message':{'content':raw}}]}
             data=json.dumps(value).encode();self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
-        self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Connection','close');self.end_headers()
+        self.send_response(200);self.send_header('Content-Type','Text/Event-Stream; charset=utf-8');self.send_header('Connection','close');self.end_headers()
         try:
             pieces=[raw[:36],raw[36:]]
             for i,piece in enumerate(pieces):
@@ -115,3 +115,19 @@ class StreamTests(unittest.TestCase):
         result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=90)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(len(self.server.calls), count)
+
+    def test_multiple_human_streams_have_source_boundaries(self):
+        other = self.root / 'other.mp4'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                        'color=red:size=64x64:rate=1:duration=8', '-c:v',
+                        'libx264', str(other)], check=True)
+        command = self.command('--stream', str(other))
+        command.remove('--json')
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        answer = 'Found the target 中文.'
+        self.assertEqual(result.stdout.count(answer), 2)
+        between = result.stdout.split(answer)[1]
+        self.assertTrue(between.startswith('\n\n'), result.stdout)
+        self.assertIn(' · ', between)
+        self.assertEqual(len(self.server.calls), 2)

@@ -1558,7 +1558,7 @@ async fn execute(
                 sink.spinner("Analyzing video");
             }
             let events = sink.clone();
-            let mut streamed = false;
+            let mut streamed: Option<(String, String)> = None;
             let mut stream_error = None;
             let report = cerul::analyze::run(
                 &args.paths,
@@ -1580,17 +1580,30 @@ async fn execute(
                 },
                 cancel,
                 &mut |event| {
-                    if let Event::AnalysisDelta { text, .. } = &event
+                    if let Event::AnalysisDelta {
+                        episode,
+                        stream,
+                        text,
+                        ..
+                    } = &event
                         && !cli.json
                         && !cli.quiet
                     {
-                        if !streamed {
-                            events.finish();
-                            streamed = true;
-                        }
+                        let identity = (episode.clone(), stream.clone());
                         let mut out = io::stdout().lock();
-                        if let Err(error) = out.write_all(text.as_bytes()).and_then(|_| out.flush())
-                        {
+                        let result = (|| -> io::Result<()> {
+                            if streamed.as_ref() != Some(&identity) {
+                                events.finish();
+                                if streamed.is_some() {
+                                    writeln!(out, "\n")?;
+                                }
+                                writeln!(out, "{episode} · {stream}")?;
+                                streamed = Some(identity);
+                            }
+                            out.write_all(text.as_bytes())?;
+                            out.flush()
+                        })();
+                        if let Err(error) = result {
                             stream_error = Some(error);
                         }
                     } else if cli.json || !matches!(event, Event::Progress { .. }) {
@@ -1599,7 +1612,7 @@ async fn execute(
                 },
             )
             .await?;
-            if streamed {
+            if streamed.is_some() {
                 writeln!(io::stdout().lock())?;
             }
             if let Some(error) = stream_error {

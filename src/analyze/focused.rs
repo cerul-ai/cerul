@@ -76,6 +76,48 @@ fn validate(answer: &Answer, times: &[i64]) -> Result<()> {
     }
     Ok(())
 }
+/// Retain evenly spaced samples across the full range until the actual provider
+/// payload fits. References and the user question are never silently removed.
+fn fit_samples(
+    provider: &Provider,
+    references: &[Input],
+    samples: &[(i64, Input)],
+    schema: &serde_json::Value,
+    stream: bool,
+    instruction: impl Fn(&[i64]) -> String,
+) -> Result<(String, Vec<Input>, Vec<i64>)> {
+    let mut count = samples.len();
+    ensure!(count > 0, "analysis requires a video sample");
+    loop {
+        let mut inputs = references.to_vec();
+        let mut times = Vec::with_capacity(count);
+        for i in 0..count {
+            let index = if count == 1 {
+                0
+            } else {
+                i * (samples.len() - 1) / (count - 1)
+            };
+            let (time, image) = &samples[index];
+            times.push(*time);
+            inputs.push(Input::Text(format!(
+                "Video sample at episode timestamp {time} microseconds."
+            )));
+            inputs.push(image.clone());
+        }
+        let prompt = instruction(&times);
+        if provider.generation_bytes(&prompt, &inputs, schema, stream)?
+            <= crate::providers::MAX_REQUEST_BYTES
+        {
+            return Ok((prompt, inputs, times));
+        }
+        ensure!(
+            count > 1,
+            "analysis question and reference images exceed the request byte budget even with one video sample"
+        );
+        count = (count * 3 / 4).max(1);
+    }
+}
+
 /// Decode only the answer string as it grows; do not render JSON syntax or emit
 /// incomplete Unicode escapes. Final schema validation still determines success.
 fn answer_prefix(raw: &str) -> Option<String> {
@@ -164,10 +206,10 @@ pub(super) async fn run_measured(
     }
     let schema = serde_json::to_value(schemars::schema_for!(Answer))?;
     let key = storage::cache_key(
-        &json!({"recipe":"focused-analysis/1","episode":episode.episode_id,"stream":stream,
+        &json!({"recipe":"focused-analysis/2","episode":episode.episode_id,"stream":stream,
         "source":source_hash,"range":range,"prompt":prompt,"images":reference_hashes,"model":provider.endpoint.model,
         "kind":provider.endpoint.kind,"base_url":provider.endpoint.base_url,"text":evidence,"text_truncated":text_truncated,
-        "guidance":storage::sha256_hex(GUIDANCE),"schema":schema,"sampling":media::frames::RECIPE,"max_samples":MAX_SAMPLES}),
+        "guidance":storage::sha256_hex(GUIDANCE),"schema":schema,"sampling":media::frames::RECIPE,"max_samples":MAX_SAMPLES,"request_budget":crate::providers::MAX_REQUEST_BYTES}),
     )?;
     let directory = stations::stream_directory(sidecar, stream, &episode.time.reference)
         .join("analysis")
@@ -220,8 +262,7 @@ pub(super) async fn run_measured(
         "selected range contains no sampled frames"
     );
     let count = frames.len().min(MAX_SAMPLES);
-    let mut inputs = references;
-    let mut times = Vec::new();
+    let mut samples = Vec::new();
     for i in 0..count {
         media::check_cancellation()?;
         let index = if count == 1 {
@@ -231,24 +272,25 @@ pub(super) async fn run_measured(
         };
         let (relative, path) = &frames[index];
         let time = episode.source_to_episode(stream, source_range.start_us + relative)?;
-        times.push(time);
-        inputs.push(Input::Text(format!(
-            "Video sample at episode timestamp {time} microseconds."
-        )));
-        inputs.push(Input::Image(
-            jpeg(&fs::read(path)?, 480)?,
-            "image/jpeg".into(),
+        samples.push((
+            time,
+            Input::Image(jpeg(&fs::read(path)?, 480)?, "image/jpeg".into()),
         ));
     }
-    let instruction = format!(
-        "{GUIDANCE} Selected half-open range: {}..{} microseconds. Actual sample timestamps: {:?}. Cached text evidence (possibly empty): {}. Text evidence truncated: {}. User question: {}",
-        range[0],
-        range[1],
-        times,
-        serde_json::to_string(&evidence)?,
-        text_truncated,
-        prompt
-    );
+    let text_evidence = serde_json::to_string(&evidence)?;
+    let (instruction, inputs, times) = fit_samples(
+        provider,
+        &references,
+        &samples,
+        &schema,
+        options.stream,
+        |times| {
+            format!(
+                "{GUIDANCE} Selected half-open range: {}..{} microseconds. Actual sample timestamps: {:?}. Cached text evidence (possibly empty): {}. Text evidence truncated: {}. User question: {}",
+                range[0], range[1], times, text_evidence, text_truncated, prompt
+            )
+        },
+    )?;
     let mut emitted = String::new();
     let value = if options.stream {
         let mut raw = String::new();
@@ -330,6 +372,54 @@ pub(super) async fn run_measured(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn oversized_samples_fit_both_protocols_and_preserve_range_endpoints() {
+        for kind in ["gemini", "openai"] {
+            let mut endpoint = crate::config::Config::default().vision;
+            endpoint.kind = kind.into();
+            let provider = Provider::new(
+                endpoint,
+                None,
+                1,
+                None,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .unwrap();
+            let samples: Vec<_> = (0..120)
+                .map(|t| {
+                    (
+                        t * 1_000_000,
+                        Input::Image(vec![255; 160_000], "image/jpeg".into()),
+                    )
+                })
+                .collect();
+            let references = vec![Input::Image(vec![0; 500_000], "image/jpeg".into()); 4];
+            let schema = serde_json::json!({"type":"object"});
+            for stream in [false, true] {
+                let (prompt, inputs, times) =
+                    fit_samples(&provider, &references, &samples, &schema, stream, |times| {
+                        format!("Samples: {times:?}")
+                    })
+                    .unwrap();
+                assert!(times.len() < 120);
+                assert_eq!(times.first(), Some(&0));
+                assert_eq!(times.last(), Some(&119_000_000));
+                assert!(times.windows(2).all(|pair| pair[0] < pair[1]));
+                assert!(
+                    provider
+                        .generation_bytes(&prompt, &inputs, &schema, stream)
+                        .unwrap()
+                        <= crate::providers::MAX_REQUEST_BYTES
+                );
+                assert_eq!(inputs.len(), 4 + times.len() * 2);
+            }
+            assert!(
+                fit_samples(&provider, &[], &samples[..1], &schema, false, |_| "x"
+                    .repeat(crate::providers::MAX_REQUEST_BYTES))
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn streamed_answer_decodes_partial_escapes_without_json_syntax() {
         assert_eq!(

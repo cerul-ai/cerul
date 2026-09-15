@@ -670,16 +670,49 @@ impl Provider {
         }
         Ok(vector)
     }
-    pub async fn generate(&self, prompt: &str, inputs: &[Input], schema: Value) -> Result<Value> {
-        let response = if self.endpoint.kind == "gemini" {
+    fn generation_body(
+        &self,
+        prompt: &str,
+        inputs: &[Input],
+        schema: &Value,
+        stream: bool,
+    ) -> Value {
+        if self.endpoint.kind == "gemini" {
             let mut parts = vec![json!({"text":prompt})];
             parts.extend(inputs.iter().map(Input::gemini));
-            self.json("generateContent",json!({"contents":[{"role":"user","parts":parts}],"generationConfig":{"responseMimeType":"application/json","responseJsonSchema":schema}})).await?
+            json!({"contents":[{"role":"user","parts":parts}],"generationConfig":{"responseMimeType":"application/json","responseJsonSchema":schema}})
         } else {
             let mut content = vec![json!({"type":"text","text":prompt})];
             content.extend(inputs.iter().map(Input::openai));
-            self.json("chat/completions",json!({"model":self.endpoint.model,"messages":[{"role":"user","content":content}],"response_format":{"type":"json_schema","json_schema":{"name":"cerul_output","strict":true,"schema":schema}}})).await?
+            let mut body = json!({"model":self.endpoint.model,"messages":[{"role":"user","content":content}],"response_format":{"type":"json_schema","json_schema":{"name":"cerul_output","strict":true,"schema":schema}}});
+            if stream {
+                body["stream"] = json!(true);
+                body["stream_options"] = json!({"include_usage":true});
+            }
+            body
+        }
+    }
+
+    /// Measure the exact wire payload, including base64 and protocol envelopes.
+    pub(crate) fn generation_bytes(
+        &self,
+        prompt: &str,
+        inputs: &[Input],
+        schema: &Value,
+        stream: bool,
+    ) -> Result<usize> {
+        Ok(serde_json::to_vec(&self.generation_body(prompt, inputs, schema, stream))?.len())
+    }
+
+    pub async fn generate(&self, prompt: &str, inputs: &[Input], schema: Value) -> Result<Value> {
+        let action = if self.endpoint.kind == "gemini" {
+            "generateContent"
+        } else {
+            "chat/completions"
         };
+        let response = self
+            .json(action, self.generation_body(prompt, inputs, &schema, false))
+            .await?;
         let text = structured_text(&response, self.endpoint.kind == "gemini")?;
         if text.trim().is_empty() {
             return Err(failure(
@@ -704,24 +737,12 @@ impl Provider {
         schema: Value,
         delta: &mut TextDelta<'_>,
     ) -> Result<Value> {
-        let (action, body) = if self.endpoint.kind == "gemini" {
-            let mut parts = vec![json!({"text":prompt})];
-            parts.extend(inputs.iter().map(Input::gemini));
-            (
-                "streamGenerateContent",
-                json!({"contents":[{"role":"user","parts":parts}],
-                "generationConfig":{"responseMimeType":"application/json","responseJsonSchema":schema}}),
-            )
+        let action = if self.endpoint.kind == "gemini" {
+            "streamGenerateContent"
         } else {
-            let mut content = vec![json!({"type":"text","text":prompt})];
-            content.extend(inputs.iter().map(Input::openai));
-            (
-                "chat/completions",
-                json!({"model":self.endpoint.model,"messages":[{"role":"user","content":content}],
-                "stream":true,"stream_options":{"include_usage":true},
-                "response_format":{"type":"json_schema","json_schema":{"name":"cerul_output","strict":true,"schema":schema}}}),
-            )
+            "chat/completions"
         };
+        let body = self.generation_body(prompt, inputs, &schema, true);
         let response = self
             .request_inner(
                 action,

@@ -72,7 +72,10 @@ backing MP4 shard's absolute timeline.
 
 Focused analysis uses at most 120 evenly distributed visual frames, selected
 from approximately one-frame-per-second local extraction. Long ranges have
-sparser coverage. Brief events, continuous motion and absence cannot be reliably
+sparser coverage. The CLI measures the serialized model request (including base64,
+references and protocol fields) and reduces sample count evenly when needed to
+fit the 20 MB request budget. Returned timestamps describe the frames actually
+sent. Brief events, continuous motion and absence cannot be reliably
 established. Video samples are resized to 480 pixels on the longest edge;
 references to 768. Valid cached OCR/transcript records fully inside the interval
 are included up to 48 KB. No fresh transcription or OCR is run. Narrow the range
@@ -87,7 +90,8 @@ arbitrary user-supplied JSON schemas are not implemented.
 ### Streaming and saved results
 
 `--stream` uses real SSE generation with Gemini or compatible OpenAI Chat
-Completions endpoints. Human output prints decoded answer text as it arrives.
+Completions endpoints. Human output prints decoded answer text as it arrives,
+with an episode/camera heading and a blank line between different sources.
 With `--json`, provisional `analysis_delta` events go to stderr and stdout
 receives one complete final report. Unsupported streaming endpoints fail
 explicitly; there is no simulated streaming.
