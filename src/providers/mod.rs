@@ -909,6 +909,11 @@ fn native_transcript(response: &Value) -> Result<Value> {
             .all(|p| p["end_us"].as_i64() > p["start_us"].as_i64()),
         "native transcription contains an isolated zero-duration token without a nearby timed word"
     );
+    for phrase in &mut phrases {
+        phrase["text"] = json!(crate::text::readable_spacing(
+            phrase["text"].as_str().unwrap()
+        ));
+    }
     Ok(json!({"segments":phrases}))
 }
 
@@ -1024,6 +1029,27 @@ pub(crate) mod tests {
         )
         .unwrap()
     }
+    #[test]
+    fn native_chinese_words_form_readable_phrases_with_original_offsets() {
+        let words: Vec<_> = "末日爆发前夕，我收到导师的警告短信"
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                json!({
+                    "word": c.to_string(), "startOffset": format!("{}s", i as f64 / 10.0),
+                    "endOffset": format!("{}s", (i + 1) as f64 / 10.0)
+                })
+            })
+            .collect();
+        let result = native_transcript(&json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"audioTranscription":{"words":words}}]}}]})).unwrap();
+        assert_eq!(
+            result["segments"][0]["text"],
+            "末日爆发前夕，我收到导师的警告短信"
+        );
+        assert_eq!(result["segments"][0]["start_us"], 0);
+        assert_eq!(result["segments"][0]["end_us"], 1_700_000);
+    }
+
     #[test]
     fn native_point_tokens_do_not_bridge_long_silence() {
         let response = |words| json!({"candidates":[{"finishReason":"STOP","content":{"parts":[{"audioTranscription":{"words":words}}]}}]});

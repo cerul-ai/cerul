@@ -25,3 +25,5 @@ pub mod clean;
 pub mod diagnostics;
 pub mod lerobot;
 pub mod providers;
+
+mod text;
