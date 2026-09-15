@@ -55,11 +55,12 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
-      - name: Verify analysis streaming and indexing concurrency with local endpoints
+      - name: Verify terminal setup, analysis streaming and indexing concurrency
         env:
           CERUL_TEST_BINARY: target/debug/cerul
         run: |
           python3 -m unittest discover -s tests -p "test_analyze*.py"
+          CERUL_TEST_BINARY="$PWD/target/debug/cerul" python3 -m unittest discover -s tests -p "test_setup.py"
           python3 -m unittest discover -s tests -p "test_index_concurrency.py"
       - name: Verify retrieval evaluation with the shared Rust fusion engine
         run: |
