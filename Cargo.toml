@@ -33,7 +33,7 @@ url = "2"
 lancedb = { version = "=0.38.0", features = ["remote"] }
 arrow-array = "58"
 arrow-schema = "58"
-arrow-json = "58"
+arrow-json = "59"
 arrow-select = "58"
 uuid = { version = "1", features = ["v4"] }
 parquet = { version = "58", default-features = false, features = ["arrow", "zstd", "snap"] }
