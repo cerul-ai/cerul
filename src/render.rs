@@ -810,13 +810,29 @@ pub fn home(
     status: &Status,
     _models: &ModelSummary,
 ) -> io::Result<()> {
-    let count = status.episodes.len();
+    let count = status
+        .episodes
+        .iter()
+        .filter(|episode| episode.sidecar_present)
+        .count();
     writeln!(
         out,
         "{} · {count} video{}",
         palette.bold(&format!("cerul {}", status.version)),
         if count == 1 { "" } else { "s" }
     )?;
+    let missing = status
+        .episodes
+        .iter()
+        .filter(|episode| !episode.sidecar_present)
+        .count();
+    if missing > 0 {
+        writeln!(
+            out,
+            "{missing} video{} missing processing data · cerul status shows paths",
+            if missing == 1 { " has" } else { "s have" }
+        )?;
+    }
     writeln!(out, "{}", palette.dim("cerul help · commands and examples"))
 }
 
@@ -853,7 +869,9 @@ pub fn status(
         }
     };
     let search_state = |episode: &cerul::status::EpisodeStatus| -> (String, String) {
-        if episode.embeddings.iter().any(|state| state.complete) {
+        if !episode.sidecar_present {
+            ("missing".into(), palette.warn("missing"))
+        } else if episode.embeddings.iter().any(|state| state.complete) {
             ("ready".into(), palette.ok("ready"))
         } else if episode.embeddings.is_empty() {
             ("–".into(), palette.dim("–"))
@@ -968,10 +986,32 @@ pub fn status(
             }
         }
     }
+    for episode in status
+        .episodes
+        .iter()
+        .filter(|episode| !episode.sidecar_present)
+    {
+        writeln!(
+            out,
+            "  {} missing processing data: {}",
+            palette.warn("!"),
+            tilde(&episode.sidecar.join("episode.json"))
+        )?;
+    }
+    if status
+        .episodes
+        .iter()
+        .any(|episode| !episode.sidecar_present)
+    {
+        writeln!(
+            out,
+            "  Restore the data or run cerul index <video-path> to rebuild; registrations are kept."
+        )?;
+    }
     let missing: Vec<&cerul::status::EpisodeStatus> = status
         .episodes
         .iter()
-        .filter(|episode| !episode.media_present)
+        .filter(|episode| !episode.media_present && episode.sidecar_present)
         .collect();
     if !missing.is_empty() {
         writeln!(
@@ -2550,6 +2590,7 @@ mod tests {
             media: PathBuf::from("/videos/demo.mp4"),
             sidecar: PathBuf::from("/videos/demo.mp4.cerul"),
             media_present: true,
+            sidecar_present: true,
             annotations: vec!["semantic.subtask".into(), "grounding.hand".into()],
             embedding_spaces: Vec::new(),
             embeddings: Vec::new(),
@@ -2590,6 +2631,17 @@ mod tests {
                 .unwrap()
                 .contains("/videos/demo.mp4.cerul")
         );
+        status.episodes[0].sidecar_present = false;
+        let mut out = Vec::new();
+        home(&mut out, &palette, &status, &models).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("0 videos"));
+        assert!(text.contains("1 video has missing processing data"));
+        let mut out = Vec::new();
+        super::status(&mut out, &palette, &status, &models, false, false).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("missing processing data: /videos/demo.mp4.cerul/episode.json"));
+        assert!(text.contains("cerul index <video-path>"));
     }
 
     fn hit() -> Hit {

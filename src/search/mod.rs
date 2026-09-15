@@ -376,9 +376,9 @@ async fn run_inner(
         {
             continue;
         }
-        let episode: Episode =
-            serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json"))?)?;
-        episode.validate()?;
+        let Some(episode) = crate::index::discover::registered_episode(entry)? else {
+            continue;
+        };
         episodes.insert(episode.episode_id.clone(), episode);
     }
     let hybrid = vector && config.search.hybrid;
@@ -1023,6 +1023,77 @@ mod tests {
         .unwrap();
         (workspace, sidecar, episode, config, space)
     }
+    #[tokio::test]
+    async fn deleted_sidecar_is_reported_skipped_and_can_be_republished() {
+        let dir = tempfile::tempdir().unwrap();
+        let (workspace, sidecar, episode, config, space) = hybrid_fixture(dir.path());
+        let registry_before = fs::read(workspace.join("registry.jsonl")).unwrap();
+        let rows = vec![scored_row(&episode, &space, Kind::Video, 0, 1_000_000, 0.9)];
+        vectors::write(
+            &sidecar.join("embeddings").join(format!("{space}.parquet")),
+            &rows,
+            2,
+        )
+        .unwrap();
+        fs::remove_file(sidecar.join("episode.json")).unwrap();
+        let rebuilt = lance::rebuild(&workspace, &space, 2).await.unwrap();
+        assert_eq!(rebuilt.count_matching("true").await.unwrap(), 0);
+        fs::remove_dir_all(&sidecar).unwrap();
+        let status = crate::status::inspect(&workspace, None).unwrap();
+        assert_eq!(status.episodes.len(), 1);
+        assert!(!status.episodes[0].sidecar_present);
+        assert!(status.episodes[0].media_present);
+        assert!(records::sidecars(&workspace).unwrap().is_empty());
+        descriptions::projection(&workspace, &space, 2)
+            .await
+            .unwrap();
+        let report = run(
+            &workspace,
+            &config,
+            &Options {
+                query: Some("needle".into()),
+                text: true,
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(report.hits.is_empty());
+        assert_eq!(
+            fs::read(workspace.join("registry.jsonl")).unwrap(),
+            registry_before
+        );
+        assert_eq!(
+            discover::publish_episode(&workspace, &episode, None).unwrap(),
+            sidecar
+        );
+        let status = crate::status::inspect(&workspace, None).unwrap();
+        assert_eq!(status.episodes.len(), 1);
+        assert!(status.episodes[0].sidecar_present);
+        fs::remove_dir_all(&sidecar).unwrap();
+        crate::clean::run(
+            &workspace,
+            &crate::clean::Options {
+                sidecars: Some(sidecar.clone()),
+                yes: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(discover::read_registry(&workspace).unwrap().is_empty());
+        assert!(episode.source.root.join("source.mp4").is_file());
+        discover::publish_episode(&workspace, &episode, None).unwrap();
+        fs::write(sidecar.join("episode.json"), b"invalid json").unwrap();
+        assert!(
+            crate::status::inspect(&workspace, None)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid registered episode")
+        );
+    }
+
     fn scored_row(
         episode: &Episode,
         space: &str,
@@ -1049,6 +1120,17 @@ mod tests {
     async fn hybrid_recovers_agreement_beyond_initial_candidate_budget() {
         let dir = tempfile::tempdir().unwrap();
         let (workspace, sidecar, episode, config, space) = hybrid_fixture(dir.path());
+        discover::register(
+            &workspace,
+            discover::RegistryEntry {
+                episode_id: "deleted/0".into(),
+                sha256: "deleted".into(),
+                media: dir.path().join("deleted.mp4"),
+                sidecar: dir.path().join("deleted.mp4.cerul"),
+                pending_deletion: false,
+            },
+        )
+        .unwrap();
         let mut rows = Vec::new();
         for (group, kind) in [Kind::Video, Kind::Speech].into_iter().enumerate() {
             for i in 0..32 {

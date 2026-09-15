@@ -121,6 +121,10 @@
         "sidecar": {
           "type": "string"
         },
+        "sidecar_present": {
+          "description": "Whether the registered episode metadata is available on disk.",
+          "type": "boolean"
+        },
         "understanding": {
           "type": "object",
           "additionalProperties": {
@@ -134,6 +138,7 @@
         "media",
         "sidecar",
         "media_present",
+        "sidecar_present",
         "annotations",
         "embedding_spaces",
         "embeddings"

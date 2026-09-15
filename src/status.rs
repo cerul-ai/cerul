@@ -1,4 +1,4 @@
-use crate::{annotations::AnnotationFile, episode::Episode, index::discover::read_registry};
+use crate::{annotations::AnnotationFile, index::discover::read_registry};
 use anyhow::{Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -33,6 +33,8 @@ pub struct EpisodeStatus {
     pub media: PathBuf,
     pub sidecar: PathBuf,
     pub media_present: bool,
+    /// Whether the registered episode metadata is available on disk.
+    pub sidecar_present: bool,
     /// Episode-relative length of the primary stream, read from the sidecar.
     #[serde(default)]
     pub duration_us: Option<i64>,
@@ -239,10 +241,9 @@ pub fn timeline(
         {
             continue;
         }
-        let episode: Episode =
-            serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json"))?)
-                .context("invalid registered episode")?;
-        episode.validate()?;
+        let Some(episode) = crate::index::discover::registered_episode(&entry)? else {
+            continue;
+        };
         let mut annotations = Vec::new();
         let mut entries = Vec::new();
         for stream in &episode.streams {
@@ -352,10 +353,21 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
         {
             continue;
         }
-        let episode: Episode =
-            serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json"))?)
-                .context("invalid registered episode")?;
-        episode.validate()?;
+        let Some(episode) = crate::index::discover::registered_episode(&entry)? else {
+            episodes.push(EpisodeStatus {
+                episode_id: entry.episode_id,
+                media_present: entry.media.is_file(),
+                sidecar_present: false,
+                media: entry.media,
+                sidecar: entry.sidecar,
+                duration_us: None,
+                annotations: Vec::new(),
+                embedding_spaces: Vec::new(),
+                embeddings: Vec::new(),
+                understanding: BTreeMap::new(),
+            });
+            continue;
+        };
         let mut annotations = Vec::new();
         for stream in &episode.streams {
             if !matches!(stream, crate::episode::Stream::Video { .. }) {
@@ -460,6 +472,7 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
         episodes.push(EpisodeStatus {
             episode_id: entry.episode_id,
             media_present: entry.media.is_file(),
+            sidecar_present: true,
             duration_us: episode.duration_us().ok(),
             media: entry.media,
             sidecar: entry.sidecar,

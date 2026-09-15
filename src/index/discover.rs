@@ -29,6 +29,27 @@ pub fn read_registry(workspace: &Path) -> Result<Vec<RegistryEntry>> {
         .collect())
 }
 
+/// Missing sidecar metadata is an unavailable registration, not an empty episode.
+/// Keep the registry intact so disconnected storage can return later.
+pub fn registered_episode(entry: &RegistryEntry) -> Result<Option<Episode>> {
+    let path = entry.sidecar.join("episode.json");
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+    };
+    let episode: Episode = serde_json::from_slice(&bytes)
+        .with_context(|| format!("invalid registered episode {}", path.display()))?;
+    episode
+        .validate()
+        .with_context(|| format!("invalid registered episode {}", path.display()))?;
+    ensure!(
+        episode.episode_id == entry.episode_id,
+        "registered episode identity mismatch"
+    );
+    Ok(Some(episode))
+}
+
 /// Includes cleanup tombstones; only registry writers and cleanup may use them.
 pub fn read_registry_all(workspace: &Path) -> Result<Vec<RegistryEntry>> {
     let text = match fs::read_to_string(workspace.join("registry.jsonl")) {
