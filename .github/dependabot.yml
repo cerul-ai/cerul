@@ -4,6 +4,23 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      arrow-storage:
+        patterns:
+          - "arrow-*"
+          - "parquet"
+          - "lancedb"
+      terminal:
+        patterns:
+          - "console"
+          - "indicatif"
+    # LanceDB 0.38 uses Arrow 58 types in its public API. Migrate this
+    # family together after LanceDB supports the next Arrow major.
+    ignore:
+      - dependency-name: "arrow-*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "parquet"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
