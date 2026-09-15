@@ -84,7 +84,7 @@ class SetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = pathlib.Path(directory)
             output = self.interact(
-                home, [(b"Choose an action", b"\x1b[B\x1b[B\x1b[B\r")],
+                home, [(b"Choose an action", b"\x1b[B\x1b[B\x1b[B\x1b[B\r")],
                 argv=["cerul"],
             )
             self.assertIn(b"commands and examples", output)
