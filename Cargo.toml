@@ -51,7 +51,7 @@ tar = "0.4"
 
 tempfile = "3"
 rpassword = "7"
-indicatif = "0.17"
+indicatif = "0.18"
 console = { version = "0.15", default-features = false, features = ["ansi-parsing"] }
 
 [target.'cfg(unix)'.dependencies]
