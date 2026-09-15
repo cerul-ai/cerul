@@ -21,7 +21,7 @@ fn query(text: &str) -> Option<String> {
     if text.chars().any(|c| c.is_control() && !c.is_whitespace()) {
         return None;
     }
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = crate::text::readable_spacing(text);
     let excerpt = normalized.split(['。', '！', '？']).next()?.trim();
     let words = excerpt
         .split_whitespace()
@@ -347,6 +347,10 @@ mod tests {
         assert_eq!(
             query("Cars   moving through an intersection"),
             Some("Cars moving through an intersection".into())
+        );
+        assert_eq!(
+            query("末 日 爆 发 前 夕， 我 收 到 导 师 的 警 告 短 信"),
+            Some("末日爆发前夕，我收到导师的警告短信".into())
         );
         assert_eq!(query("打开抽屉。然后放入杯子"), Some("打开抽屉".into()));
         for phrase in ["เปิดประตูแล้วหยิบแก้ว", "ເປີດປະຕູ", "បើកទ្វារ"]
