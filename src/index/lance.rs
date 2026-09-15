@@ -252,6 +252,9 @@ pub async fn rebuild(workspace: &Path, space: &str, dims: usize) -> Result<Vecto
     let index = VectorIndex::open(workspace, space, dims, true).await?;
     let mut restored = Vec::new();
     for entry in read_registry(workspace)? {
+        let Some(episode) = super::discover::registered_episode(&entry)? else {
+            continue;
+        };
         let path = entry
             .sidecar
             .join("embeddings")
@@ -263,14 +266,7 @@ pub async fn rebuild(workspace: &Path, space: &str, dims: usize) -> Result<Vecto
                     .all(|row| row.episode == entry.episode_id && row.space_id == space),
                 "sidecar vector identity mismatch"
             );
-            let metadata = entry.sidecar.join("episode.json");
-            let primary = if metadata.is_file() {
-                let episode: crate::episode::Episode =
-                    serde_json::from_slice(&fs::read(metadata)?)?;
-                episode.time.reference
-            } else {
-                "primary".into()
-            };
+            let primary = episode.time.reference;
             for row in rows {
                 if super::embed::usable(&entry.sidecar, &row.stream, &primary, space)? {
                     restored.push(row);
@@ -355,12 +351,31 @@ mod tests {
         let space = "b".repeat(64);
         let sidecar = dir.path().join("sidecar");
         let vector_file = sidecar.join("embeddings").join(format!("{space}.parquet"));
-        let row = fixture("saved", "dataset/12", vec![0.2, 0.8], &space);
+        let source = dir.path().join("video.mp4");
+        crate::media::run(
+            crate::media::command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=64x64:rate=1:duration=30",
+                    "-c:v",
+                    "libx264",
+                ])
+                .arg(&source),
+        )
+        .unwrap();
+        let episode = crate::index::discover::ordinary_episode(&source).unwrap();
+        crate::storage::write_json(&sidecar.join("episode.json"), &episode).unwrap();
+        let mut row = fixture("saved", &episode.episode_id, vec![0.2, 0.8], &space);
+        row.stream = episode.time.reference.clone();
         vectors::write(&vector_file, &[row], 2).unwrap();
         crate::index::discover::register(
             dir.path(),
             crate::index::discover::RegistryEntry {
-                episode_id: "dataset/12".into(),
+                episode_id: episode.episode_id,
                 sha256: "fixture".into(),
                 media: dir.path().join("video.mp4"),
                 sidecar,

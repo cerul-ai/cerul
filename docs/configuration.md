@@ -153,6 +153,22 @@ are retained, and indexing into the new space requires new model embeddings.
 The CLI defaults to the Gemini embedding space. Compatible endpoints and dimensions can be configured; different configurations create separate spaces. Sidecar vectors are
 retained by cache/index cleaning and can rebuild the corresponding index.
 
+### Deleted processing data
+
+If you manually delete a video's `.cerul` directory or its `episode.json`, the
+home page and `status` report missing processing data. `status --json` exposes
+`sidecar_present: false` for that registration. Search and timeline views skip
+it. Reading status keeps registrations intact, including paths on temporarily
+disconnected drives, and never starts model requests.
+
+To process the original video again, run `cerul index /path/to/video.mp4`.
+Missing sidecars are recreated using the normal output location rules;
+processing can call your configured models again. Deleting sidecars also removes any
+annotations stored there. To forget a registration whose sidecar directory
+is already gone, use `cerul remove /path/to/video.mp4`; the source video is kept.
+Corrupt or unreadable metadata is reported as an
+error with its path rather than treated as deleted data.
+
 ## Process contract
 
 `--json` writes one final object to stdout and newline-delimited JSON events to

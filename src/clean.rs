@@ -191,9 +191,7 @@ pub fn plan(workspace: &Path, options: &Options) -> Result<Report> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let path = missing_leaf(selection)?;
                 ensure!(
-                    entries
-                        .iter()
-                        .any(|e| e.pending_deletion && e.sidecar == path),
+                    entries.iter().any(|e| e.sidecar == path),
                     "sidecar selection does not exist"
                 );
                 path
@@ -205,7 +203,7 @@ pub fn plan(workspace: &Path, options: &Options) -> Result<Report> {
                 continue;
             }
             no_symlinks(&entry.sidecar)?;
-            if !entry.pending_deletion {
+            if !entry.pending_deletion && entry.sidecar.try_exists()? {
                 let episode: Episode =
                     serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json"))?)?;
                 episode.validate()?;

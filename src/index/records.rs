@@ -1,7 +1,7 @@
 //! Disposable annotation projection. Sidecar files remain authoritative.
 use crate::{
     annotations::{AnnotationFile, Record},
-    episode::{Episode, Stream},
+    episode::Stream,
     index::{discover::read_registry, lance::literal, stations::stream_directory},
 };
 use anyhow::{Context, Result, ensure};
@@ -75,13 +75,9 @@ fn input(rows: &[Row]) -> Result<Box<BatchInput>> {
 pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
     let mut files = Vec::new();
     for entry in read_registry(workspace)? {
-        let episode: Episode =
-            serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json"))?)?;
-        episode.validate()?;
-        ensure!(
-            episode.episode_id == entry.episode_id,
-            "registered episode identity mismatch"
-        );
+        let Some(episode) = crate::index::discover::registered_episode(&entry)? else {
+            continue;
+        };
         for stream in &episode.streams {
             if !matches!(stream, Stream::Video { .. }) {
                 continue;

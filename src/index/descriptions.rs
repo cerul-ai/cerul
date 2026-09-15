@@ -166,8 +166,9 @@ pub async fn projection(
         index.clear().await?;
     }
     for entry in super::discover::read_registry(workspace)? {
-        let episode: Episode =
-            serde_json::from_slice(&fs::read(entry.sidecar.join("episode.json"))?)?;
+        let Some(episode) = crate::index::discover::registered_episode(&entry)? else {
+            continue;
+        };
         for stream in &episode.streams {
             if !matches!(stream, crate::episode::Stream::Video { .. }) {
                 continue;
