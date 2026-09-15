@@ -82,13 +82,12 @@ Result numbers are global, so `cerul open 1` plays the first moment in the user'
 video player and `cerul open 3` plays the third. `score` is a ranking similarity, not a probability that the
 moment is the right one; do not present it as a confidence or an accuracy.
 
-Indexing also runs visual understanding by default. It saves visible scene
-descriptions, coarse sections, and a grounded overview with up to three search
-suggestions. This uses the configured vision endpoint in addition to embedding
-and any enabled ASR. `--no-understanding` explicitly skips that work. Missing ASR
-does not prevent visual descriptions; failed understanding can leave base search
-usable while returning partial success. Do not treat suggested queries as
-verified retrieval results.
+Indexing builds video embeddings, OCR, and available speech/text search data.
+It does not call the vision model or generate scene descriptions, sections, or
+summaries. Use `cerul analyze ./video.mp4` for scenes and an overview, or `cerul annotate ./video.mp4` for embodied labels. Existing analysis and cached
+description vectors remain readable and searchable; indexing does not refresh
+them. Search suggestions reuse current evidence without model generation.
+Do not treat suggested queries as verified retrieval results.
 
 ```sh
 cerul --json status ./video.mp4 --timeline --type summary
@@ -101,20 +100,46 @@ and OCR for visible words. Sparse visual samples cannot establish exact motion
 boundaries, success, intent, or camera trajectories. Scene descriptions do not
 replace the task and action annotations below.
 
+**Inspect performance.** `cerul --json diagnostics` reads the latest index/analyze
+stage timings, request latency and cache counts. Stage wall times overlap; use
+invocation elapsed time for total throughput. This makes no model calls.
+
+**Analyze a video.** No indexing step is needed.
+
+```sh
+cerul --json analyze ./video.mp4
+cerul --json --dry-run analyze ./dataset --only 0
+```
+
+Without options, returns scenes, chapters and an overview. Add `--prompt "Question"`
+for a focused answer, repeat `--image ./reference.png` for comparison images, and
+use `--from 00:30 --to 01:10` for a half-open episode time range. No embeddings
+are generated. Focused answers use at most 120 sampled frames and valid cached
+in-range text; sparse samples cannot establish continuous motion or absence.
+Results include the actual sample timestamps, reference hashes and limitations.
+Reference images are not evidence of occurrence in the video.
+
+`--stream --json` emits provisional `analysis_delta` NDJSON on stderr; stdout
+contains only the final structured report. Never treat a delta as validated
+evidence. Exit 6 and per-stream errors mean incomplete analysis. Cached answers
+emit one delta marked `cached: true`. Question-specific results preserve full
+video scene/overview records; `--recompute` refreshes the selected request.
+The fixed response schema is published; arbitrary user JSON schemas are not
+accepted. Preserve errors and coverage when interpreting results.
+
 **Annotate actions.** No indexing step is needed.
 
 ```sh
-cerul --json --dry-run annotate ./video.mp4 --embodied
-cerul --json annotate ./video.mp4 --embodied
+cerul --json --dry-run annotate ./video.mp4
+cerul --json annotate ./video.mp4
 cerul --json status ./video.mp4 --timeline
 ```
 
-Every input format defaults to `task,subtask,flag`. Use `--embodied` for
-demonstration prompts and `subtask,event,interaction,state`, or list `--semantic`
-items explicitly. Available items: task, subtask, event, interaction, state, flag,
-progress. `--embodied --hands` adds local human-hand keypoints; add
-`--semantic none` for offline hand-only inference. Hands require embodied mode
-and are never enabled automatically. Depth, segmentation, calibrated 3D poses
+Annotation is embodied-only for every input format, defaulting to
+subtask,event,interaction,state. Explicit --semantic types can also include task,
+flag and progress. Use analyze for general-video understanding. `--hands` adds
+local human-hand keypoints; add `--semantic none` for hand-only processing.
+Hands are never enabled automatically. Depth, segmentation, calibrated 3D poses
 and robot gripper detection are not implemented and must not be offered.
 
 Each episode exports `annotations.json` and `summary.md` with Cerul provenance.
@@ -126,7 +151,7 @@ replaced. Rendering reuses published hand keypoints; it does not generate new in
 **Annotate a LeRobot dataset.** Pass the dataset root that contains `meta/`.
 
 ```sh
-cerul --json annotate ./dataset --embodied --only 0
+cerul --json annotate ./dataset --only 0
 cerul --json status ./dataset --timeline
 ```
 

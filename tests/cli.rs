@@ -263,20 +263,24 @@ fn annotation_help_teaches_the_workflow_without_loading_configuration() {
 fn annotate_default_plan_and_m2_rejection_are_explicit() {
     let dir = tempfile::tempdir().unwrap();
     video(dir.path());
-    for args in [
-        vec!["--json", "annotate", "sample.mp4", "--hands", "--dry-run"],
-        vec![
-            "--json",
-            "annotate",
-            "sample.mp4",
-            "--semantic",
-            "none",
-            "--dry-run",
-        ],
-    ] {
-        assert_eq!(cli(dir.path(), &args).status.code(), Some(2));
-    }
+    assert_eq!(
+        cli(
+            dir.path(),
+            &[
+                "--json",
+                "annotate",
+                "sample.mp4",
+                "--semantic",
+                "none",
+                "--dry-run"
+            ]
+        )
+        .status
+        .code(),
+        Some(2)
+    );
     for (extra, count) in [
+        (vec!["--hands"], 5),
         (vec!["--embodied", "--hands"], 5),
         (vec!["--embodied", "--hands", "--semantic", "none"], 1),
     ] {
@@ -311,7 +315,12 @@ fn annotate_default_plan_and_m2_rejection_are_explicit() {
     names.sort();
     assert_eq!(
         names,
-        vec!["semantic.flag", "semantic.subtask", "semantic.task"]
+        vec![
+            "semantic.event",
+            "semantic.interaction",
+            "semantic.state",
+            "semantic.subtask"
+        ]
     );
     assert!(!dir.path().join(".cerul").exists());
     assert!(!dir.path().join("sample.mp4.cerul").exists());

@@ -14,8 +14,13 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+mod documents;
 pub mod probes;
+mod streaming;
 pub mod usage;
+
+/// Incremental response callback; fragments remain provisional.
+pub type TextDelta<'a> = dyn FnMut(&str) -> Result<()> + Send + 'a;
 
 tokio::task_local! {
     static CREDENTIALS: std::collections::BTreeMap<String, String>;
@@ -204,6 +209,7 @@ pub struct Provider {
     key: Option<HeaderValue>,
     acquired_key: Arc<tokio::sync::OnceCell<Option<HeaderValue>>>,
     client: Client,
+    documents: Arc<documents::Documents>,
     permits: Arc<Semaphore>,
     jobs: usize,
     next: Arc<Mutex<Instant>>,
@@ -304,6 +310,7 @@ impl Provider {
             key,
             acquired_key: Arc::new(tokio::sync::OnceCell::new()),
             client,
+            documents: Arc::default(),
             permits: Arc::new(Semaphore::new(jobs)),
             jobs,
             next: Arc::new(Mutex::new(Instant::now())),
@@ -467,13 +474,27 @@ impl Provider {
         bytes: Vec<u8>,
         get: bool,
     ) -> Result<Value> {
+        self.request_inner(action, content_type, bytes, get, None)
+            .await
+    }
+    async fn request_inner(
+        &self,
+        action: &str,
+        content_type: &str,
+        bytes: Vec<u8>,
+        get: bool,
+        mut delta: Option<&mut TextDelta<'_>>,
+    ) -> Result<Value> {
         if bytes.len() > MAX_REQUEST_BYTES {
             return Err(failure(
                 Failure::TooLarge,
                 "encoded model request exceeds the inline byte limit",
             ));
         }
-        let url = self.route(action)?;
+        let mut url = self.route(action)?;
+        if delta.is_some() && self.endpoint.kind == "gemini" {
+            url.query_pairs_mut().append_pair("alt", "sse");
+        }
         let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
         if !get {
             self.resolve_key().await?;
@@ -546,6 +567,17 @@ impl Provider {
                         Failure::InvalidResponse,
                         "model response exceeds the size limit",
                     ));
+                }
+                if let Some(callback) = delta.as_deref_mut() {
+                    let text = streaming::consume(
+                        response,
+                        self.endpoint.kind == "gemini",
+                        &self.cancel,
+                        &mut report,
+                        callback,
+                    )
+                    .await?;
+                    return Ok(json!({"cerul_text": text}));
                 }
                 let mut response = response;
                 let mut data = Vec::new();
@@ -638,16 +670,49 @@ impl Provider {
         }
         Ok(vector)
     }
-    pub async fn generate(&self, prompt: &str, inputs: &[Input], schema: Value) -> Result<Value> {
-        let response = if self.endpoint.kind == "gemini" {
+    fn generation_body(
+        &self,
+        prompt: &str,
+        inputs: &[Input],
+        schema: &Value,
+        stream: bool,
+    ) -> Value {
+        if self.endpoint.kind == "gemini" {
             let mut parts = vec![json!({"text":prompt})];
             parts.extend(inputs.iter().map(Input::gemini));
-            self.json("generateContent",json!({"contents":[{"role":"user","parts":parts}],"generationConfig":{"responseMimeType":"application/json","responseJsonSchema":schema}})).await?
+            json!({"contents":[{"role":"user","parts":parts}],"generationConfig":{"responseMimeType":"application/json","responseJsonSchema":schema}})
         } else {
             let mut content = vec![json!({"type":"text","text":prompt})];
             content.extend(inputs.iter().map(Input::openai));
-            self.json("chat/completions",json!({"model":self.endpoint.model,"messages":[{"role":"user","content":content}],"response_format":{"type":"json_schema","json_schema":{"name":"cerul_output","strict":true,"schema":schema}}})).await?
+            let mut body = json!({"model":self.endpoint.model,"messages":[{"role":"user","content":content}],"response_format":{"type":"json_schema","json_schema":{"name":"cerul_output","strict":true,"schema":schema}}});
+            if stream {
+                body["stream"] = json!(true);
+                body["stream_options"] = json!({"include_usage":true});
+            }
+            body
+        }
+    }
+
+    /// Measure the exact wire payload, including base64 and protocol envelopes.
+    pub(crate) fn generation_bytes(
+        &self,
+        prompt: &str,
+        inputs: &[Input],
+        schema: &Value,
+        stream: bool,
+    ) -> Result<usize> {
+        Ok(serde_json::to_vec(&self.generation_body(prompt, inputs, schema, stream))?.len())
+    }
+
+    pub async fn generate(&self, prompt: &str, inputs: &[Input], schema: Value) -> Result<Value> {
+        let action = if self.endpoint.kind == "gemini" {
+            "generateContent"
+        } else {
+            "chat/completions"
         };
+        let response = self
+            .json(action, self.generation_body(prompt, inputs, &schema, false))
+            .await?;
         let text = structured_text(&response, self.endpoint.kind == "gemini")?;
         if text.trim().is_empty() {
             return Err(failure(
@@ -660,6 +725,38 @@ impl Provider {
                 "model returned invalid structured JSON ({} bytes, category={:?}, line={}, column={})",
                 text.len(), error.classify(), error.line(), error.column()
             ))
+        })
+    }
+
+    /// Stream structured JSON text fragments. Partial output is provisional until
+    /// the returned JSON has passed the caller's schema and provenance checks.
+    pub async fn generate_stream(
+        &self,
+        prompt: &str,
+        inputs: &[Input],
+        schema: Value,
+        delta: &mut TextDelta<'_>,
+    ) -> Result<Value> {
+        let action = if self.endpoint.kind == "gemini" {
+            "streamGenerateContent"
+        } else {
+            "chat/completions"
+        };
+        let body = self.generation_body(prompt, inputs, &schema, true);
+        let response = self
+            .request_inner(
+                action,
+                "application/json",
+                serde_json::to_vec(&body)?,
+                false,
+                Some(delta),
+            )
+            .await?;
+        serde_json::from_str(response["cerul_text"].as_str().unwrap_or_default()).map_err(|_| {
+            failure(
+                Failure::InvalidResponse,
+                "model returned invalid streamed JSON",
+            )
         })
     }
 

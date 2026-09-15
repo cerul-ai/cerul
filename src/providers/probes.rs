@@ -163,8 +163,10 @@ async fn check_inner(
                 && timestamp - probe.checked_at < 7 * 24 * 60 * 60
         })
     {
+        crate::diagnostics::cache("capability_probe", true);
         return Ok(found.clone());
     }
+    crate::diagnostics::cache("capability_probe", false);
     if force {
         cached.retain(|entry| entry.key != key);
         crate::storage::write_json(&path, &cached)?;

@@ -48,7 +48,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             items: Vec::new(),
-            embodied: false,
+            embodied: true,
             hands: false,
             no_semantic: false,
             write_lerobot: false,
@@ -69,8 +69,8 @@ impl Default for Options {
 impl Options {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            !self.hands || self.embodied,
-            "--hands requires --embodied; human hands are optional in embodied demonstrations"
+            self.embodied,
+            "annotation is embodied-only; use analyze for general video understanding"
         );
         ensure!(
             !self.no_semantic || (self.hands && self.items.is_empty() && !self.write_lerobot),
@@ -416,14 +416,10 @@ async fn run_inner(
         let mut items = if options.no_semantic {
             Vec::new()
         } else if options.items.is_empty() {
-            if options.embodied {
-                ["subtask", "event", "interaction", "state"]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
-            } else {
-                vec!["task".into(), "subtask".into(), "flag".into()]
-            }
+            ["subtask", "event", "interaction", "state"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
         } else {
             options.items.clone()
         };
@@ -798,6 +794,8 @@ mod tests {
             hands: true,
             ..Default::default()
         };
+        options.validate().unwrap();
+        options.embodied = false;
         assert!(options.validate().is_err());
         options.embodied = true;
         options.validate().unwrap();

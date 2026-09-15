@@ -32,6 +32,13 @@ pub enum Event {
         total: u64,
         cached: u64,
     },
+    /// Provisional answer text. Only the final report confirms validated success.
+    AnalysisDelta {
+        episode: String,
+        stream: String,
+        text: String,
+        cached: bool,
+    },
     Progress {
         episode: String,
         station: String,

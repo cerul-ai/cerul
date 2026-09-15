@@ -17,11 +17,12 @@ Google Gemini endpoint. A Gemini key is required for new vectors and semantic
 queries. Providers, models, dimensions, and URLs remain configurable; changing
 an embedding space requires compatible saved vectors or re-indexing. Offline
 status, cleanup, and rebuilding cached vectors need no key.
-Vision defaults to `gemini-3.8-flash` and runs during indexing. Use
-`cerul index ./video.mp4 --no-understanding` for a deliberate one-run skip, or
-set `enabled = false` in `[vision]` to disable automatic understanding.
-Scene generation, overview generation, and their source references are cached
-independently. A failed understanding step leaves completed base vectors usable.
+Vision defaults to `gemini-3.8-flash` for explicit analysis and embodied annotation. `index` does not
+call the vision endpoint or generate scene descriptions, chapters, or summaries.
+Use `cerul analyze ./video.mp4` for scenes and an overview; use
+`cerul annotate ./video.mp4` for embodied labels. Existing analysis and description vectors
+remain available to status and search. The old `--no-understanding` flag is
+accepted for compatibility and has no additional effect.
 
 The CLI automatically enables the configured transcription endpoint when its key
 is already available. With defaults, this reuses the Gemini key for

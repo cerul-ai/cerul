@@ -157,6 +157,7 @@ writeback is available as an explicit opt-in.
 - [Documentation index](docs/README.md)
 - [Installation and troubleshooting](docs/installation.md)
 - [Video search tutorial](docs/video-search.md)
+- [Explicit video analysis](docs/analyze.md)
 - [LeRobot tutorial](docs/lerobot-subtasks.md)
 - [Model endpoints and configuration](docs/configuration.md)
 - [Contributing and developer integration](CONTRIBUTING.md)
@@ -170,9 +171,10 @@ imply endorsement of third-party products.
 
 Speech transcription is optional. Run `cerul config` to choose Gemini, Groq,
 OpenAI, a custom OpenAI-compatible service, or Disabled. Multimodal search uses
-Gemini Embedding 2 at 3072 dimensions by default. Indexing also generates visual
-descriptions and up to three grounded search suggestions. Use
-`--no-understanding` to skip generation; `--no-audio` skips speech independently.
+Gemini Embedding 2 at 3072 dimensions by default. Indexing builds video and text
+search data without generating scene descriptions, chapters, or summaries.
+Use `cerul analyze ./video.mp4` for scenes and an overview, or
+`cerul annotate ./video.mp4` for embodied semantic labels; `--no-audio` skips speech independently.
 Available Gemini keys enable speech automatically unless explicitly disabled.
 See [configuration](docs/configuration.md) for alternative endpoints and
-[video understanding](docs/video-search.md#inspect-video-understanding) for saved output.
+[video understanding](docs/video-search.md#inspect-video-understanding) for previously saved output.

@@ -8,6 +8,11 @@ fn main() -> Result<()> {
     let check = std::env::args().any(|argument| argument == "--check");
     let schemas = [
         ("episode", schema::<cerul::episode::Episode>()),
+        ("analyze-result", schema::<cerul::analyze::Report>()),
+        (
+            "execution-diagnostics",
+            schema::<cerul::diagnostics::Report>(),
+        ),
         ("annotations", schema::<cerul::annotate::export::Bundle>()),
         (
             "grounding-hand-frame",

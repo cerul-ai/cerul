@@ -19,7 +19,9 @@ pub mod status;
 
 pub mod search;
 
+pub mod analyze;
 pub mod annotate;
 pub mod clean;
+pub mod diagnostics;
 pub mod lerobot;
 pub mod providers;
