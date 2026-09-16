@@ -86,18 +86,15 @@ Results are numbered, so `cerul open 2` plays the second moment in your video
 player without leaving the terminal.
 
 <details>
-<summary><strong>Cleaning up and shell completions</strong></summary>
+<summary><strong>Cleaning up</strong></summary>
 
 ```sh
 cerul remove ./demo.mp4      # remove its index and sidecars; keep the video
 cerul remove --cache         # free regenerable disk space
-cerul completions zsh        # shell completion script
 ```
 
-For zsh, save it somewhere on your `fpath`, for example
-`cerul completions zsh > ~/.zfunc/_cerul`, then make sure `~/.zfunc` is in
-`fpath` before `compinit` runs. For bash,
-`cerul completions bash > /usr/local/etc/bash_completion.d/cerul`.
+Shell completions live in the
+[installation guide](docs/installation.md#shell-completions).
 
 </details>
 

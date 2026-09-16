@@ -76,16 +76,14 @@ cerul search "有人把杯子放到桌上" --save ./clips
 結果都有編號，`cerul open 2` 會用播放器直接從第二個片段開始播，不用離開終端。
 
 <details>
-<summary><strong>清理資料與 shell 補全</strong></summary>
+<summary><strong>清理資料</strong></summary>
 
 ```sh
 cerul remove ./demo.mp4      # 刪除索引與旁車資料，保留原影片
 cerul remove --cache         # 釋放可再生的磁碟佔用
-cerul completions zsh        # 產生 shell 補全指令碼
 ```
 
-zsh 使用者把它放到 `fpath` 裡，例如 `cerul completions zsh > ~/.zfunc/_cerul`，並確保 `~/.zfunc` 在 `compinit` 之前加入 `fpath`。bash 使用者可以用
-`cerul completions bash > /usr/local/etc/bash_completion.d/cerul`。
+shell 補全的設定見[安裝指南](docs/installation.md#shell-completions)。
 
 </details>
 

@@ -43,6 +43,28 @@ untouched: they are read by the new version exactly as the old one left them.
 Re-running the install command above does the same thing, and is the way to
 upgrade a build that predates `cerul upgrade`.
 
+## Shell completions
+
+Cerul can print a completion script for your shell.
+
+```sh
+cerul completions zsh
+```
+
+For zsh, save it somewhere on your `fpath`:
+
+```sh
+cerul completions zsh > ~/.zfunc/_cerul
+```
+
+Then make sure `~/.zfunc` is in `fpath` before `compinit` runs. For bash:
+
+```sh
+cerul completions bash > /usr/local/etc/bash_completion.d/cerul
+```
+
+`cerul completions` also supports `fish`, `elvish`, and `powershell`.
+
 ## Run your first video
 
 The first interactive `index` or semantic `search`/`annotate` using the default
