@@ -18,8 +18,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/cerul-ai/cerul/actions/workflows/ci.yml"><img src="https://github.com/cerul-ai/cerul/actions/workflows/ci.yml/badge.svg" alt="Build and tests"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+  <a href="https://github.com/cerul-ai/cerul/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/cerul-ai/cerul/ci.yml?branch=main&style=flat-square&logo=github&logoColor=white&label=build" alt="Build and tests"></a>
+  <a href="https://github.com/cerul-ai/cerul/releases"><img src="https://img.shields.io/github/v/release/cerul-ai/cerul?style=flat-square&color=2160FA&label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-1D2229?style=flat-square" alt="Platforms: macOS and Linux">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-1D2229?style=flat-square" alt="License: Apache-2.0"></a>
+  <a href="https://discord.gg/qHDEMQB9vN"><img src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Join the Discord"></a>
 </p>
 
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a></p>
@@ -34,20 +37,6 @@ folders and LeRobot datasets, using your own model API key.
 - **Find speech and screen text.** Transcription plus local, embedded OCR.
 - **Keep useful results.** Export clips and structured semantic annotations.
 - **Resume where you left off.** Completed work is cached; rerun after interruption.
-
-## Architecture direction
-
-Indexing encodes video, screen text, and optional speech into a shared multimodal
-space. Independent visual generation produces timed annotations for actions,
-interactions, and state changes, including embodied and egocentric recordings.
-
-![Proposed Cerul architecture: multimodal indexing and search, with an independent egocentric annotation pipeline](docs/assets/cerul-architecture.png)
-
-*Architecture with AI-generated illustrative frames. Default search combines
-independent video, speech, screen-text, and description candidates with gated
-full-text matches using max fusion and capped agreement. Original evidence and
-timestamps remain inspectable. Dataset writeback supports opt-in LeRobot
-subtasks. See [DESIGN.md](DESIGN.md) for implemented behavior.*
 
 ## Getting started
 
@@ -73,7 +62,11 @@ cerul index ./demo.mp4
 
 On first use, follow the prompt to enter your [Gemini API key](https://aistudio.google.com/apikey),
 or save one ahead of time with `cerul auth set`. Cerul keeps it on your computer
-for future runs. Model processing sends data to Gemini and may incur API charges.
+for future runs.
+
+> [!IMPORTANT]
+> Model processing sends your video data to Gemini and may incur API charges.
+> Run any command with `--dry-run` first to see exactly what will be sent.
 
 Run `cerul` on its own at any time to see what is indexed and what to do next.
 
@@ -92,18 +85,18 @@ opens the video at the matched moment instead of the beginning.
 Results are numbered, so `cerul open 2` plays the second moment in your video
 player without leaving the terminal.
 
-### Housekeeping
+<details>
+<summary><strong>Cleaning up</strong></summary>
 
 ```sh
 cerul remove ./demo.mp4      # remove its index and sidecars; keep the video
 cerul remove --cache         # free regenerable disk space
-cerul completions zsh        # shell completion script
 ```
 
-For zsh, save it somewhere on your `fpath`, for example
-`cerul completions zsh > ~/.zfunc/_cerul`, then make sure `~/.zfunc` is in
-`fpath` before `compinit` runs. For bash,
-`cerul completions bash > /usr/local/etc/bash_completion.d/cerul`.
+Shell completions live in the
+[installation guide](docs/installation.md#shell-completions).
+
+</details>
 
 [More examples →](docs/video-search.md)
 
@@ -138,19 +131,53 @@ cerul skill --install claude    # also: codex, pi, or --dir ./skills
 
 [Agent setup guide →](docs/agent-setup.md) · [Agent contract →](docs/agent.md)
 
-## More things to try
+## Common commands
 
-| Goal | Command |
-| --- | --- |
-| Index a folder | `cerul index ./videos` |
-| Preview work | `cerul --dry-run index ./videos` |
-| Generate semantic annotations | `cerul annotate ./videos --semantic` |
-| Check progress and results | `cerul status` |
-| Search one video | `cerul search "opening a door" --in ./demo.mp4` |
+| Goal | Command | When to reach for it |
+| --- | --- | --- |
+| Index a folder | `cerul index ./videos` | Walks subfolders and skips work already done |
+| Preview the work | `cerul --dry-run index ./videos` | See the plan, and what will call a model, before paying for it |
+| Annotate semantically | `cerul annotate ./videos --semantic` | Action labels without building a search index |
+| Check progress | `cerul status` | After an interruption, or to find where sidecars live |
+| Search one video | `cerul search "opening a door" --in ./demo.mp4` | Skip the rest of the library |
+| Replay a result | `cerul open 2` | Open a numbered match in your video player |
 
 Sidecar files preserve transcripts, annotations, and vectors alongside your media.
 Search indexes can be rebuilt from them without model calls. LeRobot subtask
 writeback is available as an explicit opt-in.
+
+## Configure models
+
+Cerul calls your own model endpoints, so you pick the providers and pay for your
+own usage. Run `cerul config` to change any of it.
+
+| Stage | Default | Alternatives |
+| --- | --- | --- |
+| Multimodal search | Gemini Embedding 2, at 3072 dimensions | Any configured endpoint |
+| Speech transcription | Gemini, whenever a key is available | Groq, OpenAI, an OpenAI-compatible service, or disabled |
+| Screen text (OCR) | Runs locally, no API calls | — |
+
+Indexing builds video and text search data without generating scene descriptions,
+chapters, or summaries. Use `cerul analyze ./video.mp4` for scenes and an
+overview, or `cerul annotate ./video.mp4` for embodied semantic labels.
+`--no-audio` skips speech independently of everything else.
+
+[Model endpoints and credentials →](docs/configuration.md) ·
+[Inspect saved output →](docs/video-search.md#inspect-video-understanding)
+
+## How it works
+
+Indexing encodes video, screen text, and optional speech into a shared multimodal
+space. Independent visual generation produces timed annotations for actions,
+interactions, and state changes, including embodied and egocentric recordings.
+
+![Proposed Cerul architecture: multimodal indexing and search, with an independent egocentric annotation pipeline](docs/assets/cerul-architecture.png)
+
+*Architecture with AI-generated illustrative frames. Default search combines
+independent video, speech, screen-text, and description candidates with gated
+full-text matches using max fusion and capped agreement. Original evidence and
+timestamps remain inspectable. Dataset writeback supports opt-in LeRobot
+subtasks. See [DESIGN.md](DESIGN.md) for implemented behavior.*
 
 ## Learn more
 
@@ -162,6 +189,14 @@ writeback is available as an explicit opt-in.
 - [Model endpoints and configuration](docs/configuration.md)
 - [Contributing and developer integration](CONTRIBUTING.md)
 
+## Community
+
+Questions, bug reports, and clips you are proud of are all welcome.
+
+[Discord](https://discord.gg/qHDEMQB9vN) ·
+[Issues](https://github.com/cerul-ai/cerul/issues) ·
+[X / Twitter](https://x.com/cerul_hq)
+
 ## License
 
 Cerul's Rust code is Apache-2.0. Bundles also contain separately licensed media
@@ -169,12 +204,11 @@ tools and OCR weights; see [third-party notices](THIRD_PARTY_NOTICES.md).
 The [Cerul name and logo](docs/assets/README.md) identify the project and do not
 imply endorsement of third-party products.
 
-Speech transcription is optional. Run `cerul config` to choose Gemini, Groq,
-OpenAI, a custom OpenAI-compatible service, or Disabled. Multimodal search uses
-Gemini Embedding 2 at 3072 dimensions by default. Indexing builds video and text
-search data without generating scene descriptions, chapters, or summaries.
-Use `cerul analyze ./video.mp4` for scenes and an overview, or
-`cerul annotate ./video.mp4` for embodied semantic labels; `--no-audio` skips speech independently.
-Available Gemini keys enable speech automatically unless explicitly disabled.
-See [configuration](docs/configuration.md) for alternative endpoints and
-[video understanding](docs/video-search.md#inspect-video-understanding) for previously saved output.
+<p align="center">
+  <a href="https://star-history.com/#cerul-ai/cerul&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=cerul-ai/cerul&type=Date&theme=dark">
+      <img src="https://api.star-history.com/svg?repos=cerul-ai/cerul&type=Date" alt="Star history chart for cerul-ai/cerul" width="600">
+    </picture>
+  </a>
+</p>
