@@ -62,7 +62,11 @@ cerul index ./demo.mp4
 
 On first use, follow the prompt to enter your [Gemini API key](https://aistudio.google.com/apikey),
 or save one ahead of time with `cerul auth set`. Cerul keeps it on your computer
-for future runs. Model processing sends data to Gemini and may incur API charges.
+for future runs.
+
+> [!IMPORTANT]
+> Model processing sends your video data to Gemini and may incur API charges.
+> Run any command with `--dry-run` first to see exactly what will be sent.
 
 Run `cerul` on its own at any time to see what is indexed and what to do next.
 

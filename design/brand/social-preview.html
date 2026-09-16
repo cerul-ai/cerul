@@ -1,0 +1,147 @@
+<!doctype html>
+<!--
+  Source for the GitHub social preview card (Settings -> General -> Social preview).
+  GitHub wants 1280x640; render at 2x and downsample so the type stays crisp:
+
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      --headless --disable-gpu --hide-scrollbars --allow-file-access-from-files \
+      --force-device-scale-factor=2 --window-size=1280,640 \
+      --screenshot=design/brand/social-preview-2x.png design/brand/social-preview.html
+    magick design/brand/social-preview-2x.png -resize 1280x640 -strip \
+      PNG24:design/brand/social-preview.png
+
+  This directory is deliberately outside the Cargo include list, so the card does
+  not ship inside the published crate.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 1280px;
+    height: 640px;
+    overflow: hidden;
+  }
+
+  body {
+    background: #0C0F1A;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    position: relative;
+  }
+
+  /* Brand-blue glow, offset so it reads as light falling across the card. */
+  .glow {
+    position: absolute;
+    width: 1100px;
+    height: 1100px;
+    left: -180px;
+    top: -520px;
+    background: radial-gradient(circle, rgba(33,96,250,0.28) 0%, rgba(33,96,250,0.10) 38%, rgba(33,96,250,0) 68%);
+  }
+
+  .grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px);
+    background-size: 64px 64px;
+    mask-image: radial-gradient(ellipse 80% 70% at 30% 20%, #000 0%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 70% at 30% 20%, #000 0%, transparent 75%);
+  }
+
+  .card {
+    position: relative;
+    height: 100%;
+    padding: 84px 88px 72px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .logo { height: 62px; width: auto; display: block; flex: none; }
+
+  h1 {
+    font-size: 58px;
+    line-height: 1.16;
+    letter-spacing: -0.028em;
+    font-weight: 600;
+    color: #F3F5F9;
+    max-width: 940px;
+  }
+
+  h1 .dim { color: #7D879E; }
+
+  .sub {
+    margin-top: 22px;
+    font-size: 25px;
+    line-height: 1.45;
+    letter-spacing: -0.012em;
+    color: #9AA4BC;
+    max-width: 800px;
+    font-weight: 400;
+  }
+
+  .foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .pills { display: flex; gap: 12px; }
+
+  .pill {
+    font-size: 19px;
+    letter-spacing: -0.005em;
+    color: #C3CBDD;
+    padding: 11px 20px;
+    border: 1px solid rgba(255,255,255,0.13);
+    border-radius: 999px;
+    background: rgba(255,255,255,0.045);
+  }
+
+  .repo {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 20px;
+    letter-spacing: -0.01em;
+    color: #6E7893;
+  }
+
+  /* Accent rule tying the card to the brand blue. */
+  .rule {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 6px;
+    background: linear-gradient(180deg, #2160FA 0%, rgba(33,96,250,0.15) 100%);
+  }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="grid"></div>
+  <div class="rule"></div>
+
+  <div class="card">
+    <img class="logo" src="../../docs/assets/cerul-logo-dark.png" alt="Cerul">
+
+    <div style="width:100%">
+      <h1>Help AI understand, remember,<br>and access <span class="dim">video.</span></h1>
+      <p class="sub">Open-source video processing core and CLI. Search and annotate your own
+      footage using your own model endpoints.</p>
+    </div>
+
+    <div class="foot" style="width:100%">
+      <div class="pills">
+        <span class="pill">Semantic search</span>
+        <span class="pill">Speech &amp; screen text</span>
+        <span class="pill">Embodied annotation</span>
+      </div>
+      <span class="repo">github.com/cerul-ai/cerul</span>
+    </div>
+  </div>
+</body>
+</html>

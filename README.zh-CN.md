@@ -56,7 +56,11 @@ curl -fsSL https://cerul.ai/install.sh | sh
 cerul index ./demo.mp4
 ```
 
-第一次使用时，按提示输入 [Gemini API key](https://aistudio.google.com/apikey)，也可以提前用 `cerul auth set` 保存，之后无需重复输入。模型处理会将数据发送给 Gemini，并可能产生 API 费用。
+第一次使用时，按提示输入 [Gemini API key](https://aistudio.google.com/apikey)，也可以提前用 `cerul auth set` 保存，之后无需重复输入。
+
+> [!IMPORTANT]
+> 模型处理会把你的视频数据发送给 Gemini，并可能产生 API 费用。
+> 任何命令都可以先加 `--dry-run`，看清楚会发送什么再执行。
 
 随时直接运行 `cerul`，可以看到已索引的视频和下一步命令。
 
