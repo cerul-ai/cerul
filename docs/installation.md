@@ -63,7 +63,7 @@ Then make sure `~/.zfunc` is in `fpath` before `compinit` runs. For bash:
 cerul completions bash > /usr/local/etc/bash_completion.d/cerul
 ```
 
-`cerul completions` also supports `fish`, `elvish`, and `powershell`.
+The same command also generates scripts for fish, elvish, and powershell.
 
 ## Run your first video
 
