@@ -10,15 +10,19 @@
 
 <p align="center">
   <a href="https://cerul.ai">官網</a> ·
-  <a href="docs/installation.md">安裝指南</a> ·
-  <a href="docs/video-search.md">影片教學</a> ·
+  <a href="docs/video-search.md">快速上手</a> ·
+  <a href="docs/agent-setup.md">讓 agent 安裝</a> ·
+  <a href="docs/configuration.md">設定</a> ·
   <a href="https://x.com/cerul_hq">X / Twitter</a> ·
   <a href="https://discord.gg/qHDEMQB9vN">Discord</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/cerul-ai/cerul/actions/workflows/ci.yml"><img src="https://github.com/cerul-ai/cerul/actions/workflows/ci.yml/badge.svg" alt="建置與測試"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0 授權條款"></a>
+  <a href="https://github.com/cerul-ai/cerul/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/cerul-ai/cerul/ci.yml?branch=main&style=flat-square&logo=github&logoColor=white&label=build" alt="建置與測試"></a>
+  <a href="https://github.com/cerul-ai/cerul/releases"><img src="https://img.shields.io/github/v/release/cerul-ai/cerul?style=flat-square&color=2160FA&label=release" alt="最新版本"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-1D2229?style=flat-square" alt="支援平台：macOS 與 Linux">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-1D2229?style=flat-square" alt="Apache-2.0 授權條款"></a>
+  <a href="https://discord.gg/qHDEMQB9vN"><img src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="加入 Discord"></a>
 </p>
 
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · 繁體中文</p>
@@ -28,27 +32,11 @@
 Cerul 將本機影片變成可搜尋的資料庫。描述一個畫面，查找影片中說過或出現過的文字，再把匹配片段匯出。支援普通影片資料夾和 LeRobot 資料集，使用你自己的模型 API key。
 
 - **按含義或圖片搜尋**：輸入一句描述，或提供參考圖片。
-- **查找語音和螢幕文字**：語音轉錄配合內建的本機 OCR。
-- **保存有用的結果**：匯出片段，生成結構化語意標註。
-- **中斷後繼續**：重複執行會重用已完成的工作。
+- **查找語音和螢幕文字**：語音轉錄搭配內建的本機 OCR。
+- **保存有用的結果**：匯出片段，產生結構化語義標註。
+- **中斷後繼續**：重複執行會沿用已完成的工作。
 
 ## 快速開始
-
-### Indexing updates
-
-Indexing defaults to Gemini Embedding 2 at 3072 dimensions and generates visual
-descriptions, a short title, and up to three grounded search suggestions.
-`--no-understanding` skips generation; `--no-audio` skips speech independently.
-An available Gemini key enables speech unless explicitly disabled. See
-[configuration](docs/configuration.md) and [video understanding](docs/video-search.md#inspect-video-understanding).
-
-![Cerul indexing, search, and embodied annotation architecture](docs/assets/cerul-architecture.png)
-
-*Architecture with AI-generated illustrative frames. Default search combines
-independent video, speech, screen-text, and description candidates with gated
-full-text matches using max fusion and capped agreement. Original evidence and
-timestamps remain inspectable. Dataset writeback supports opt-in LeRobot
-subtasks. See [DESIGN.md](DESIGN.md) for implemented behavior.*
 
 Cerul 是一個搜尋影片、匯出片段的命令列工具。安裝包已包含所需的媒體工具和 OCR 模型。
 
@@ -83,7 +71,8 @@ cerul search "有人把杯子放到桌上" --save ./clips
 
 結果都有編號，`cerul open 2` 會用播放器直接從第二個片段開始播，不用離開終端。
 
-### 日常維護
+<details>
+<summary><strong>清理資料與 shell 補全</strong></summary>
 
 ```sh
 cerul remove ./demo.mp4      # 刪除索引與旁車資料，保留原影片
@@ -91,7 +80,10 @@ cerul remove --cache         # 釋放可再生的磁碟佔用
 cerul completions zsh        # 產生 shell 補全指令碼
 ```
 
-zsh 使用者把它放到 `fpath` 裡，例如 `cerul completions zsh > ~/.zfunc/_cerul`，並確保 `~/.zfunc` 在 `compinit` 之前加入 `fpath`。
+zsh 使用者把它放到 `fpath` 裡，例如 `cerul completions zsh > ~/.zfunc/_cerul`，並確保 `~/.zfunc` 在 `compinit` 之前加入 `fpath`。bash 使用者可以用
+`cerul completions bash > /usr/local/etc/bash_completion.d/cerul`。
+
+</details>
 
 [更多使用範例 →](docs/video-search.md)
 
@@ -115,29 +107,71 @@ cerul annotate ./video.mp4 --semantic subtask,event,interaction,state
 依照 https://github.com/cerul-ai/cerul/blob/main/docs/agent-setup.md 幫我安裝 Cerul，安全設定 Gemini API key，搜尋一部本機影片並儲存匹配片段，然後教我如何使用。
 ```
 
-[Agent 安裝指南 →](docs/agent-setup.md)
+支援 skill 的 agent 可以直接從 Cerul 學會整套命令列：
 
-## 更多用法
+```sh
+cerul skill --install claude    # 也支援 codex、pi，或 --dir ./skills
+```
 
-| 目標 | 命令 |
-| --- | --- |
-| 處理整個資料夾 | `cerul index ./videos` |
-| 預覽操作 | `cerul --dry-run index ./videos` |
-| 生成語意標註 | `cerul annotate ./videos --semantic` |
-| 查看進度和結果 | `cerul status` |
-| 限定一部影片搜尋 | `cerul search "打開門" --in ./demo.mp4` |
+[Agent 安裝指南 →](docs/agent-setup.md) · [Agent 介面約定 →](docs/agent.md)
+
+## 常用命令
+
+| 目標 | 命令 | 什麼時候用 |
+| --- | --- | --- |
+| 處理整個資料夾 | `cerul index ./videos` | 會遞迴子目錄，已完成的部分自動略過 |
+| 預覽要做的事 | `cerul --dry-run index ./videos` | 花錢呼叫模型之前，先看清處理計畫 |
+| 生成語意標註 | `cerul annotate ./videos --semantic` | 只要動作標註，不需要建搜尋索引 |
+| 查看進度和結果 | `cerul status` | 中斷之後繼續，或查找 sidecar 位置 |
+| 限定一部影片搜尋 | `cerul search "打開門" --in ./demo.mp4` | 略過資料庫裡的其他影片 |
+| 回看某筆結果 | `cerul open 2` | 用播放器開啟編號對應的片段 |
 
 轉錄、標註和向量保存在影片旁的 sidecar 檔案中，可不呼叫模型重建搜尋索引。LeRobot 子任務回寫需要明確選擇開啟。
+
+## 設定模型服務
+
+Cerul 呼叫的是你自己的模型服務，供應商由你選擇，費用也記在你自己帳上。執行 `cerul config` 可以修改下面任一項。
+
+| 環節 | 預設 | 可選 |
+| --- | --- | --- |
+| 多模態搜尋 | Gemini Embedding 2，3072 維 | 任意已設定的服務 |
+| 語音轉錄 | 有可用金鑰時預設用 Gemini | Groq、OpenAI、OpenAI 相容服務，或關閉 |
+| 螢幕文字（OCR） | 本機執行，不呼叫 API | — |
+
+索引只建立影片和文字的搜尋資料，不會產生場景描述、章節或摘要。需要場景和總覽請用 `cerul analyze ./video.mp4`，需要具身語義標註請用 `cerul annotate ./video.mp4`。`--no-audio` 可以單獨略過語音環節。
+
+[模型服務與憑證 →](docs/configuration.md) ·
+[查看已儲存的分析結果 →](docs/video-search.md#inspect-video-understanding)
+
+## 運作原理
+
+索引會把畫面、螢幕文字和選用的語音編碼到同一個多模態空間。另有一條獨立的視覺生成流程，為動作、互動和狀態變化產生帶時間戳的標註，同樣適用於具身與第一人稱錄影。
+
+![Cerul 架構：多模態索引與搜尋，以及獨立的第一人稱標註流程](docs/assets/cerul-architecture.png)
+
+*架構圖中的畫面由 AI 生成，僅作示意。預設搜尋會把影片、語音、螢幕文字和描述四路獨立候選，與受控的全文匹配結果，用 max fusion 和受限的一致性加權合併。原始證據和時間戳始終可以回溯查看。資料集回寫支援可選開啟的 LeRobot 子任務。已實作的行為詳見 [DESIGN.md](DESIGN.md)。*
 
 ## 了解更多
 
 - [文件目錄](docs/README.md)
-
 - [安裝與排錯](docs/installation.md)
 - [影片搜尋教學](docs/video-search.md)
+- [顯式影片分析](docs/analyze.md)
 - [LeRobot 教學](docs/lerobot-subtasks.md)
 - [模型服務與設定](docs/configuration.md)
 - [貢獻與開發整合](CONTRIBUTING.md)
+
+## 社群
+
+歡迎提問、回報 bug，也歡迎分享你搜出來的得意片段。
+
+[Discord](https://discord.gg/qHDEMQB9vN) ·
+[Issues](https://github.com/cerul-ai/cerul/issues) ·
+[X / Twitter](https://x.com/cerul_hq)
+
+<a href="https://star-history.com/#cerul-ai/cerul&Date">
+  <img src="https://api.star-history.com/svg?repos=cerul-ai/cerul&type=Date" alt="cerul-ai/cerul 的 Star 成長曲線" width="600">
+</a>
 
 ## 授權條款
 
