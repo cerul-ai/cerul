@@ -169,10 +169,15 @@ Cerul 呼叫的是你自己的模型服務，供應商由你選擇，費用也�
 [Issues](https://github.com/cerul-ai/cerul/issues) ·
 [X / Twitter](https://x.com/cerul_hq)
 
-<a href="https://star-history.com/#cerul-ai/cerul&Date">
-  <img src="https://api.star-history.com/svg?repos=cerul-ai/cerul&type=Date" alt="cerul-ai/cerul 的 Star 成長曲線" width="600">
-</a>
-
 ## 授權條款
 
 Cerul 的 Rust 程式碼採用 Apache-2.0。發行套件中的媒體工具和 OCR 模型各自遵循其授權條款，詳見[第三方聲明](THIRD_PARTY_NOTICES.md)。[Cerul 名稱與標識](docs/assets/README.md)用於識別專案，不代表對第三方產品的背書。
+
+<p align="center">
+  <a href="https://star-history.com/#cerul-ai/cerul&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=cerul-ai/cerul&type=Date&theme=dark">
+      <img src="https://api.star-history.com/svg?repos=cerul-ai/cerul&type=Date" alt="cerul-ai/cerul 的 Star 成長曲線" width="600">
+    </picture>
+  </a>
+</p>

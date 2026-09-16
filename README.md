@@ -196,13 +196,18 @@ Questions, bug reports, and clips you are proud of are all welcome.
 [Issues](https://github.com/cerul-ai/cerul/issues) ·
 [X / Twitter](https://x.com/cerul_hq)
 
-<a href="https://star-history.com/#cerul-ai/cerul&Date">
-  <img src="https://api.star-history.com/svg?repos=cerul-ai/cerul&type=Date" alt="Star history chart for cerul-ai/cerul" width="600">
-</a>
-
 ## License
 
 Cerul's Rust code is Apache-2.0. Bundles also contain separately licensed media
 tools and OCR weights; see [third-party notices](THIRD_PARTY_NOTICES.md).
 The [Cerul name and logo](docs/assets/README.md) identify the project and do not
 imply endorsement of third-party products.
+
+<p align="center">
+  <a href="https://star-history.com/#cerul-ai/cerul&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=cerul-ai/cerul&type=Date&theme=dark">
+      <img src="https://api.star-history.com/svg?repos=cerul-ai/cerul&type=Date" alt="Star history chart for cerul-ai/cerul" width="600">
+    </picture>
+  </a>
+</p>
