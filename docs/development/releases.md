@@ -18,6 +18,9 @@ redirect. npm and Homebrew publication are separate from generating their artifa
    ```
 
    A stale copy fails `cargo test` rather than reaching a release.
+   In the same PR, rename the **Unreleased** heading in `CHANGELOG.md` to the
+   version and date being released; the Release workflow publishes that
+   section as the GitHub release notes above the generated install table.
 1. Verify PR checks and acceptance results, then merge the release PR into `main`.
 2. From the merged `main`, confirm Cargo.toml and packaging/dist.toml agree on
    the version being released, then create and push the matching tag. The

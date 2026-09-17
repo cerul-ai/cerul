@@ -79,10 +79,46 @@ fn save(endpoint: &Endpoint) -> Result<()> {
     Ok(())
 }
 
+/// Merge `--set section.field=value` overrides into the saved configuration
+/// without prompting, so scripts and agents can configure the CLI.
+pub fn save_overrides(overlay: &toml::Table) -> Result<PathBuf> {
+    let path = path()?;
+    let mut document: toml::Table = match fs::read_to_string(&path) {
+        Ok(text) => toml::from_str(&text)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => toml::Table::new(),
+        Err(e) => return Err(e.into()),
+    };
+    for (section, fields) in overlay {
+        let fields = fields
+            .as_table()
+            .context("configuration overrides must be section.field values")?;
+        let target = document
+            .entry(section.clone())
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let target = target
+            .as_table_mut()
+            .with_context(|| format!("{section} in the saved configuration is not a table"))?;
+        for (field, value) in fields {
+            target.insert(field.clone(), value.clone());
+        }
+    }
+    let parent = path.parent().unwrap();
+    fs::create_dir_all(parent)?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(toml::to_string_pretty(&document)?.as_bytes())?;
+    file.as_file().sync_all()?;
+    file.persist(&path).map_err(|e| e.error)?;
+    Ok(path)
+}
+
+pub fn config_path() -> Result<PathBuf> {
+    path()
+}
+
 pub async fn configure(config: &Config, cancel: CancellationToken) -> Result<bool> {
     ensure!(
         crate::guide::asks(&[]),
-        "cerul config requires an interactive terminal; edit ~/.cerul/config.toml for scripted configuration"
+        "cerul config requires an interactive terminal; use cerul config --show or cerul config --set section.field=value for scripts"
     );
     if !available(&config.embedding) {
         crate::credentials::set(&config.embedding, cancel.clone()).await?;

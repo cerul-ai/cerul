@@ -120,6 +120,12 @@ impl Options {
         Ok(filters)
     }
 }
+/// Screen text that cannot carry a meaning on its own: a stray letter or a
+/// lone punctuation mark read from one frame. Such a vector sits at the same
+/// cosine distance from every query and would otherwise outrank real evidence.
+pub fn negligible_screen_text(text: &str) -> bool {
+    text.chars().filter(|c| c.is_alphanumeric()).count() < 2
+}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceScore {
     pub vector_id: String,
@@ -644,6 +650,9 @@ async fn run_inner(
                     let mut unique = BTreeSet::new();
                     let mut fusion_candidates = Vec::new();
                     for (rank, (row, score)) in candidates {
+                        if row.kind == Kind::Screen && negligible_screen_text(&row.text) {
+                            continue;
+                        }
                         if hybrid {
                             fusion_candidates.push(fusion::Candidate {
                                 id: row.id,
@@ -951,6 +960,17 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn negligible_screen_text_drops_stray_glyphs_but_keeps_short_words_and_numbers() {
+        assert!(negligible_screen_text("W"));
+        assert!(negligible_screen_text(" · "));
+        assert!(negligible_screen_text("开"));
+        assert!(negligible_screen_text(""));
+        assert!(!negligible_screen_text("10"));
+        assert!(!negligible_screen_text("OK"));
+        assert!(!negligible_screen_text("抽屉打开"));
+        assert!(!negligible_screen_text("Error_A: drawer is open"));
+    }
     use crate::{
         annotations::{AnnotationFile, Header, Model, Record},
         index::vectors::{self, VectorRow},

@@ -65,6 +65,9 @@ incremental = false
 [profile.release]
 lto = "thin"
 strip = true
+# A CLI has nothing to catch a panic with; aborting drops the unwind tables
+# that pushed __eh_frame past the 16MB compact-unwind limit on macOS.
+panic = "abort"
 
 # The profile that 'dist' will build with
 [profile.dist]

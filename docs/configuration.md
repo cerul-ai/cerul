@@ -32,7 +32,12 @@ are reused; `cerul auth set` replaces the Gemini key. Explicit provider settings
 and `enabled = false` take precedence over automatic selection.
 
 Defaults are saved in `~/.cerul/config.toml`. JSON, quiet, yes, dry-run, and redirected
-invocations never prompt. Without credentials, new unconfigured ASR is skipped;
+invocations never prompt. Scripts and coding agents use `cerul config --show` to read the
+effective configuration (add `--json` for a machine-readable object with the file path) and
+`cerul config --set section.field=value` to save a setting without a terminal, for example
+`cerul config --set transcription.enabled=false` or `cerul config --set search.hybrid=false`.
+Values are TOML, so strings need quotes: `--set transcription.model='"whisper-1"'`.
+`--dry-run` previews the write. Without credentials, new unconfigured ASR is skipped;
 complete compatible transcripts can still be reused offline. An enabled ASR that
 fails is reported as a partial result, not silently disabled.
 
