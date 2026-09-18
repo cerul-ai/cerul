@@ -21,8 +21,9 @@ rename that heading when a version is cut.
   when two indexed videos share a file name, so `video/1.mp4` and
   `raw_data/1.mp4` are distinguishable.
 - Vector search skips screen-text vectors that hold fewer than two letters or
-  digits. A stray glyph read from one frame sits at the same distance from every
-  query and used to outrank real evidence.
+  digits and no Han character. A stray glyph read from one frame sits at the
+  same distance from every query and used to outrank real evidence, while a
+  single Han character is a word and is kept.
 - The missing-processing-data notice in `cerul status` now also points to
   `cerul remove <video-path>` for forgetting a video whose sidecar is gone.
 - Release builds abort on panic instead of unwinding. This removes the macOS

@@ -123,8 +123,10 @@ impl Options {
 /// Screen text that cannot carry a meaning on its own: a stray letter or a
 /// lone punctuation mark read from one frame. Such a vector sits at the same
 /// cosine distance from every query and would otherwise outrank real evidence.
+/// A single Han character is a whole word, so it is kept; a single Latin
+/// letter or digit is not.
 pub fn negligible_screen_text(text: &str) -> bool {
-    text.chars().filter(|c| c.is_alphanumeric()).count() < 2
+    !text.chars().any(crate::text::han) && text.chars().filter(|c| c.is_alphanumeric()).count() < 2
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceScore {
@@ -964,12 +966,15 @@ mod tests {
     fn negligible_screen_text_drops_stray_glyphs_but_keeps_short_words_and_numbers() {
         assert!(negligible_screen_text("W"));
         assert!(negligible_screen_text(" · "));
-        assert!(negligible_screen_text("开"));
         assert!(negligible_screen_text(""));
         assert!(!negligible_screen_text("10"));
         assert!(!negligible_screen_text("OK"));
         assert!(!negligible_screen_text("抽屉打开"));
         assert!(!negligible_screen_text("Error_A: drawer is open"));
+        // One Han character is a word on its own, unlike one Latin letter.
+        assert!(!negligible_screen_text("开"));
+        assert!(!negligible_screen_text("关"));
+        assert!(!negligible_screen_text(" 温 "));
     }
     use crate::{
         annotations::{AnnotationFile, Header, Model, Record},

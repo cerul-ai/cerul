@@ -1,5 +1,5 @@
 //! Conservative cleanup of spacing introduced by word-level Chinese ASR.
-fn han(c: char) -> bool {
+pub(crate) fn han(c: char) -> bool {
     matches!(c as u32, 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff | 0x20000..=0x323af)
 }
 fn chinese_punctuation(c: char) -> bool {
