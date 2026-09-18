@@ -250,6 +250,59 @@ pub fn file_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// Display names that stay distinct when several videos share a file name:
+/// duplicates grow parent directories until they differ, others stay short.
+pub fn distinct_names<'a>(paths: impl IntoIterator<Item = &'a Path>) -> BTreeMap<PathBuf, String> {
+    let paths: BTreeSet<&Path> = paths.into_iter().collect();
+    let label = |path: &Path, depth: usize| -> String {
+        let parts: Vec<String> = path
+            .components()
+            .rev()
+            .filter_map(|part| match part {
+                std::path::Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .take(depth + 1)
+            .collect();
+        if parts.is_empty() {
+            return path.display().to_string();
+        }
+        parts.into_iter().rev().collect::<Vec<_>>().join("/")
+    };
+    let mut names: BTreeMap<PathBuf, String> = paths
+        .iter()
+        .map(|path| (path.to_path_buf(), label(path, 0)))
+        .collect();
+    let mut depth = 0;
+    loop {
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for name in names.values() {
+            *counts.entry(name).or_default() += 1;
+        }
+        let clashing: Vec<PathBuf> = names
+            .iter()
+            .filter(|(_, name)| counts[name.as_str()] > 1)
+            .map(|(path, _)| path.clone())
+            .collect();
+        if clashing.is_empty() || depth >= 8 {
+            break;
+        }
+        depth += 1;
+        let mut changed = false;
+        for path in clashing {
+            let next = label(&path, depth);
+            if next != names[&path] {
+                changed = true;
+                names.insert(path, next);
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    names
+}
+
 fn short_name(name: &str) -> String {
     truncate_str(name, 48, "…").into_owned()
 }
@@ -896,6 +949,18 @@ pub fn status(
             .iter()
             .any(|annotation| annotation == name || annotation.ends_with(&format!("/{name}")))
     };
+    let names = distinct_names(
+        status
+            .episodes
+            .iter()
+            .map(|episode| episode.media.as_path()),
+    );
+    let display = |episode: &cerul::status::EpisodeStatus| -> String {
+        names
+            .get(&episode.media)
+            .cloned()
+            .unwrap_or_else(|| file_name(&episode.media))
+    };
     if status.episodes.is_empty() {
         writeln!(
             out,
@@ -911,7 +976,7 @@ pub fn status(
             writeln!(
                 out,
                 "  {}   {}",
-                palette.bold(&file_name(&episode.media)),
+                palette.bold(&display(episode)),
                 palette.dim(&episode.duration_us.map(clock).unwrap_or_default())
             )?;
             writeln!(
@@ -935,7 +1000,7 @@ pub fn status(
         }
     } else {
         let name_of = |episode: &cerul::status::EpisodeStatus| {
-            truncate_str(&file_name(&episode.media), 28, "…").to_string()
+            truncate_str(&display(episode), 36, "…").to_string()
         };
         let width = status
             .episodes
@@ -1005,7 +1070,7 @@ pub fn status(
     {
         writeln!(
             out,
-            "  Restore the data or run cerul index <video-path> to rebuild; registrations are kept."
+            "  Restore the data, run cerul index <video-path> to rebuild, or cerul remove <video-path> to forget it."
         )?;
     }
     let missing: Vec<&cerul::status::EpisodeStatus> = status
@@ -1686,12 +1751,17 @@ pub fn search(
         ))
     )?;
     writeln!(out)?;
+    let names = distinct_names(
+        groups
+            .iter()
+            .filter_map(|(_, moments)| moments[0].1.media.as_deref()),
+    );
     for (_, moments) in &groups {
         let first = moments[0].1;
         let name = first
             .media
             .as_deref()
-            .map(file_name)
+            .map(|path| names.get(path).cloned().unwrap_or_else(|| file_name(path)))
             .unwrap_or_else(|| first.episode.clone());
         let title = match first.media.as_deref() {
             Some(path) => context.terminal.file_link(&palette.bold(&name), path),
@@ -2268,6 +2338,25 @@ pub fn error(palette: &Palette, code: u8, message: &str, hint: Option<&str>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn distinct_names_only_lengthen_the_paths_that_clash() {
+        let paths = [
+            Path::new("/videos/1.mp4"),
+            Path::new("/demo/raw_data/1.mp4"),
+            Path::new("/videos/mori.mp4"),
+            Path::new("/a/x/clip.mp4"),
+            Path::new("/b/x/clip.mp4"),
+        ];
+        let names = distinct_names(paths);
+        assert_eq!(names[Path::new("/videos/1.mp4")], "videos/1.mp4");
+        assert_eq!(names[Path::new("/demo/raw_data/1.mp4")], "raw_data/1.mp4");
+        assert_eq!(names[Path::new("/videos/mori.mp4")], "mori.mp4");
+        assert_eq!(names[Path::new("/a/x/clip.mp4")], "a/x/clip.mp4");
+        assert_eq!(names[Path::new("/b/x/clip.mp4")], "b/x/clip.mp4");
+        // The same file registered once keeps its plain name.
+        let same = distinct_names([Path::new("/v/1.mp4"), Path::new("/v/1.mp4")]);
+        assert_eq!(same[Path::new("/v/1.mp4")], "1.mp4");
+    }
     use cerul::search::{Hit, Report};
 
     #[derive(Clone, Debug, Default)]

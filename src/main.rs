@@ -210,9 +210,9 @@ enum Command {
     Auth(AuthArgs),
     /// Configure the required Gemini key and optional default speech transcription.
     #[command(
-        after_help = "Run cerul config in a terminal to configure model endpoints and speech transcription. Run cerul auth set to save a model key. Use --workspace DIR to choose a separate workspace."
+        after_help = "Examples:\n  Interactive setup\n  cerul config\n  Print the effective configuration\n  cerul config --show\n  Save a setting without prompting\n  cerul config --set transcription.enabled=false\nRun cerul auth set to save a model key. Use --workspace DIR to choose a separate workspace. Settings live in ~/.cerul/config.toml; --show and --set work with --json."
     )]
-    Config,
+    Config(ConfigArgs),
     /// Analyze scenes, chapters, and a grounded overview without indexing.
     #[command(
         arg_required_else_help = true,
@@ -400,6 +400,12 @@ struct SearchArgs {
     /// Count matching intervals instead of listing them.
     #[arg(long, help_heading = ADVANCED)]
     count: bool,
+}
+#[derive(Args)]
+struct ConfigArgs {
+    /// Print the effective configuration (defaults, saved file, and overrides) without prompting.
+    #[arg(long)]
+    show: bool,
 }
 #[derive(Args)]
 struct RemoveArgs {
@@ -940,6 +946,14 @@ enum Outcome {
     Upgrade(upgrade::Available, bool),
     Auth(render::KeyState, Option<&'static str>),
     Configured(bool),
+    /// The resolved configuration and where saved settings live.
+    ConfigShown(Config, PathBuf),
+    /// Settings written by `cerul config --set`, or planned by a dry run.
+    ConfigSaved {
+        path: PathBuf,
+        keys: Vec<String>,
+        dry_run: bool,
+    },
     Remove(
         cerul::clean::Report,
         BTreeMap<String, PathBuf>,
@@ -963,6 +977,16 @@ impl Outcome {
         Ok(match self {
             Outcome::Diagnostics(value) => value.clone(),
             Outcome::Configured(saved) => json!({"configured":saved}),
+            Outcome::ConfigShown(config, path) => {
+                let mut value = serde_json::to_value(config)?;
+                value["path"] = json!(path);
+                value
+            }
+            Outcome::ConfigSaved {
+                path,
+                keys,
+                dry_run,
+            } => json!({"configured": !dry_run, "dry_run": dry_run, "path": path, "keys": keys}),
             Outcome::Home(status, _) | Outcome::Status { status, .. } => {
                 serde_json::to_value(status)?
             }
@@ -1044,6 +1068,42 @@ impl Outcome {
                 "Configuration {}.",
                 if *saved { "saved" } else { "unchanged" }
             ),
+            Outcome::ConfigShown(config, path) => {
+                writeln!(
+                    out,
+                    "{}   {}",
+                    palette.bold("Configuration"),
+                    palette.dim(&format!("saved settings in {}", render::tilde(path)))
+                )?;
+                let text = toml::to_string_pretty(config).map_err(io::Error::other)?;
+                for line in text.lines() {
+                    writeln!(out, "  {line}")?;
+                }
+                Ok(())
+            }
+            Outcome::ConfigSaved {
+                path,
+                keys,
+                dry_run,
+            } => {
+                if *dry_run {
+                    writeln!(
+                        out,
+                        "{} would save {} to {}",
+                        palette.bold("Dry run:"),
+                        keys.join(", "),
+                        render::tilde(path)
+                    )
+                } else {
+                    writeln!(
+                        out,
+                        "{} Saved {} to {}",
+                        palette.ok("✓"),
+                        keys.join(", "),
+                        render::tilde(path)
+                    )
+                }
+            }
             Outcome::Auth(key, action) => {
                 match action {
                     Some("set") => {
@@ -1136,7 +1196,8 @@ impl Sink {
     }
 }
 
-fn config(cli: &Cli) -> Result<Config> {
+/// The `--set section.field=value` overrides as a TOML table.
+fn overrides(cli: &Cli) -> Result<toml::Table> {
     let mut overlay = toml::Table::new();
     for item in &cli.overrides {
         let (key, value) = item
@@ -1155,6 +1216,10 @@ fn config(cli: &Cli) -> Result<Config> {
             .unwrap()
             .insert(field.to_owned(), parsed["value"].clone());
     }
+    Ok(overlay)
+}
+fn config(cli: &Cli) -> Result<Config> {
+    let overlay = overrides(cli)?;
     let mut paths = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
         paths.push(PathBuf::from(home).join(".cerul/config.toml"));
@@ -1486,8 +1551,48 @@ async fn execute(
                 0,
             ))
         }
-        Some(Command::Config) => {
-            anyhow::ensure!(!cli.json && !cli.quiet && !cli.yes && !cli.dry_run, CliError(2, "cerul config requires an interactive terminal; edit ~/.cerul/config.toml for scripted configuration".into()));
+        Some(Command::Config(args)) => {
+            if args.show {
+                let config = config(cli).map_err(|e| category(2, e))?;
+                let path = setup::config_path().map_err(|e| category(2, e))?;
+                return Ok((Outcome::ConfigShown(config, path), 0));
+            }
+            let overlay = overrides(cli).map_err(|e| category(2, e))?;
+            if !overlay.is_empty() {
+                // Resolving with the overrides applied validates them against
+                // the rest of the configuration before anything is written.
+                config(cli).map_err(|e| category(2, e))?;
+                let keys: Vec<String> = overlay
+                    .iter()
+                    .flat_map(|(section, fields)| {
+                        fields
+                            .as_table()
+                            .into_iter()
+                            .flat_map(|fields| fields.keys())
+                            .map(move |field| format!("{section}.{field}"))
+                    })
+                    .collect();
+                let path = if cli.dry_run {
+                    setup::config_path().map_err(|e| category(2, e))?
+                } else {
+                    setup::save_overrides(&overlay).map_err(|e| category(4, e))?
+                };
+                return Ok((
+                    Outcome::ConfigSaved {
+                        path,
+                        keys,
+                        dry_run: cli.dry_run,
+                    },
+                    0,
+                ));
+            }
+            anyhow::ensure!(
+                !cli.json && !cli.quiet && !cli.yes && !cli.dry_run,
+                CliError(
+                    2,
+                    "cerul config requires an interactive terminal; use cerul config --show or cerul config --set section.field=value for scripts".into()
+                )
+            );
             let saved = setup::configure(&config(cli)?, cancel).await?;
             Ok((Outcome::Configured(saved), 0))
         }

@@ -1205,3 +1205,81 @@ fn help_command_explains_workflows_without_workspace_or_tools() {
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 }
+
+#[test]
+fn config_show_and_set_work_without_a_terminal_and_round_trip_through_the_saved_file() {
+    let dir = tempfile::tempdir().unwrap();
+    // Without --show or --set, a scripted invocation is refused with guidance.
+    let refused = cli(dir.path(), &["--json", "config"]);
+    assert_eq!(refused.status.code(), Some(2));
+    let error = final_json(&refused);
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("cerul config --show"),
+        "{error}"
+    );
+    // --show reports defaults and the file they would be saved to.
+    let shown = cli(dir.path(), &["--json", "config", "--show"]);
+    assert!(shown.status.success());
+    let shown = final_json(&shown);
+    assert_eq!(shown["search"]["hybrid"], Value::Bool(true));
+    assert_eq!(
+        shown["path"].as_str().unwrap(),
+        dir.path().join(".cerul/config.toml").to_str().unwrap()
+    );
+    // A dry run validates and names the keys but writes nothing.
+    let planned = cli(
+        dir.path(),
+        &[
+            "--json",
+            "--dry-run",
+            "config",
+            "--set",
+            "search.hybrid=false",
+        ],
+    );
+    assert!(planned.status.success());
+    let planned = final_json(&planned);
+    assert_eq!(planned["dry_run"], Value::Bool(true));
+    assert_eq!(planned["keys"], serde_json::json!(["search.hybrid"]));
+    assert!(!dir.path().join(".cerul/config.toml").exists());
+    // Invalid values are rejected before anything is written.
+    let rejected = cli(
+        dir.path(),
+        &["--json", "config", "--set", "embedding.kind=\"nope\""],
+    );
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(!dir.path().join(".cerul/config.toml").exists());
+    // A real write lands in the saved file and changes later resolution.
+    let saved = cli(
+        dir.path(),
+        &[
+            "--json",
+            "config",
+            "--set",
+            "search.hybrid=false",
+            "--set",
+            "transcription.enabled=false",
+        ],
+    );
+    assert!(saved.status.success(), "{saved:?}");
+    let saved = final_json(&saved);
+    assert_eq!(saved["configured"], Value::Bool(true));
+    let text = std::fs::read_to_string(dir.path().join(".cerul/config.toml")).unwrap();
+    assert!(text.contains("hybrid = false"), "{text}");
+    assert!(text.contains("enabled = false"), "{text}");
+    let shown = final_json(&cli(dir.path(), &["--json", "config", "--show"]));
+    assert_eq!(shown["search"]["hybrid"], Value::Bool(false));
+    assert_eq!(shown["transcription"]["enabled"], Value::Bool(false));
+    // Saving again keeps unrelated settings.
+    let again = cli(
+        dir.path(),
+        &["--json", "config", "--set", "search.hybrid=true"],
+    );
+    assert!(again.status.success());
+    let shown = final_json(&cli(dir.path(), &["--json", "config", "--show"]));
+    assert_eq!(shown["search"]["hybrid"], Value::Bool(true));
+    assert_eq!(shown["transcription"]["enabled"], Value::Bool(false));
+}
