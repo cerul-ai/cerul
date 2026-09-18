@@ -9,7 +9,7 @@ homepage = "https://github.com/cerul-ai/cerul"
 include = [
     "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/THIRD_PARTY_NOTICES.md",
     "/README.md", "/README.zh-CN.md", "/README.zh-TW.md", "/DESIGN.md", "/ARCHITECTURE.md", "/CONTRIBUTING.md",
-    "/CODE_OF_CONDUCT.md", "/SECURITY.md",
+    "/CODE_OF_CONDUCT.md", "/SECURITY.md", "/CHANGELOG.md",
     "/src/**/*.rs", "/examples/*.rs", "/docs/**/*.md",
     "/packaging/licenses/*.txt", "/scripts/build-*.sh", "/scripts/test-*.py", "/scripts/check-docs.py", "/scripts/package-media-source.sh", "/schemas/*.json", "/prompts/*.md", "/skills/cerul/SKILL.md", "/docs/assets/*.png",
     "/models/det.onnx", "/models/rec.onnx", "/models/characters.txt",
