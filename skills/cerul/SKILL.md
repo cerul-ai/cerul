@@ -1,7 +1,7 @@
 ---
 name: cerul
 description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
-generated-by: cerul 0.0.15
+generated-by: cerul 0.0.16
 generated-sha256: b6490deb827d2f3fd75fbd5e44f45bf3f304bb46ac21a35cb468b5c045266d94
 ---
 
