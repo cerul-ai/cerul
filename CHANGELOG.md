@@ -5,7 +5,7 @@ publishes the section that matches the tagged version as the GitHub release
 notes, so keep an entry under **Unreleased** for every user-visible change and
 rename that heading when a version is cut.
 
-## Unreleased
+## 0.0.16 - 2026-09-19
 
 ### Added
 - `cerul config --show` prints the effective configuration, including its saved
