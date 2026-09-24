@@ -38,10 +38,12 @@ rotated/VFR video and skeleton rendering. They establish behavior, not accuracy
 on arbitrary first-person manipulation clips.
 CI does not run the official LeRobot loader; maintainers run that round-trip
 before a release, as described below. Pull requests that only change
-documentation run the Documentation job and skip the Core jobs; `Core CI result` is the single check to require on `main`. Optimized
-release builds for both targets come from the Release workflow, which also runs
-on pull requests. CI does not use a model key. A successful CI run is evidence for its exact commit and fixtures, not a
-measurement of retrieval quality on arbitrary videos.
+documentation run the Documentation job and skip the Core jobs; `Core CI result`
+is the single check to require on `main`. On pull requests the Release workflow
+only plans; optimized builds for both targets run when a version tag is pushed,
+so run `cargo build --release --locked` locally before tagging. CI does not use
+a model key. A successful CI run is evidence for its exact commit and fixtures,
+not a measurement of retrieval quality on arbitrary videos.
 
 ## Official LeRobot loader
 

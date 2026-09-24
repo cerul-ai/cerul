@@ -115,7 +115,7 @@ jobs:
           python3 -m unittest discover -s tests -p "test_retrieval_evaluation.py"
       - if: runner.os == 'Linux'
         run: cargo package --locked
-      # Release builds for both targets run in the Release workflow on every PR.
+      # Optimized release builds run only in the Release workflow on version tags.
 
   # Single stable check for branch rules: skipped jobs pass, failures do not.
   result:
