@@ -36,9 +36,9 @@ restart recovery, sidecar invalidation, and index rebuilds. Hand tests cover
 embodied-only selection, an offline endpoint-free run, resumed tracker state,
 rotated/VFR video and skeleton rendering. They establish behavior, not accuracy
 on arbitrary first-person manipulation clips.
-A separate Linux job checks the official LeRobot loader. Pull requests that only
-change documentation run the Documentation job and skip the Core and LeRobot
-jobs; `Core CI result` is the single check to require on `main`. Optimized
+CI does not run the official LeRobot loader; maintainers run that round-trip
+before a release, as described below. Pull requests that only change
+documentation run the Documentation job and skip the Core jobs; `Core CI result` is the single check to require on `main`. Optimized
 release builds for both targets come from the Release workflow, which also runs
 on pull requests. CI does not use a model key. A successful CI run is evidence for its exact commit and fixtures, not a
 measurement of retrieval quality on arbitrary videos.
@@ -52,7 +52,7 @@ synthetic v3.1 compatibility fixture. These tests do not establish the existence
 of an official v3.1 recorder or an upgrade tool. See the
 [user-facing compatibility limits](../lerobot.md).
 
-On Linux, install the same isolated Python environment used by Core CI:
+Before a release, install the pinned loader in an isolated Linux environment:
 
 ```sh
 python3.12 -m venv /tmp/cerul-loader-env
