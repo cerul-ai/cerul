@@ -99,9 +99,12 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
       - name: Verify terminal setup, analysis streaming and indexing concurrency
+        # These tests skip themselves when CERUL_TEST_BINARY is unset.
+        env:
+          CERUL_TEST_BINARY: ${{ github.workspace }}/target/debug/cerul
         run: |
           python3 -m unittest discover -s tests -p "test_analyze*.py"
-          CERUL_TEST_BINARY="$PWD/target/debug/cerul" python3 -m unittest discover -s tests -p "test_setup.py"
+          python3 -m unittest discover -s tests -p "test_setup.py"
           python3 -m unittest discover -s tests -p "test_index_concurrency.py"
       - name: Verify retrieval evaluation with the shared Rust fusion engine
         run: |
