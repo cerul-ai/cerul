@@ -14,10 +14,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
+          code=false
+          while IFS= read -r file; do
+            case "$file" in
+              # Compiled into the binary or read by Rust tests.
+              prompts/* | skills/*) code=true ;;
+              # Covered by the Documentation job.
+              *.md | docs/* | design/* | .github/ISSUE_TEMPLATE/* | .github/CODEOWNERS | vercel.json) ;;
+              *) code=true ;;
+            esac
+          done <<< "$files"
+          echo "$files"
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   documentation:
     name: Documentation
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -25,16 +60,24 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
       - run: python3 scripts/check-docs.py
       - run: python3 -m unittest discover -s tests -p "test_documentation.py"
+      - name: Check source-package contents
+        run: |
+          cargo package --list --locked > "$RUNNER_TEMP/cerul-package-files.txt"
+          python3 scripts/check-docs.py --package-list "$RUNNER_TEMP/cerul-package-files.txt"
 
   core:
     name: Core (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -56,8 +99,6 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
       - name: Verify terminal setup, analysis streaming and indexing concurrency
-        env:
-          CERUL_TEST_BINARY: target/debug/cerul
         run: |
           python3 -m unittest discover -s tests -p "test_analyze*.py"
           CERUL_TEST_BINARY="$PWD/target/debug/cerul" python3 -m unittest discover -s tests -p "test_setup.py"
@@ -67,28 +108,54 @@ jobs:
           cargo build --locked --example retrieval_fusion
           python3 -m unittest discover -s tests -p "test_retrieval_evaluation.py"
       - run: cargo run --locked --example generate_schemas -- --check
-      - name: Check source-package contents
-        run: |
-          cargo package --list --locked > "$RUNNER_TEMP/cerul-package-files.txt"
-          python3 scripts/check-docs.py --package-list "$RUNNER_TEMP/cerul-package-files.txt"
       - run: cargo package --locked
-      - run: cargo build --release --locked
-      - uses: actions/setup-python@v7
-        if: runner.os == 'Linux'
+      # Release builds for both targets run in the Release workflow on every PR.
+
+  lerobot:
+    name: LeRobot loader round-trip
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg protobuf-compiler libprotobuf-dev
       - name: Install pinned official LeRobot loader
-        if: runner.os == 'Linux'
         run: |
           python -m pip install 'torch==2.11.0' 'torchvision==0.26.0' --index-url https://download.pytorch.org/whl/cpu
           python -m pip install 'lerobot[dataset,av-dep] @ git+https://github.com/huggingface/lerobot.git@2774d9bddcbbda50e697e162e89e7eaada8d7105'
       - name: Official LeRobot loader round-trip
-        if: runner.os == 'Linux'
         env:
           HF_HUB_OFFLINE: '1'
           HF_DATASETS_OFFLINE: '1'
         run: |
           python tests/lerobot_roundtrip.py create "$RUNNER_TEMP/cerul-source"
-          cargo run --release --locked --example verify_lerobot_writeback -- "$RUNNER_TEMP/cerul-source" "$RUNNER_TEMP/cerul-output" "$(command -v python)"
+          cargo run --locked --example verify_lerobot_writeback -- "$RUNNER_TEMP/cerul-source" "$RUNNER_TEMP/cerul-output" "$(command -v python)"
           python tests/lerobot_roundtrip.py create "$RUNNER_TEMP/cerul-source-no-language" --without-language
-          cargo run --release --locked --example verify_lerobot_writeback -- "$RUNNER_TEMP/cerul-source-no-language" "$RUNNER_TEMP/cerul-output-no-language" "$(command -v python)"
+          cargo run --locked --example verify_lerobot_writeback -- "$RUNNER_TEMP/cerul-source-no-language" "$RUNNER_TEMP/cerul-output-no-language" "$(command -v python)"
+
+  # Single stable check for branch rules: skipped jobs pass, failures do not.
+  result:
+    name: Core CI result
+    needs: [changes, documentation, core, lerobot]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) exit 1 ;;
+            esac
+          done

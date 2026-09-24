@@ -36,8 +36,11 @@ restart recovery, sidecar invalidation, and index rebuilds. Hand tests cover
 embodied-only selection, an offline endpoint-free run, resumed tracker state,
 rotated/VFR video and skeleton rendering. They establish behavior, not accuracy
 on arbitrary first-person manipulation clips.
-The Linux job also checks the official LeRobot loader. CI does not use a model
-key. A successful CI run is evidence for its exact commit and fixtures, not a
+A separate Linux job checks the official LeRobot loader. Pull requests that only
+change documentation run the Documentation job and skip the Core and LeRobot
+jobs; `Core CI result` is the single check to require on `main`. Optimized
+release builds for both targets come from the Release workflow, which also runs
+on pull requests. CI does not use a model key. A successful CI run is evidence for its exact commit and fixtures, not a
 measurement of retrieval quality on arbitrary videos.
 
 ## Official LeRobot loader
