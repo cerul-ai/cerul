@@ -148,9 +148,12 @@ separately only as part of an authorized release.
 
 ## Publishing boundary
 
-With `pr-run-mode = "upload"`, pull requests plan and build both platform
-archives and upload CI artifacts for inspection. Matching version tags also
-publish those artifacts as a GitHub Release. The permanent website redirect tracks
+With `pr-run-mode = "plan"`, pull requests only run `dist plan`; they build no
+platform archives. Matching version tags build both platform archives and
+publish them as a GitHub Release. Run `cargo build --release --locked` before
+tagging, because release-profile failures otherwise surface only on the tag. If
+a tag build fails before publishing, fix `main` and release the next patch
+version rather than moving the tag. The permanent website redirect tracks
 the latest published release; it needs no per-release website change.
 
 npm and Homebrew artifacts are generated, but registry/tap publishing is not
