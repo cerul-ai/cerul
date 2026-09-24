@@ -1,8 +1,13 @@
 name: Auto Codex Review on PR
 
+# Codex's built-in automatic review already covers opened and
+# ready-for-review PRs; this workflow only re-requests review on new commits.
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [synchronize]
+
+# The script authenticates with CODEX_PAT and never checks out PR code.
+permissions: {}
 
 jobs:
   codex-review:

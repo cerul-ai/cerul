@@ -38,3 +38,14 @@ or untracked user artifacts during repository maintenance.
 Use `main` as the only long-lived branch and `codex/` for agent branches.
 Public merges go through a ready-for-review PR unless the user explicitly asks
 for a draft.
+
+## Code Review Rules
+
+### Severity threshold
+- Report only P0 and P1 findings: crashes, data loss or corruption, security
+  issues, broken public behavior, and violations of the invariants above
+  (integer-microsecond time, content-aware invalidation, atomic publication,
+  zero-model-call index rebuilds).
+- Do not post P2 or lower findings. Skip wording, naming, style, docs phrasing,
+  refactoring ideas, and speculative edge cases; CI already covers format and lint.
+- When unsure whether an issue is P1, leave it out.
