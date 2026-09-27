@@ -9,7 +9,9 @@ constraints.
 
 - HTTP and MCP serving.
 - Windows distributions and additional target architectures.
-- Grounding, depth, pose, segmentation, and other perception processing.
+- Generic grounding, depth, calibrated 3D pose, segmentation, and hosted perception
+  processing. Optional local human-hand image keypoints are implemented; see
+  [hand annotation](../annotation.md#optional-local-hands-for-embodied-demonstrations).
 - Vision reranking and user-authored multi-camera episode directories.
 
 Reserved configuration, CLI flags, and design sketches do not implement these
@@ -22,7 +24,8 @@ training, and multi-tenant serving do not belong in this repository.
 
 Other excluded interfaces and implementation choices include DAG/profile/Run
 state machines, SSE, idempotency keys, bundle formats, ask/export/init/rm
-commands, SQLite, a Python SDK/PyO3, embedded inference beyond OCR, Temporal,
+commands, SQLite, a Python SDK/PyO3, embedded inference beyond OCR and the
+explicitly supported human-hand models, Temporal,
 knowledge graphs, chat UI, an action annotation family, and retargeting.
 Do not introduce new orchestration frameworks, plugin systems, or storage engines
 without a concrete requirement and a reviewed design.

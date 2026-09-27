@@ -10,7 +10,7 @@ installation instructions are in the [documentation](docs/README.md).
 | Area | Decision |
 | --- | --- |
 | Language | Rust, one crate with a library and one binary. ffmpeg subprocesses, four endpoint types, LanceDB, and embedded OCR. No PyTorch, GPU runtime, Python runtime, or plugins. |
-| Commands | `index`, `search`, `status`, `open`, `auth`, `annotate`, `render`, `remove`. HTTP and MCP serving are not implemented. |
+| Commands | `index`, `search`, `analyze`, `annotate`, `render`, `status`, `diagnostics`, `open`, `auth`, `config`, `remove`, `upgrade`, `skill`; hidden shell `completions`. HTTP and MCP serving are not implemented. |
 | Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
 | Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
 | Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, query instruction template, and applicable document template. The same model name at different endpoints is a different space. Queries must match exactly. |
@@ -323,7 +323,7 @@ resolved versions. FFmpeg runs as a separately licensed subprocess.
 
 Measure binary and archive sizes and CPU throughput on both targets during release acceptance.
 
-Every PR runs offline tests and two-platform builds. Maintainers run small real Gemini checks locally with their own credentials as part of the [release checklist](docs/development/releases.md). CI does not require a model key.
+Code-changing PRs run offline tests on both supported platforms; documentation-only PRs run the documentation checks. Optimized distribution builds run on version tags. Maintainers run small real Gemini checks locally with their own credentials as part of the [release checklist](docs/development/releases.md). See [developer validation](docs/development/validation.md) for the current gates. CI does not require a model key.
 
 ## 9. Validation and scope
 
@@ -364,7 +364,7 @@ unavailable. OCR tokens and fragmentary speech do not fill a visual list. Local
 selection retains source/time provenance, samples across the available timeline,
 and makes no model calls or authoritative-record changes. Missing speech,
 disabled ASR, no audio, successful empty transcription, and failures remain
-distinguishable. The [hybrid retrieval plan](docs/design/hybrid-video-search.md)
+distinguishable. The [hybrid retrieval decisions](docs/design/hybrid-video-search.md)
 records the initial default fusion and follow-up evaluation work. Automatic ANN
 selection remains disabled pending representative performance measurements.
 

@@ -21,8 +21,8 @@ reading command or compatibility details.
 
 ## Contributor guides
 
-- [Hybrid video retrieval proposal](design/hybrid-video-search.md) — independent evidence tracks, temporal alignment, fusion evaluation, and fallback behavior.
-
+- [Hybrid video retrieval decisions](design/hybrid-video-search.md) — independent evidence tracks, fusion and remaining evaluation.
+- [Annotation experience decisions](design/annotation-experience.md) — embodied intent, durable results and local hands.
 - [Contributing](../CONTRIBUTING.md)
 - [Repository and documentation map](../ARCHITECTURE.md#documentation-and-supporting-files)
 - [Build from source](development/building.md)
