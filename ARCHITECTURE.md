@@ -77,6 +77,7 @@ implement product UI, hosted inference, or HTTP/MCP serving. See
 | `vercel.json` | Explicitly disables legacy Vercel Git deployment; it does not define a product website in this repository. |
 | `.gitignore`, `.gitattributes` | Exclude local artifacts and preserve byte-sensitive asset behavior. |
 | [examples/](examples), [scripts/](scripts), [tests/](tests) | Runnable library examples, build/verification tools, and tests. Keep executable examples with their Cargo entry points. |
+| [docs/design/](docs/design) and `design/cli-interaction/` | Concise decision records that link to current contracts and historical proposals. They are not separate command references or implementation backlogs. CLI design notes are checkout-only and are not required by source-package guides. |
 | `.workspace/` | Ignored local plans, audits, and working artifacts; excluded from public source and packages. |
 
 The [contribution policy](CONTRIBUTING.md#maintain-public-documentation) defines
