@@ -5,6 +5,12 @@ publishes the section that matches the tagged version as the GitHub release
 notes, so keep an entry under **Unreleased** for every user-visible change and
 rename that heading when a version is cut.
 
+## 0.0.17 - 2026-09-29
+
+### Changed
+- Updated dependencies: LanceDB 0.39.0, tract-onnx 0.23.8, clap 4.6.7,
+  clap_complete 4.6.11, and rustix 1.1.5. Embedded OCR output is unchanged.
+
 ## 0.0.16 - 2026-09-19
 
 ### Added
