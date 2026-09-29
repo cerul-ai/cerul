@@ -30,7 +30,7 @@ schemars = "1"
 sha2 = "0.11"
 toml = "1.1"
 url = "2"
-lancedb = { version = "=0.38.0", features = ["remote"] }
+lancedb = { version = "=0.39.0", features = ["remote"] }
 # Keep Arrow and Parquet on the major version used by LanceDB.
 arrow-array = "58"
 arrow-schema = "58"

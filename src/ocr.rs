@@ -56,7 +56,7 @@ fn compile(bytes: &[u8], height: u32, width: u32) -> Result<Plan> {
 fn tensor(image: &RgbImage, recognition: bool) -> Result<Tensor> {
     let (width, height) = image.dimensions();
     let mut tensor = Tensor::zero::<f32>(&[1, 3, height as usize, width as usize])?;
-    let mut plain = tensor.try_as_plain_mut()?;
+    let mut plain = tensor.try_as_plain_ram_mut()?;
     let values = plain.as_slice_mut::<f32>()?;
     for c in 0..3 {
         for y in 0..height {

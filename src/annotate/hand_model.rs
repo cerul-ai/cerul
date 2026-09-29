@@ -43,7 +43,7 @@ fn sample(image: &RgbImage, x: f32, y: f32, channel: usize) -> f32 {
 }
 fn tensor(image: &RgbImage, size: usize, map: impl Fn(f32, f32) -> [f32; 2]) -> Result<Tensor> {
     let mut tensor = Tensor::zero::<f32>(&[1, size, size, 3])?;
-    let mut plain = tensor.try_as_plain_mut()?;
+    let mut plain = tensor.try_as_plain_ram_mut()?;
     let values = plain.as_slice_mut::<f32>()?;
     for y in 0..size {
         crate::media::check_cancellation()?;
