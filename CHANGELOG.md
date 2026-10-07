@@ -5,7 +5,7 @@ publishes the section that matches the tagged version as the GitHub release
 notes, so keep an entry under **Unreleased** for every user-visible change and
 rename that heading when a version is cut.
 
-## Unreleased
+## 0.0.18 - 2026-10-07
 
 ### Removed
 - Robot demonstration workflows moved to

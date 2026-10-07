@@ -1,7 +1,7 @@
 ---
 name: cerul
 description: Search local videos by meaning, exact words or reference image, analyze scenes, and export clips using the cerul CLI.
-generated-by: cerul 0.0.17
+generated-by: cerul 0.0.18
 generated-sha256: a8194db6b19f3d4b2903d63e95c1a9dcecd10ef7dc41b64170021c5acc503ded
 ---
 
