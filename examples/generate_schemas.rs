@@ -13,46 +13,16 @@ fn main() -> Result<()> {
             "execution-diagnostics",
             schema::<cerul::diagnostics::Report>(),
         ),
-        ("annotations", schema::<cerul::annotate::export::Bundle>()),
+        (
+            "annotations",
+            schema::<cerul::annotations::portable::Bundle>(),
+        ),
         (
             "grounding-hand-frame",
-            schema::<cerul::annotate::hands::Frame>(),
+            schema::<cerul::annotations::hand::Frame>(),
         ),
-        ("render-result", schema::<cerul::annotate::video::Report>()),
         ("status", schema::<cerul::status::Status>()),
         ("timeline", schema::<cerul::status::Timeline>()),
-        (
-            "annotate-result",
-            schema::<cerul::annotate::pipeline::Report>(),
-        ),
-        (
-            "semantic-task",
-            schema::<cerul::annotate::schema::Window<cerul::annotate::schema::Task>>(),
-        ),
-        (
-            "semantic-subtask",
-            schema::<cerul::annotate::schema::Window<cerul::annotate::schema::Subtask>>(),
-        ),
-        (
-            "semantic-event",
-            schema::<cerul::annotate::schema::Window<cerul::annotate::schema::Event>>(),
-        ),
-        (
-            "semantic-interaction",
-            schema::<cerul::annotate::schema::Window<cerul::annotate::schema::Interaction>>(),
-        ),
-        (
-            "semantic-state",
-            schema::<cerul::annotate::schema::Window<cerul::annotate::schema::State>>(),
-        ),
-        (
-            "semantic-flag",
-            schema::<cerul::annotate::schema::Window<cerul::annotate::schema::Flag>>(),
-        ),
-        (
-            "semantic-progress",
-            schema::<cerul::annotate::schema::Window<cerul::annotate::schema::Progress>>(),
-        ),
         ("search-result", schema::<cerul::search::Report>()),
         ("fusion-recipe", schema::<cerul::search::fusion::Recipe>()),
         ("fusion-moment", schema::<cerul::search::fusion::Moment>()),

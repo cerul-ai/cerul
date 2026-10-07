@@ -229,137 +229,6 @@ fn search_filter_and_text_modes_return_json_without_credentials() {
 }
 
 #[test]
-fn annotation_help_teaches_the_workflow_without_loading_configuration() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("cerul.toml"), "invalid = [").unwrap();
-    for args in [vec!["annotate"], vec!["annotate", "--help"]] {
-        let output = cli(dir.path(), &args);
-        let text = if args.len() == 1 {
-            assert_eq!(output.status.code(), Some(2));
-            assert!(output.stdout.is_empty());
-            String::from_utf8_lossy(&output.stderr)
-        } else {
-            assert!(output.status.success());
-            String::from_utf8_lossy(&output.stdout)
-        };
-        assert!(text.contains("subtask,event,interaction,state"), "{text}");
-        assert!(text.find("Examples:").unwrap() < text.find("Options:").unwrap());
-        assert!(text.contains("--semantic --only 0"), "{text}");
-        assert!(text.contains("no index step needed"), "{text}");
-        assert!(text.contains("semantic.<type>.jsonl"), "{text}");
-        assert!(!text.contains("following required arguments"), "{text}");
-    }
-    let output = cli(dir.path(), &["--json", "annotate"]);
-    assert_eq!(output.status.code(), Some(2));
-    assert_eq!(final_json(&output)["error"]["code"], "invalid_arguments");
-    assert!(output.stderr.is_empty());
-    let output = cli(dir.path(), &["annotate", "--semantci"]);
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected argument"));
-    assert!(!dir.path().join(".cerul").exists());
-}
-
-#[test]
-fn annotate_default_plan_and_m2_rejection_are_explicit() {
-    let dir = tempfile::tempdir().unwrap();
-    video(dir.path());
-    assert_eq!(
-        cli(
-            dir.path(),
-            &[
-                "--json",
-                "annotate",
-                "sample.mp4",
-                "--semantic",
-                "none",
-                "--dry-run"
-            ]
-        )
-        .status
-        .code(),
-        Some(2)
-    );
-    for (extra, count) in [
-        (vec!["--hands"], 5),
-        (vec!["--embodied", "--hands"], 5),
-        (vec!["--embodied", "--hands", "--semantic", "none"], 1),
-    ] {
-        let mut args = vec!["--json", "annotate", "sample.mp4", "--dry-run"];
-        args.extend(extra);
-        let output = cli(dir.path(), &args);
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        let value = final_json(&output);
-        assert_eq!(value["modules"].as_array().unwrap().len(), count);
-        assert_eq!(value["modules"][0]["annotation"], "grounding.hand");
-    }
-    let output = cli(
-        dir.path(),
-        &["--json", "annotate", "sample.mp4", "--dry-run"],
-    );
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let result = final_json(&output);
-    let mut names: Vec<_> = result["modules"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|m| m["annotation"].as_str().unwrap())
-        .collect();
-    names.sort();
-    assert_eq!(
-        names,
-        vec![
-            "semantic.event",
-            "semantic.interaction",
-            "semantic.state",
-            "semantic.subtask"
-        ]
-    );
-    assert!(!dir.path().join(".cerul").exists());
-    assert!(!dir.path().join("sample.mp4.cerul").exists());
-    let selected = cli(
-        dir.path(),
-        &[
-            "--json",
-            "annotate",
-            "sample.mp4",
-            "--embodied",
-            "--dry-run",
-        ],
-    );
-    assert!(selected.status.success());
-    let result = final_json(&selected);
-    let mut names: Vec<_> = result["modules"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|m| m["annotation"].as_str().unwrap())
-        .collect();
-    names.sort();
-    assert_eq!(
-        names,
-        vec![
-            "semantic.event",
-            "semantic.interaction",
-            "semantic.state",
-            "semantic.subtask"
-        ]
-    );
-    assert!(!dir.path().join(".cerul").exists());
-    assert!(!dir.path().join("sample.mp4.cerul").exists());
-    let output = cli(dir.path(), &["--json", "annotate", "sample.mp4", "--world"]);
-    assert_eq!(output.status.code(), Some(3));
-    assert_eq!(final_json(&output)["error"]["code"], "missing_capability");
-}
-
-#[test]
 fn provider_status_dry_run_remains_offline_and_does_not_create_workspace() {
     let dir = tempfile::tempdir().unwrap();
     let output = cli(
@@ -507,44 +376,6 @@ fn invalid_query_image_is_rejected_before_workspace_or_provider_setup() {
     assert_eq!(output.status.code(), Some(2));
     assert!(final_json(&output).get("error").is_some());
     assert!(!dir.path().join(".cerul").exists());
-}
-
-#[test]
-fn invalid_ontology_is_a_configuration_error_without_workspace_writes() {
-    use std::fs;
-    let dir = tempfile::tempdir().unwrap();
-    for (name, contents) in [
-        ("empty.txt", ""),
-        ("broken.json", "[\"reach\", "),
-        ("object.json", "{}"),
-    ] {
-        fs::write(dir.path().join(name), contents).unwrap();
-    }
-    for name in ["empty.txt", "broken.json", "object.json", "missing.txt"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_cerul"))
-            .current_dir(dir.path())
-            .env_clear()
-            .env("HOME", dir.path())
-            .env("PATH", "")
-            .args([
-                "--json",
-                "annotate",
-                "missing.mp4",
-                "--semantic",
-                "--ontology",
-                name,
-            ])
-            .output()
-            .unwrap();
-        assert_eq!(
-            output.status.code(),
-            Some(2),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        assert!(final_json(&output).get("error").is_some());
-        assert!(!dir.path().join(".cerul").exists());
-    }
 }
 
 #[test]
@@ -779,7 +610,7 @@ fn the_skill_installs_where_agents_look_and_never_replaces_a_hand_written_file()
     // The reference is generated, so every command has to appear in it.
     for command in [
         "cerul index",
-        "cerul annotate",
+        "cerul analyze",
         "cerul search",
         "cerul status",
     ] {
@@ -929,7 +760,7 @@ fn media_dependency_errors_identify_overrides_without_recommending_cli_reinstall
             .env("PATH", std::env::var_os("PATH").unwrap())
             .env("HOME", dir.path())
             .env("CERUL_FFMPEG", tool)
-            .args(["annotate", "unused.mp4", "--dry-run"])
+            .args(["index", "unused.mp4", "--dry-run"])
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(3));
@@ -1110,71 +941,12 @@ fn the_timeline_reads_local_files_only_and_rejects_a_type_that_does_not_exist() 
 }
 
 #[test]
-fn a_partial_annotation_carries_the_command_that_continues_it() {
-    let dir = tempfile::tempdir().unwrap();
-    video(dir.path());
-    let media = dir.path().join("sample.mp4");
-    // Port 9 discards connections, so the vision endpoint fails after the local
-    // work succeeds: the run is partial, which is what carries a retry.
-    let output = Command::new(env!("CARGO_BIN_EXE_cerul"))
-        .current_dir(dir.path())
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap())
-        .env("HOME", dir.path())
-        .env("GEMINI_API_KEY", "test-key")
-        .args([
-            "--json",
-            "annotate",
-            media.to_str().unwrap(),
-            "--semantic",
-            "subtask",
-            "--jobs",
-            "1",
-            "--set",
-            "vision.base_url=\"http://127.0.0.1:9\"",
-        ])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(6));
-    let value = final_json(&output);
-    assert_eq!(value["partial"], true);
-    // The result describes its own recovery, in the schema, not beside it.
-    let argv: Vec<String> = value["retry"]["argv"]
-        .as_array()
-        .expect("a partial run offers a retry")
-        .iter()
-        .map(|argument| argument.as_str().unwrap().to_owned())
-        .collect();
-    // The program is repeated as it was invoked: a path was used because the
-    // binary is not on PATH, and shortening it would break the copied command.
-    assert_eq!(argv[0], env!("CARGO_BIN_EXE_cerul"));
-    assert_eq!(value["retry"]["reason"], "incomplete");
-    // Every choice survives, or running it again would not be the same run.
-    for argument in [
-        media.to_str().unwrap(),
-        "--semantic",
-        "subtask",
-        "vision.base_url=\"http://127.0.0.1:9\"",
-    ] {
-        assert!(argv.iter().any(|value| value == argument), "{argv:?}");
-    }
-    assert!(!argv.iter().any(|value| value == "--recompute"), "{argv:?}");
-    // A source that is only a file name cannot say which input it came from,
-    // and two directories can hold the same name.
-    let source = value["modules"][0]["source"].as_str().unwrap();
-    assert!(source.ends_with("/sample.mp4"), "{source}");
-    assert!(std::path::Path::new(source).is_absolute(), "{source}");
-}
-
-#[test]
 fn help_command_explains_workflows_without_workspace_or_tools() {
     let dir = tempfile::tempdir().unwrap();
     for command in [
         None,
         Some("index"),
         Some("search"),
-        Some("annotate"),
-        Some("render"),
         Some("status"),
         Some("open"),
         Some("remove"),
@@ -1282,4 +1054,49 @@ fn config_show_and_set_work_without_a_terminal_and_round_trip_through_the_saved_
     let shown = final_json(&cli(dir.path(), &["--json", "config", "--show"]));
     assert_eq!(shown["search"]["hybrid"], Value::Bool(true));
     assert_eq!(shown["transcription"]["enabled"], Value::Bool(false));
+}
+
+#[test]
+fn robotics_commands_fail_with_a_migration_hint_without_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    for command in ["annotate", "render"] {
+        let output = cli(dir.path(), &["--json", command, "missing.mp4"]);
+        assert_eq!(output.status.code(), Some(3));
+        assert!(
+            final_json(&output)["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("cerul-robotics")
+        );
+    }
+    assert!(!dir.path().join(".cerul").exists());
+}
+
+#[test]
+fn dataset_roots_require_robotics_even_for_a_dry_run() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("dataset/meta")).unwrap();
+    std::fs::write(dir.path().join("dataset/meta/info.json"), "{}").unwrap();
+    for command in ["index", "analyze"] {
+        let output = cli(
+            dir.path(),
+            &[
+                "--json",
+                "--set",
+                "vision.enabled=true",
+                "--dry-run",
+                command,
+                "dataset",
+            ],
+        );
+        assert_eq!(output.status.code(), Some(3), "{output:?}");
+        assert!(
+            final_json(&output)["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("cerul-robotics")
+        );
+    }
+    assert!(!dir.path().join(".cerul").exists());
+    assert!(!dir.path().join("dataset/.cerul").exists());
 }

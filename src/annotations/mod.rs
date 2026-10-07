@@ -1,4 +1,7 @@
 //! Versioned annotation files. Validate a complete module before publishing it.
+pub mod hand;
+pub mod layout;
+pub mod portable;
 use crate::{episode::TimeRange, storage};
 use anyhow::{Context, Result, bail, ensure};
 use schemars::JsonSchema;
@@ -152,7 +155,7 @@ impl AnnotationFile {
             }
             match h.name.as_str() {
                 "grounding.hand" => {
-                    crate::annotate::hands::Frame::from_record(record)?;
+                    crate::annotations::hand::Frame::from_record(record)?;
                     ensure!(
                         index == 0 || self.records[index - 1].end_us == record.start_us,
                         "hand frames must be contiguous and ordered"

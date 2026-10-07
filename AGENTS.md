@@ -27,7 +27,7 @@ Verify with `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warn
 and `cargo test --locked`.
 Each implementation step needs focused behavioral verification. Release acceptance requires
 macOS arm64 and Linux x86_64 builds, real OCR inference, model endpoint smoke
-checks, interruption recovery, and official LeRobot loader round-trips.
+checks, interruption recovery, and sidecar round-trips. Robotics owns hand inference and official LeRobot loader gates.
 Do not replace these gates with mock-only or schema-only evidence. See
 [developer validation](docs/development/validation.md) for reproducible checks.
 

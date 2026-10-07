@@ -124,7 +124,7 @@ configured endpoints, including optional ones that are unnecessary for your
 first video. Processing commands probe the endpoints they actually need.
 
 Continue with the [video tutorial](video-search.md) or the
-[LeRobot tutorial](lerobot-subtasks.md).
+[LeRobot tutorial](https://github.com/cerul-ai/cerul-robotics/blob/main/docs/lerobot-subtasks.md).
 
 ## Custom media tools and development builds
 

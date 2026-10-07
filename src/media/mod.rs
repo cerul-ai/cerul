@@ -186,7 +186,7 @@ pub async fn with_cancellation<T>(
     }
 }
 /// Carry an operation's cancellation token into scoped CPU worker threads.
-pub(crate) fn with_sync_cancellation<T>(
+pub fn with_sync_cancellation<T>(
     cancel: tokio_util::sync::CancellationToken,
     operation: impl FnOnce() -> T,
 ) -> T {

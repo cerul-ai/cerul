@@ -113,7 +113,7 @@ emits one delta with `cached: true`. Use `--recompute` to refresh the answer.
 - `index`: build video, OCR and speech retrieval data.
 - `search`: retrieve moments using available saved tracks.
 - `analyze`: generate scenes/overview or answer a question about selected footage.
-- `annotate`: produce embodied semantic labels, optionally with local hands.
+- `cerul-robotics annotate`: produce embodied semantic labels, optionally with local hands.
 
 Previously saved analysis remains compatible. Existing description vectors remain
 searchable, but neither ordinary `index` nor `analyze` regenerates that optional

@@ -103,7 +103,7 @@ The schema for these lives in [`schemas/event.json`](../schemas/event.json).
 
 ## Final objects
 
-`index`, `search`, `status`, `status --timeline`, `annotate`, and `remove`
+`index`, `search`, `status`, `status --timeline`, and `remove`
 each have a generated schema in [`schemas/`](../schemas/), produced from the Rust
 result types. `auth`, `open`, `skill`, and `upgrade` return small objects with no
 generated schema; their shapes are:
@@ -118,32 +118,13 @@ generated schema; their shapes are:
 `upgrade` reports in `--json` and installs nothing; replacing the program needs
 an explicit `--yes`, which is a decision to put to the user rather than take.
 
-`auth` never reports a key's value, or any part of one. Two fields on the
-generated results matter most to an agent.
+`auth` never reports a key's value or any part of one. Partial index and provider
+status results use exit 6; repeat the same command to reuse completed work.
+Cancellation uses an error with code `cancelled` and exit 5. Do not add
+`--recompute` unless fresh processing is intended.
 
-**`modules[].path` on an annotate result** is where a published annotation file
-is. It is absent while a module is incomplete, because there is no file to point
-at yet.
-
-**`retry`** appears on a partial **annotate** result and carries the command that
-continues the work. It is the only command that offers one: `index` and
-`status --providers` can also exit 6, and there the recovery is to run the same
-command again. A cancelled run has no result object at all, only an error with
-code `cancelled` and exit 5; the same command run again resumes it.
-
-```json
-{
-  "retry": {
-    "argv": ["cerul", "annotate", "/v/demo.mp4", "--semantic", "subtask,event", "--rpm", "6"],
-    "reason": "rate_limit"
-  }
-}
-```
-
-`argv` repeats the original invocation and changes only what the failure calls
-for; run it verbatim. `reason` is `rate_limit` when a provider limited the run and
-`incomplete` otherwise. Never add `--recompute` to a retry: it discards finished
-work and pays for it again.
+Robotics annotation result fields, including published module paths and retry
+arguments, belong to the separate [Robotics CLI](https://github.com/cerul-ai/cerul-robotics).
 
 ## Reading results back
 

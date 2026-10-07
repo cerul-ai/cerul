@@ -5,6 +5,23 @@ publishes the section that matches the tagged version as the GitHub release
 notes, so keep an entry under **Unreleased** for every user-visible change and
 rename that heading when a version is cut.
 
+## Unreleased
+
+### Removed
+- Robot demonstration workflows moved to
+  [Cerul Robotics](https://github.com/cerul-ai/cerul-robotics): `annotate`,
+  `render`, `--write-lerobot`, local human-hand inference and its embedded
+  models, and automatic LeRobot dataset detection. The retired command names
+  exit 3 with a migration hint and write nothing. Pointing `index` or `analyze`
+  at a LeRobot dataset root returns the same hint instead of indexing its video
+  shards as unrelated files.
+
+### Changed
+- Annotations, hand frames and portable bundles published by earlier versions
+  stay readable: `search`, `status --timeline` and zero-model-call index rebuilds
+  still use them. Nothing on disk is moved or rewritten. See the
+  [migration guide](docs/robotics-migration.md).
+
 ## 0.0.17 - 2026-09-29
 
 ### Changed

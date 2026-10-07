@@ -245,12 +245,3 @@ in an empty directory, place the supplied build script in `scripts/build-media.s
 and place the three tarballs in `target/media-build/` as `ffmpeg-7.1.4.tar.xz` and
 `x264.tar.gz`, and `zlib.tar.gz`. Run `bash scripts/build-media.sh` with a native C compiler, make,
 pkg-config, curl, tar, and xz/bzip2 available. Outputs appear in `target/bundle/`.
-
-## Embedded MediaPipe ONNX conversions
-
-OpenCV Zoo contributors publish the palm and hand-landmark ONNX models and
-reference preprocessing under Apache-2.0. Cerul adapts the image transforms
-and postprocessing in Rust. See models/hands/README.md for exact versions,
-hashes and provenance; models/hands/LICENSE and packaging/licenses/opencv-zoo.txt
-contain the license. The public hand regression fixture is derived from the
-same Apache-2.0 example directory; see tests/fixtures/README.md.

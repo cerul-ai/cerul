@@ -10,8 +10,8 @@ constraints.
 - HTTP and MCP serving.
 - Windows distributions and additional target architectures.
 - Generic grounding, depth, calibrated 3D pose, segmentation, and hosted perception
-  processing. Optional local human-hand image keypoints are implemented; see
-  [hand annotation](../annotation.md#optional-local-hands-for-embodied-demonstrations).
+  processing. Local human-hand inference is owned by Cerul Robotics; see
+  [hand annotation](https://github.com/cerul-ai/cerul-robotics/blob/main/docs/annotation.md#optional-local-hands-for-embodied-demonstrations).
 - Vision reranking and user-authored multi-camera episode directories.
 
 Reserved configuration, CLI flags, and design sketches do not implement these
@@ -24,8 +24,7 @@ training, and multi-tenant serving do not belong in this repository.
 
 Other excluded interfaces and implementation choices include DAG/profile/Run
 state machines, SSE, idempotency keys, bundle formats, ask/export/init/rm
-commands, SQLite, a Python SDK/PyO3, embedded inference beyond OCR and the
-explicitly supported human-hand models, Temporal,
+commands, SQLite, a Python SDK/PyO3, embedded inference beyond OCR, Temporal,
 knowledge graphs, chat UI, an action annotation family, and retargeting.
 Do not introduce new orchestration frameworks, plugin systems, or storage engines
 without a concrete requirement and a reviewed design.

@@ -29,7 +29,7 @@
 
 ## 用一句話搜尋你的影片
 
-Cerul 將本機影片變成可搜尋的資料庫。描述一個畫面，查找影片中說過或出現過的文字，再把匹配片段匯出。支援普通影片資料夾和 LeRobot 資料集，使用你自己的模型 API key。
+Cerul 將本機影片變成可搜尋的資料庫。描述一個畫面，查找影片中說過或出現過的文字，再把匹配片段匯出。支援普通影片資料夾，使用你自己的模型 API key。
 
 - **按含義或圖片搜尋**：輸入一句描述，或提供參考圖片。
 - **查找語音和螢幕文字**：語音轉錄搭配內建的本機 OCR。
@@ -89,17 +89,11 @@ shell 補全的設定見[安裝指南](docs/installation.md#shell-completions)�
 
 [更多使用範例 →](docs/video-search.md)
 
-## 標註動作與示範影片
+## Robotics workflows
 
-為一般影片、第一人稱錄影或機器人示範產生動作步驟、事件、互動及狀態變化標註，無需先建立索引。
-
-```sh
-cerul annotate ./video.mp4 --semantic subtask,event,interaction,state
-```
-
-加上 `--dry-run` 可預覽處理計畫。結果儲存在 JSONL sidecar 中，執行 `cerul status ./video.mp4` 查看位置。對於 LeRobot 資料集，可先用 `cerul annotate ./dataset --semantic --only 0` 標註第一個 episode。這些是語義標註，目前不提供姿態、深度或 3D 軌跡。
-
-[標註類型、輸出位置與 LeRobot 範例 →](docs/annotation.md)
+Robot demonstration labels, human-hand tracking, LeRobot datasets and annotated
+review videos are maintained in [Cerul Robotics](https://github.com/cerul-ai/cerul-robotics).
+See the [migration guide](docs/robotics-migration.md) for commands and existing data.
 
 ## 讓 agent 幫你安裝
 
@@ -123,12 +117,11 @@ cerul skill --install claude    # 也支援 codex、pi，或 --dir ./skills
 | --- | --- | --- |
 | 處理整個資料夾 | `cerul index ./videos` | 會遞迴子目錄，已完成的部分自動略過 |
 | 預覽要做的事 | `cerul --dry-run index ./videos` | 花錢呼叫模型之前，先看清處理計畫 |
-| 生成語意標註 | `cerul annotate ./videos --semantic` | 只要動作標註，不需要建搜尋索引 |
 | 查看進度和結果 | `cerul status` | 中斷之後繼續，或查找 sidecar 位置 |
 | 限定一部影片搜尋 | `cerul search "打開門" --in ./demo.mp4` | 略過資料庫裡的其他影片 |
 | 回看某筆結果 | `cerul open 2` | 用播放器開啟編號對應的片段 |
 
-轉錄、標註和向量保存在影片旁的 sidecar 檔案中，可不呼叫模型重建搜尋索引。LeRobot 子任務回寫需要明確選擇開啟。
+轉錄、標註和向量保存在影片旁的 sidecar 檔案中，可不呼叫模型重建搜尋索引。
 
 ## 設定模型服務
 
@@ -140,7 +133,7 @@ Cerul 呼叫的是你自己的模型服務，供應商由你選擇，費用也�
 | 語音轉錄 | 有可用金鑰時預設用 Gemini | Groq、OpenAI、OpenAI 相容服務，或關閉 |
 | 螢幕文字（OCR） | 本機執行，不呼叫 API | — |
 
-索引只建立影片和文字的搜尋資料，不會產生場景描述、章節或摘要。需要場景和總覽請用 `cerul analyze ./video.mp4`，需要具身語義標註請用 `cerul annotate ./video.mp4`。`--no-audio` 可以單獨略過語音環節。
+索引只建立影片和文字的搜尋資料，不會產生場景描述、章節或摘要。需要場景和總覽請用 `cerul analyze ./video.mp4`。`--no-audio` 可以單獨略過語音環節。
 
 [模型服務與憑證 →](docs/configuration.md) ·
 [查看已儲存的分析結果 →](docs/video-search.md#inspect-video-understanding)
@@ -151,7 +144,7 @@ Cerul 呼叫的是你自己的模型服務，供應商由你選擇，費用也�
 
 ![Cerul 架構：多模態索引與搜尋，以及獨立的第一人稱標註流程](docs/assets/cerul-architecture.png)
 
-*架構圖中的畫面由 AI 生成，僅作示意。預設搜尋會把影片、語音、螢幕文字和描述四路獨立候選，與受控的全文匹配結果，用 max fusion 和受限的一致性加權合併。原始證據和時間戳始終可以回溯查看。資料集回寫支援可選開啟的 LeRobot 子任務。已實作的行為詳見 [DESIGN.md](DESIGN.md)。*
+*架構圖中的畫面由 AI 生成，僅作示意。預設搜尋會把影片、語音、螢幕文字和描述四路獨立候選，與受控的全文匹配結果，用 max fusion 和受限的一致性加權合併。原始證據和時間戳始終可以回溯查看。已實作的行為詳見 [DESIGN.md](DESIGN.md)。*
 
 ## 了解更多
 
@@ -159,7 +152,7 @@ Cerul 呼叫的是你自己的模型服務，供應商由你選擇，費用也�
 - [安裝與排錯](docs/installation.md)
 - [影片搜尋教學](docs/video-search.md)
 - [顯式影片分析](docs/analyze.md)
-- [LeRobot 教學](docs/lerobot-subtasks.md)
+- [LeRobot 教學](https://github.com/cerul-ai/cerul-robotics/blob/main/docs/lerobot-subtasks.md)
 - [模型服務與設定](docs/configuration.md)
 - [貢獻與開發整合](CONTRIBUTING.md)
 

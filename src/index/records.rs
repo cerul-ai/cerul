@@ -83,11 +83,11 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
                 continue;
             }
             let directory = stream_directory(&entry.sidecar, stream.id(), &episode.time.reference);
-            for path in crate::annotate::layout::files(&directory)? {
+            for path in crate::annotations::layout::files(&directory)? {
                 // Dense hand frames are read explicitly by status and rendering.
                 if path
                     .file_stem()
-                    .is_some_and(|name| name == crate::annotate::hands::NAME)
+                    .is_some_and(|name| name == crate::annotations::hand::NAME)
                 {
                     continue;
                 }
@@ -99,7 +99,7 @@ pub fn sidecars(workspace: &Path) -> Result<Vec<AnnotationFile>> {
                     continue;
                 }
                 if file.header.name.starts_with("semantic.")
-                    || file.header.name == crate::annotate::hands::NAME
+                    || file.header.name == crate::annotations::hand::NAME
                 {
                     let coverage =
                         episode

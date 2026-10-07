@@ -31,7 +31,7 @@
 
 Cerul turns local videos into a searchable library. Describe a moment, find text
 spoken or shown on screen, and save matching clips. It works with ordinary video
-folders and LeRobot datasets, using your own model API key.
+folders, using your own model API key.
 
 - **Search by meaning or example.** Use a sentence or a reference image.
 - **Find speech and screen text.** Transcription plus local, embedded OCR.
@@ -100,20 +100,11 @@ Shell completions live in the
 
 [More examples →](docs/video-search.md)
 
-## Annotate actions and demonstrations
+## Robotics workflows
 
-Label action steps, events, interactions, and state changes in a video, including
-egocentric recordings and robot demonstrations. No indexing step is required.
-
-```sh
-cerul annotate ./video.mp4 --semantic subtask,event,interaction,state
-```
-
-Use `--dry-run` to preview the work. Results are saved in JSONL sidecars;
-`cerul status ./video.mp4` shows their location. For LeRobot datasets, label a
-first episode with `cerul annotate ./dataset --semantic --only 0`.
-
-[Annotation types, outputs, and LeRobot examples →](docs/annotation.md)
+Robot demonstration labels, human-hand tracking, LeRobot datasets and annotated
+review videos are maintained in [Cerul Robotics](https://github.com/cerul-ai/cerul-robotics).
+See the [migration guide](docs/robotics-migration.md) for commands and existing data.
 
 ## Let your agent do the setup
 
@@ -137,7 +128,6 @@ cerul skill --install claude    # also: codex, pi, or --dir ./skills
 | --- | --- | --- |
 | Index a folder | `cerul index ./videos` | Walks subfolders and skips work already done |
 | Preview the work | `cerul --dry-run index ./videos` | See the plan, and what will call a model, before paying for it |
-| Annotate semantically | `cerul annotate ./videos --semantic` | Action labels without building a search index |
 | Check progress | `cerul status` | After an interruption, or to find where sidecars live |
 | Search one video | `cerul search "opening a door" --in ./demo.mp4` | Skip the rest of the library |
 | Replay a result | `cerul open 2` | Open a numbered match in your video player |
@@ -159,7 +149,7 @@ own usage. Run `cerul config` to change any of it.
 
 Indexing builds video and text search data without generating scene descriptions,
 chapters, or summaries. Use `cerul analyze ./video.mp4` for scenes and an
-overview, or `cerul annotate ./video.mp4` for embodied semantic labels.
+overview, with Robotics for embodied semantic labels.
 `--no-audio` skips speech independently of everything else.
 
 [Model endpoints and credentials →](docs/configuration.md) ·
@@ -176,8 +166,7 @@ interactions, and state changes, including embodied and egocentric recordings.
 *Architecture with AI-generated illustrative frames. Default search combines
 independent video, speech, screen-text, and description candidates with gated
 full-text matches using max fusion and capped agreement. Original evidence and
-timestamps remain inspectable. Dataset writeback supports opt-in LeRobot
-subtasks. See [DESIGN.md](DESIGN.md) for implemented behavior.*
+timestamps remain inspectable. Robotics owns dataset writeback. See [DESIGN.md](DESIGN.md) for implemented behavior.*
 
 ## Learn more
 
@@ -185,7 +174,7 @@ subtasks. See [DESIGN.md](DESIGN.md) for implemented behavior.*
 - [Installation and troubleshooting](docs/installation.md)
 - [Video search tutorial](docs/video-search.md)
 - [Explicit video analysis](docs/analyze.md)
-- [LeRobot tutorial](docs/lerobot-subtasks.md)
+- [LeRobot tutorial](https://github.com/cerul-ai/cerul-robotics/blob/main/docs/lerobot-subtasks.md)
 - [Model endpoints and configuration](docs/configuration.md)
 - [Contributing and developer integration](CONTRIBUTING.md)
 
