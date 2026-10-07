@@ -1,6 +1,13 @@
 //! Versioned semantic layout with legacy reads and recoverable file publication.
+use super::Record;
 use crate::{annotations::AnnotationFile, storage};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Product {
+    pub annotation: AnnotationFile,
+    pub conflicts: Vec<Record>,
+}
 use std::{
     collections::BTreeMap,
     fs,
@@ -33,7 +40,7 @@ pub fn recovery(directory: &Path, name: &str) -> PathBuf {
 /// On interruption readers prefer the new complete file; unrelated files stay put.
 pub fn publish(
     directory: &Path,
-    product: &super::semantic::Product,
+    product: &Product,
     coverage: crate::episode::TimeRange,
     ontology: Option<&std::collections::BTreeSet<String>>,
 ) -> Result<()> {

@@ -37,12 +37,6 @@ Common workflows:
   cerul search \"a person holding a cup\"
   Analyze scenes and summarize a video
   cerul analyze ./video.mp4
-  Embodied semantic labels
-  cerul annotate ./video.mp4
-  Embodied labels + local hands
-  cerul annotate ./video.mp4 --hands
-  Export an annotated video
-  cerul render ./video.mp4 --out ./review.mp4
   Inspect the workspace
   cerul status
 
@@ -57,8 +51,6 @@ Examples:
   cerul index ./video.mp4
   Index a folder
   cerul index ./videos
-  Index a LeRobot dataset
-  cerul index ./dataset
   Skip speech transcription
   cerul index ./video.mp4 --no-audio
   Preview without processing
@@ -69,7 +61,7 @@ Then search your workspace:
 No path is needed when searching. --workspace DIR selects a separate library.
 Screen text runs locally; embeddings and speech use configured APIs.
 Indexing does not generate scene descriptions, chapters, or summaries.
-Use cerul annotate for semantic labels. Existing annotations remain available.
+Use cerul analyze for scenes and summaries. Existing annotations remain available.
 Compatible completed work is reused. --recompute processes it again.
 Independent model work shares --jobs (default 4) and --rpm across stages.
 The final receipt keeps total indexing time, excluding setup and prompts.
@@ -94,37 +86,12 @@ Run index first. Quote a multi-word query as one argument.
 --in is optional; source videos remain in their original locations.
 --text searches local evidence; semantic queries use your configured embedding API.";
 
-const ANNOTATE_EXAMPLES: &str = "\
-Examples:
-  cerul annotate ./video.mp4 --semantic
-      Label embodied steps, events, interactions, and states (no index step needed).
-  cerul annotate ./video.mp4 --semantic subtask,event,interaction,state
-      Label action steps, events, contacts, and state changes in a demonstration.
-  cerul annotate ./dataset --semantic --only 0
-      Label the first LeRobot episode with embodied defaults.
-  cerul annotate ./video.mp4 --semantic --dry-run
-      Preview the work without writing files or calling models.
-  cerul annotate ./video.mp4 --hands --semantic none
-      Track human hands locally on CPU, with no model key required.
-
-Types: task, subtask, event, interaction, state, flag, progress.
-Defaults: subtask,event,interaction,state. Annotation is embodied-only; use analyze for general videos.
-Outputs: annotations.json and summary.md; internal semantic.<type>.jsonl sidecars retain provenance.
-LeRobot: annotations live in .cerul/episodes/<episode_index>/ inside the dataset.
---out is a new LeRobot dataset copy and requires --write-lerobot; it is not a
-JSONL export directory. See the LeRobot guide for supported writeback versions.
-
-Semantic labels use your configured vision endpoint (Gemini by default): cerul auth set.
---hands is optional and never enabled automatically. Add --semantic none for hands only.
-Depth, calibrated 3D poses, and robot gripper detection are not supported.
-Guide: https://github.com/cerul-ai/cerul/blob/main/docs/annotation.md";
-
 #[derive(Parser)]
 #[command(
     name = "cerul",
     version,
-    about = "Search and annotate your videos",
-    long_about = "Search and annotate your videos.\n\nFind moments from a description, export clips, or label actions and states in videos and LeRobot demonstrations.",
+    about = "Search and understand your videos",
+    long_about = "Search and understand your videos.\n\nFind moments from a description, export clips, and analyze scenes in your videos.",
     after_help = EXAMPLES,
     disable_help_subcommand = false
 )]
@@ -216,32 +183,20 @@ enum Command {
     /// Analyze scenes, chapters, and a grounded overview without indexing.
     #[command(
         arg_required_else_help = true,
-        after_help = "Examples:\n  cerul analyze ./video.mp4\n  cerul analyze ./dataset --only 0\n  cerul analyze ./video.mp4 --json\nNo index is required. Uses the vision endpoint, reusing existing OCR and speech. Saves semantic.scene, semantic.section and semantic.summary sidecars. Does not generate embeddings or transcribe audio. Use --prompt for a question, --image for reference images, --from/--to to select a range, and --stream for incremental answers. With --json, deltas go to stderr and a validated final JSON object goes to stdout."
+        after_help = "Examples:\n  cerul analyze ./video.mp4\n  cerul analyze ./videos\n  cerul analyze ./video.mp4 --json\nNo index is required. Uses the vision endpoint, reusing existing OCR and speech. Saves semantic.scene, semantic.section and semantic.summary sidecars. Does not generate embeddings or transcribe audio. Use --prompt for a question, --image for reference images, --from/--to to select a range, and --stream for incremental answers. With --json, deltas go to stderr and a validated final JSON object goes to stdout."
     )]
     Analyze(AnalyzeArgs),
-    /// Generate semantic labels and optional local hands for embodied videos.
-    #[command(
-        arg_required_else_help = true,
-        long_about = "Label tasks, action steps, events, interactions, and states in videos or LeRobot demonstrations. Run directly on your media; indexing is not required.",
-        before_help = ANNOTATE_EXAMPLES
-    )]
-    Annotate(AnnotateArgs),
-    /// Render published semantic labels and hand skeletons without model calls.
-    #[command(
-        after_help = "Example: cerul render ./video.mp4 --out ./review.mp4\nRequires published annotations. Adds semantic captions and available hand skeletons, with no model calls. Use --watermark for a visible Cerul signature; output must be a new file."
-    )]
+    /// Moved to the separate cerul-robotics CLI.
+    #[command(hide = true)]
+    Annotate {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Moved to the separate cerul-robotics CLI.
+    #[command(hide = true)]
     Render {
-        /// Annotated video, or an exported annotations.json for a dataset episode.
-        path: PathBuf,
-        /// New review video (must not already exist).
-        #[arg(long, value_name = "MP4")]
-        out: PathBuf,
-        /// Camera id (defaults to the primary camera).
-        #[arg(long)]
-        stream: Option<String>,
-        /// Burn a visible Cerul signature into the caption panel.
-        #[arg(long)]
-        watermark: bool,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Remove indexed videos, or free the disk they and their caches use.
     #[command(
@@ -314,52 +269,6 @@ enum AuthAction {
     Set,
     /// Delete the saved Gemini API key.
     Remove,
-}
-#[derive(Args)]
-struct AnnotateArgs {
-    /// Videos, directories, or LeRobot datasets.
-    #[arg(required = true)]
-    paths: Vec<PathBuf>,
-    /// Semantic items, comma-separated; use none with --hands for offline hand annotation.
-    #[arg(long,num_args=0..=1,default_missing_value="default", value_name = "ITEMS")]
-    semantic: Option<String>,
-    /// Compatibility flag: annotation is always embodied.
-    #[arg(long, hide = true, default_value_t = true)]
-    embodied: bool,
-    /// Add local human-hand keypoints to an embodied demonstration (CPU, no API calls).
-    #[arg(long)]
-    hands: bool,
-    /// Write subtask annotations back into the LeRobot dataset.
-    #[arg(long)]
-    write_lerobot: bool,
-    /// New output LeRobot dataset (requires --write-lerobot).
-    #[arg(long, value_name = "DIR")]
-    out: Option<PathBuf>,
-    /// Custom ontology file.
-    #[arg(long, value_name = "FILE", help_heading = ADVANCED)]
-    ontology: Option<PathBuf>,
-    /// Model window length, for example 30s.
-    #[arg(long,default_value="30s",value_parser=duration, help_heading = ADVANCED)]
-    window: i64,
-    /// Frames per second sampled for the model.
-    #[arg(long, default_value_t = 2., help_heading = ADVANCED)]
-    fps: f64,
-    /// Parallel model requests.
-    #[arg(long, default_value_t = 4, help_heading = ADVANCED)]
-    jobs: usize,
-    /// Cap on model requests per minute.
-    #[arg(long, help_heading = ADVANCED)]
-    rpm: Option<u32>,
-    /// Streams to annotate, comma-separated.
-    #[arg(long, default_value = "primary", help_heading = ADVANCED)]
-    streams: String,
-    /// Only these episodes (ids or local indexes), comma-separated.
-    #[arg(long, help_heading = ADVANCED)]
-    only: Option<String>,
-    #[arg(long,num_args=0..=1,default_missing_value="default", hide = true)]
-    grounding: Option<String>,
-    #[arg(long,num_args=0..=1,default_missing_value="default", hide = true)]
-    world: Option<String>,
 }
 #[derive(Args)]
 struct SearchArgs {
@@ -441,7 +350,7 @@ struct AnalyzeArgs {
     /// Stream answer text; with --json, deltas go to stderr and final JSON to stdout.
     #[arg(long)]
     stream: bool,
-    /// Videos, folders, or LeRobot datasets.
+    /// Videos or folders.
     #[arg(required = true)]
     paths: Vec<PathBuf>,
     /// Camera selection: primary, all, or comma-separated ids.
@@ -459,7 +368,7 @@ struct AnalyzeArgs {
 }
 #[derive(Args)]
 struct IndexArgs {
-    /// Videos, directories, or LeRobot datasets.
+    /// Videos or directories.
     #[arg(required = true)]
     paths: Vec<PathBuf>,
     /// Skip speech transcription.
@@ -863,72 +772,6 @@ async fn upgrade(cli: &Cli, sink: &Sink, cancel: CancellationToken) -> Result<(O
 
 /// Provider wording differs by endpoint, so the categories are matched on the
 /// signals every one of them sends rather than on one vendor's message.
-fn rate_limited(error: &str) -> bool {
-    let text = error.to_lowercase();
-    [
-        "429",
-        "rate limit",
-        "rate-limit",
-        "resource_exhausted",
-        "quota",
-    ]
-    .iter()
-    .any(|signal| text.contains(signal))
-}
-
-fn retry_after(
-    report: &cerul::annotate::pipeline::Report,
-    original: &[String],
-) -> Option<cerul::annotate::pipeline::Retry> {
-    if !report.partial || report.dry_run {
-        return None;
-    }
-    let limited = report
-        .modules
-        .iter()
-        .filter_map(|module| module.error.as_deref())
-        .any(rate_limited);
-    // Keeping the program exactly as it was invoked: a path was probably used
-    // because the binary is not on PATH, and shortening it would break the copy.
-    let (program, rest) = original.split_first()?;
-    let mut argv = vec![program.clone()];
-    // The rate cap is the one argument this command is allowed to replace.
-    let mut rpm: Option<u32> = None;
-    let mut expecting = false;
-    for argument in rest {
-        if expecting {
-            expecting = false;
-            rpm = argument.parse().ok();
-            continue;
-        }
-        if argument == "--rpm" {
-            expecting = true;
-            continue;
-        }
-        if let Some(value) = argument.strip_prefix("--rpm=") {
-            rpm = value.parse().ok();
-            continue;
-        }
-        argv.push(argument.clone());
-    }
-    let reason = match limited {
-        true => cerul::annotate::pipeline::RetryReason::RateLimit,
-        false => cerul::annotate::pipeline::RetryReason::Incomplete,
-    };
-    // Halving a cap the person already chose respects their intent; a first
-    // limit starts low enough that a retry is worth attempting at all.
-    let next = match (limited, rpm) {
-        (true, Some(current)) => Some((current / 2).max(1)),
-        (true, None) => Some(6),
-        (false, current) => current,
-    };
-    if let Some(value) = next {
-        argv.push("--rpm".into());
-        argv.push(value.to_string());
-    }
-    Some(cerul::annotate::pipeline::Retry { argv, reason })
-}
-
 /// Everything a command can produce. JSON mode serializes it; human mode renders it.
 enum Outcome {
     Diagnostics(Value),
@@ -969,8 +812,6 @@ enum Outcome {
     Analyze(cerul::analyze::Report, Duration),
     Index(pipeline::Report, render::IndexContext),
     Search(cerul::search::Report, render::SearchContext),
-    Annotate(cerul::annotate::pipeline::Report, BTreeMap<String, PathBuf>),
-    Render(cerul::annotate::video::Report),
 }
 impl Outcome {
     fn json(&self) -> Result<Value> {
@@ -1017,8 +858,6 @@ impl Outcome {
                 value["upgraded"] = json!(upgraded);
                 value
             }
-            Outcome::Annotate(report, _) => serde_json::to_value(report)?,
-            Outcome::Render(report) => serde_json::to_value(report)?,
         })
     }
     fn render(&self, out: &mut dyn Write, palette: &Palette) -> io::Result<()> {
@@ -1027,16 +866,6 @@ impl Outcome {
                 out,
                 "{}",
                 serde_json::to_string_pretty(value).map_err(io::Error::other)?
-            ),
-            Outcome::Render(report) => writeln!(
-                out,
-                "{} {}",
-                if report.rendered {
-                    "Rendered"
-                } else {
-                    "Would render"
-                },
-                report.output.display()
             ),
             Outcome::Home(status, models) => render::home(out, palette, status, models),
             Outcome::Status {
@@ -1138,13 +967,6 @@ impl Outcome {
             Outcome::Search(report, context) => render::search(out, palette, report, context),
             Outcome::Remove(report, names, unknown) => {
                 render::remove(out, palette, report, names, unknown)
-            }
-            Outcome::Annotate(report, names) => {
-                let command = report
-                    .retry
-                    .as_ref()
-                    .map(|retry| render::shell_command(&retry.argv));
-                render::annotate(out, palette, report, names, command.as_deref())
             }
         }
     }
@@ -1629,27 +1451,10 @@ async fn execute(
             };
             Ok((Outcome::Auth(credentials::state(endpoint), action), 0))
         }
-        Some(Command::Render {
-            path,
-            out,
-            stream,
-            watermark,
-        }) => {
-            readable(std::slice::from_ref(path))?;
-            prepare_media(cli, &workspace, sink, &cancel).await?;
-            sink.spinner("Rendering published annotations");
-            let report = cerul::annotate::video::render(
-                path,
-                &workspace,
-                out,
-                stream.as_deref(),
-                *watermark,
-                cli.dry_run,
-                &cancel,
-            )?;
-            sink.finish();
-            Ok((Outcome::Render(report), 0))
-        }
+        Some(Command::Render { .. } | Command::Annotate { .. }) => Err(ProviderError {
+            kind: Failure::Unsupported,
+            message: "This command moved to cerul-robotics. Install https://github.com/cerul-ai/cerul-robotics and use cerul-robotics with the same command and arguments.".into(),
+        }.into()),
         Some(Command::Analyze(args)) => {
             anyhow::ensure!(
                 args.jobs > 0 && args.rpm != Some(0),
@@ -1727,57 +1532,6 @@ async fn execute(
             sink.finish();
             let code = if report.partial { 6 } else { 0 };
             Ok((Outcome::Analyze(report, elapsed), code))
-        }
-        Some(Command::Annotate(args)) => {
-            if args.grounding.is_some() || args.world.is_some() {
-                return Err(ProviderError {
-                    kind: Failure::Unsupported,
-                    message: "grounding and world annotations require M2 capabilities".into(),
-                }
-                .into());
-            }
-            let config = config(cli).map_err(|e| category(2, e))?;
-            let items = match args.semantic.as_deref() {
-                Some("default" | "none") | None => Vec::new(),
-                Some(value) => value.split(',').map(str::to_owned).collect(),
-            };
-            let options = cerul::annotate::pipeline::Options {
-                items,
-                embodied: args.embodied,
-                hands: args.hands,
-                no_semantic: args.semantic.as_deref() == Some("none"),
-                write_lerobot: args.write_lerobot,
-                out: args.out.clone(),
-                streams: args.streams.clone(),
-                only: args.only.clone(),
-                ontology: args.ontology.clone(),
-                window_us: args.window,
-                fps: args.fps,
-                recompute: cli.recompute,
-                dry_run: cli.dry_run,
-                jobs: args.jobs,
-                rpm: args.rpm,
-                request_notice: (!cli.yes).then(|| sink.notice(MEDIA_NOTICE)),
-            };
-            options.validate().map_err(|e| category(2, e))?;
-            readable(&args.paths)?;
-            prepare_media(cli, &workspace, sink, &cancel).await?;
-            let events = sink.clone();
-            let mut report = cerul::annotate::pipeline::run(
-                &args.paths,
-                &workspace,
-                &config,
-                &options,
-                cancel,
-                &mut |value| events.emit(value),
-            )
-            .await?;
-            sink.finish();
-            let code = if report.partial { 6 } else { 0 };
-            // Guidance completes an argument list before it is parsed, so the
-            // command that continues this work is built from what actually ran.
-            report.retry = retry_after(&report, invocation);
-            Ok((Outcome::Annotate(report, names(&workspace)), code))
         }
         Some(Command::Search(args)) => {
             let config = config(cli).map_err(|e| category(2, e))?;
@@ -2132,7 +1886,7 @@ fn hint(code: u8, error: &anyhow::Error, env: &str) -> Option<String> {
         return Some("add --yes to confirm without being asked".into());
     }
     if message.contains("select --semantic") {
-        return Some("cerul annotate ./video.mp4 --semantic".into());
+        return Some("cerul analyze ./video.mp4".into());
     }
     if message.contains("--count requires") {
         return Some("cerul search --filter 'semantic.event.verb=place' --count".into());
@@ -2276,9 +2030,7 @@ async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::pr
             let hint = if code == 5 {
                 matches!(
                     &cli.command,
-                    Some(Command::Index(_))
-                        | Some(Command::Analyze(_))
-                        | Some(Command::Annotate(_))
+                    Some(Command::Index(_)) | Some(Command::Analyze(_))
                 )
                 .then(|| format!("retry with {}", render::shell_command(&invocation)))
             } else {

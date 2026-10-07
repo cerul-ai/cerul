@@ -13,9 +13,9 @@ the behavior, storage contracts, and invariants implementations must preserve.
 | Media and time | [episode.rs](src/episode.rs), [media/](src/media), [ocr.rs](src/ocr.rs) | Discover media properties, map episode time, prepare model inputs, and run embedded OCR. |
 | Providers | [providers/](src/providers) | Call configured endpoints, validate capabilities, and resolve scoped credentials. |
 | Indexing | [index/pipeline.rs](src/index/pipeline.rs), [index/](src/index) | Discover inputs, resume processing stations, publish sidecars, and build search indexes. |
-| Annotations | [annotate/pipeline.rs](src/annotate/pipeline.rs), [annotate/hands.rs](src/annotate/hands.rs), [annotations/](src/annotations) | Generate semantic modules and optional embodied CPU hand keypoints, validate records, and publish annotations. |
+| Annotation contracts | [annotations/](src/annotations) | Validate and read shared records, preserve legacy formats, and atomically publish sidecars. |
 | Retrieval | [search/](src/search) | Apply temporal filters, search vectors or text, and export clips. |
-| Dataset writeback | [lerobot.rs](src/lerobot.rs), [lerobot/](src/lerobot) | Read datasets and stage, validate, publish, or recover subtask writeback. |
+| Dataset adapters | [index/discover.rs](src/index/discover.rs) | Accept explicit downstream adapters; Robotics owns LeRobot readers and writeback. |
 | Persistence and maintenance | [storage.rs](src/storage.rs), [status.rs](src/status.rs), [clean.rs](src/clean.rs) | Atomic writes and locks, status reporting, and explicit data or cache removal. |
 
 ## Processing flow
@@ -61,7 +61,7 @@ implement product UI, hosted inference, or HTTP/MCP serving. See
 | --- | --- |
 | [README.md](README.md), [Simplified Chinese](README.zh-CN.md), [Traditional Chinese](README.zh-TW.md) | Product introduction, installation, first use, and links to detailed guides; keep the three entry pages aligned. |
 | [docs/README.md](docs/README.md) | Navigation by reader and task. |
-| [docs/](docs) | User installation, agent-assisted setup, video search, action annotation and LeRobot tutorials, configuration, and compatibility reference. |
+| [docs/](docs) | User installation, agent-assisted setup, video search, Robotics migration, configuration, and compatibility reference. |
 | [docs/development/](docs/development) | Source builds, validation, releases, and scope boundaries for contributors and maintainers. |
 | [ARCHITECTURE.md](ARCHITECTURE.md), [DESIGN.md](DESIGN.md) | Source/module orientation and normative implementation contracts, respectively. |
 | [CONTRIBUTING.md](CONTRIBUTING.md), `AGENTS.md` | Human contribution workflow and repository automation instructions. |

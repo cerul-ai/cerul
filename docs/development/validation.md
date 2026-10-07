@@ -31,51 +31,11 @@ recording provenance and licensing. During local editing, add
 `--allow-dirty` to the Cargo package command to inspect uncommitted changes.
 
 Core CI runs on Linux x86_64 and macOS arm64. Tests include embedded OCR on real
-pixels, embedded hand inference on a licensed public fixture, cancellation,
-restart recovery, sidecar invalidation, and index rebuilds. Hand tests cover
-embodied-only selection, an offline endpoint-free run, resumed tracker state,
-rotated/VFR video and skeleton rendering. They establish behavior, not accuracy
-on arbitrary first-person manipulation clips.
-CI does not run the official LeRobot loader; maintainers run that round-trip
-before a release, as described below. Pull requests that only change
-documentation run the Documentation job and skip the Core jobs; `Core CI result`
-is the single check to require on `main`. On pull requests the Release workflow
-only plans; optimized builds for both targets run when a version tag is pushed,
-so run `cargo build --release --locked` locally before tagging. CI does not use
-a model key. A successful CI run is evidence for its exact commit and fixtures,
-not a measurement of retrieval quality on arbitrary videos.
-
-## Official LeRobot loader
-
-The implementation is tested against Hugging Face LeRobot commit
-[`2774d9bddcbbda50e697e162e89e7eaada8d7105`](https://github.com/huggingface/lerobot/tree/2774d9bddcbbda50e697e162e89e7eaada8d7105).
-Its recorder emits v3.0 while exposing the language-column types used by the
-synthetic v3.1 compatibility fixture. These tests do not establish the existence
-of an official v3.1 recorder or an upgrade tool. See the
-[user-facing compatibility limits](../lerobot.md).
-
-Before a release, install the pinned loader in an isolated Linux environment:
-
-```sh
-python3.12 -m venv /tmp/cerul-loader-env
-/tmp/cerul-loader-env/bin/python -m pip install 'torch==2.11.0' 'torchvision==0.26.0' --index-url https://download.pytorch.org/whl/cpu
-/tmp/cerul-loader-env/bin/python -m pip install 'lerobot[dataset,av-dep] @ git+https://github.com/huggingface/lerobot.git@2774d9bddcbbda50e697e162e89e7eaada8d7105'
-```
-
-Use fresh source and output paths for both cases:
-
-```sh
-export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
-/tmp/cerul-loader-env/bin/python tests/lerobot_roundtrip.py create /tmp/cerul-source
-cargo run --locked --example verify_lerobot_writeback -- /tmp/cerul-source /tmp/cerul-output /tmp/cerul-loader-env/bin/python
-/tmp/cerul-loader-env/bin/python tests/lerobot_roundtrip.py create /tmp/cerul-source-no-language --without-language
-cargo run --locked --example verify_lerobot_writeback -- /tmp/cerul-source-no-language /tmp/cerul-output-no-language /tmp/cerul-loader-env/bin/python
-```
-
-The five-episode, 40-frame fixture covers existing and absent language columns.
-The harness compares original fields, decoded images, actions, state, untouched
-episodes, and active subtask timestamps. A rejected validator must leave the
-output unpublished. Python is a test dependency, not a Cerul runtime dependency.
+pixels, cancellation, restart recovery, content invalidation and index rebuilds.
+The separate [Robotics validation](https://github.com/cerul-ai/cerul-robotics/blob/main/docs/development/validation.md)
+owns real hand inference and official LeRobot loader acceptance. These gates move
+with the implementation; they are not waived. CI uses no model key; endpoint
+checks and optimized release builds remain separate release requirements.
 
 ## Live model checks
 
@@ -133,15 +93,6 @@ and result for each check. Review them before the [release process](releases.md)
 - [ ] Check search/status JSON against schemas and parse JSON-mode stderr line
   by line as NDJSON.
 
-### Dataset integrity
-
-- [ ] Annotate five LeRobot episodes. Subtasks cover each full timeline without
-  gaps and use real frame boundaries. Official-loader readback of
-  `--write-lerobot --out` verifies content and timestamps while preserving all
-  original action, state, and annotation fields.
-- [ ] Check adjacent episodes sharing an MP4 for timestamp isolation, and two
-  datasets containing episode `000012` for distinct identities and outputs.
-
 ### Cache and recovery
 
 - [ ] Repeating unchanged processing reuses completed outputs without model
@@ -159,7 +110,7 @@ and result for each check. Review them before the [release process](releases.md)
 
 ### Model capabilities and OCR
 
-- [ ] Verify Gemini semantic annotation. Ollama and alternative vision endpoints
+- [ ] Verify Gemini scene analysis. Ollama and alternative vision endpoints
   are optional configurations, not required default-provider acceptance gates.
 - [ ] Reject an embedding endpoint without image support during probing with
   exit 3 and no index creation.
@@ -167,8 +118,7 @@ and result for each check. Review them before the [release process](releases.md)
   documented reference implementation; output quality must be no worse.
 
 LanceDB or Arrow changes must preserve prefilter behavior, sidecar round-trips,
-and zero-model-call rebuilds. Use behavioral tests and the official loader in
-addition to compilation. Keep a copy of this checklist with the commit,
+and zero-model-call rebuilds. Use behavioral tests in addition to compilation. Keep a copy of this checklist with the commit,
 platforms, fixture provenance, measured results, and remaining failures in the
 release evidence; empty checkboxes here do not describe a particular release.
 

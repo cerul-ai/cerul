@@ -115,6 +115,27 @@ pub async fn run(
     cancel: CancellationToken,
     events: &mut dyn EventSink,
 ) -> Result<Report> {
+    run_with_adapter(
+        paths,
+        workspace,
+        config,
+        options,
+        cancel,
+        events,
+        &discover::DefaultDatasets,
+    )
+    .await
+}
+
+pub async fn run_with_adapter(
+    paths: &[PathBuf],
+    workspace: &Path,
+    config: &Config,
+    options: &Options,
+    cancel: CancellationToken,
+    events: &mut dyn EventSink,
+    adapter: &dyn discover::DatasetAdapter,
+) -> Result<Report> {
     crate::diagnostics::run(
         workspace,
         "analyze",
@@ -138,7 +159,7 @@ pub async fn run(
                         episodes.push(discover::ordinary_episode(&path)?)
                     }
                     discover::Input::LeRobot(root) => {
-                        episodes.extend(crate::lerobot::read_with_workspace(&root, workspace)?)
+                        episodes.extend(adapter.read(&root, workspace)?)
                     }
                 }
             }
@@ -183,7 +204,7 @@ pub async fn run(
                 let sidecar = if options.dry_run {
                     discover::sidecar_path(&episode, &registry, None)?
                 } else {
-                    discover::publish_episode(workspace, &episode, None)?
+                    discover::publish_episode_with_adapter(workspace, &episode, None, adapter)?
                 };
                 for stream in streams {
                     let mut result = StreamResult {

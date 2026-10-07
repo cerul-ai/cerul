@@ -77,7 +77,7 @@ class StreamTests(unittest.TestCase):
         self.assertFalse((sidecar/'embeddings').exists())
         count=len(self.server.calls);result=self.run_cli();self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertTrue(json.loads(result.stdout)['streams'][0]['cached']);self.assertEqual(len(self.server.calls),count)
-        shutil.copyfile(Path(__file__).parent/'fixtures/hand-opencv.png',self.ref)
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=c=blue:size=64x64','-frames:v','1','-threads','1',str(self.ref)],check=True)
         result=self.run_cli();self.assertEqual(result.returncode,0,result.stdout+result.stderr);self.assertEqual(len(self.server.calls),count+1)
     def test_gemini_delta_arrives_before_final_json(self):
         self.server.gate=threading.Event()

@@ -23,7 +23,7 @@ cerul status ./demo.mp4
 The default pipeline runs screen OCR and available ASR concurrently, then embeds
 video, speech, and screen text. It does not generate scene descriptions, chapters,
 or summaries, and does not call the vision endpoint. Use `cerul analyze ./video.mp4`
-for explicit analysis and `cerul annotate ./video.mp4` for embodied labels. OCR and embedding proxies reuse timestamped samples; each
+for explicit analysis and `cerul-robotics annotate ./video.mp4` for embodied labels. OCR and embedding proxies reuse timestamped samples; each
 consumer selects its own resolution. Completed artifacts are stored in
 `demo.mp4.cerul/`; the workspace holds disposable indexes and proxy caches.
 Media directories that cannot be written use workspace sidecars instead.
@@ -56,20 +56,21 @@ when you change filters or the result limit. Changing the query text requires
 a new embedding request. A valid cached query does not probe the provider. Visual hits cover a whole index window; re-index with a shorter
 `--chunk` when you need finer moments.
 
-## Add semantic annotations
+## Read existing semantic annotations
+
+Core search can filter previously published annotations without model calls.
+For new embodied labels, install the separate [Cerul Robotics](https://github.com/cerul-ai/cerul-robotics)
+CLI. Its default workspace is separate; use an explicit common `--workspace DIR`
+when deliberately sharing a registry with Cerul.
 
 ```sh
-cerul annotate ./demo.mp4 --semantic
-cerul annotate ./demo.mp4 --semantic event
 cerul search --filter 'semantic.event.verb=place'
 cerul search --filter 'semantic.event.verb=place' --count
 ```
 
-Annotation defaults to embodied subtask, event, interaction and state labels.
-The second command explicitly requests only events. Without an ontology, verbs
-are free text: use a verb actually present in your generated annotations. A filter
-on an annotation that has not been generated returns a capability error.
-Repeated filters combine with AND; filters apply before vector ranking.
+Use a verb actually present in the published records. A filter on an unavailable
+annotation returns a capability error. Repeated filters combine with AND and
+apply before vector ranking.
 
 ## Resume and rebuild
 
@@ -112,7 +113,7 @@ See [schemas](../schemas) for generated contracts and [configuration](configurat
 for endpoint selection and exit codes.
 
 For action labels in ordinary videos or demonstrations, see the
-[annotation guide](annotation.md).
+[annotation guide](https://github.com/cerul-ai/cerul-robotics/blob/main/docs/annotation.md).
 
 ## Optional speech transcription
 
@@ -265,7 +266,7 @@ edit needs rebasing and withholds the disputed replacement.
 ## Command help
 
 Run `cerul help` for the command overview, `cerul help index` for indexing,
-`cerul help search` for searching, or `cerul help annotate` for annotation modes.
+`cerul help search` for searching, or `cerul-robotics annotate --help` for annotation modes.
 `cerul <command> --help` provides the same command reference. Help includes
 usage, examples, prerequisites, and relevant options, and works without media
 tools, a key, or an initialized workspace.

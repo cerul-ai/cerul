@@ -179,7 +179,7 @@ pub(super) fn collect(
             return items;
         }
     }
-    let semantic = AnnotationFile::read(&crate::annotate::layout::annotation(
+    let semantic = AnnotationFile::read(&crate::annotations::layout::annotation(
         &directory,
         "semantic.subtask",
     ))
@@ -238,7 +238,7 @@ mod tests {
             "header": {"$cerul":"annotation/1", "name":"semantic.subtask", "episode":episode.episode_id, "stream":"primary", "model":{"kind":"fixture", "name":"test"}, "params":{}, "created":"now", "cerul_version":"test", "input_hash":key, "record_schema":"semantic.subtask/1"},
             "records": [{"id":"subtask-0", "start_us":0, "end_us":1000000, "index":0, "text":"Place the cup on the table"}]
         })).unwrap();
-        let current = crate::annotate::layout::annotation(&sidecar, "semantic.subtask");
+        let current = crate::annotations::layout::annotation(&sidecar, "semantic.subtask");
         file.publish(&current, 1_000_000, None).unwrap();
         for legacy in [false, true] {
             if legacy {

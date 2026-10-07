@@ -135,7 +135,7 @@ pub fn summarize_record(annotation: &str, record: &crate::annotations::Record) -
         .strip_prefix("semantic.")
         .unwrap_or(annotation);
     match item {
-        "grounding.hand" => crate::annotate::export::text(record),
+        "grounding.hand" => crate::annotations::portable::text(record),
         "scene" => text("description"),
         "section" => text("title"),
         "summary" => format!("{} — {}", text("title"), text("summary")),
@@ -219,7 +219,7 @@ pub fn timeline(
 ) -> Result<Timeline> {
     let wanted = options.kind.as_ref().map(|kind| {
         if matches!(kind.as_str(), "hand" | "hands" | "grounding.hand") {
-            return crate::annotate::hands::NAME.to_owned();
+            return crate::annotations::hand::NAME.to_owned();
         }
         let item = kind.strip_prefix("semantic.").unwrap_or(kind);
         format!("semantic.{item}")
@@ -255,9 +255,9 @@ pub fn timeline(
                 stream.id(),
                 &episode.time.reference,
             );
-            for path in crate::annotate::layout::files(&directory)? {
+            for path in crate::annotations::layout::files(&directory)? {
                 let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-                if (!name.starts_with("semantic.") && name != crate::annotate::hands::NAME)
+                if (!name.starts_with("semantic.") && name != crate::annotations::hand::NAME)
                     || name.contains("conflicts")
                 {
                     continue;
@@ -288,7 +288,7 @@ pub fn timeline(
                 }
                 // Keep dense hand tracks in the inventory without letting them
                 // consume the default semantic timeline's record limit.
-                if name == crate::annotate::hands::NAME && wanted.is_none() {
+                if name == crate::annotations::hand::NAME && wanted.is_none() {
                     continue;
                 }
                 for record in file.records {
@@ -378,7 +378,7 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
                 stream.id(),
                 &episode.time.reference,
             );
-            for path in crate::annotate::layout::files(&directory)? {
+            for path in crate::annotations::layout::files(&directory)? {
                 let name = path.file_stem().unwrap().to_string_lossy().into_owned();
                 if name == "log" {
                     continue;
@@ -391,7 +391,7 @@ pub fn inspect(workspace: &Path, path: Option<&Path>) -> Result<Status> {
                     continue;
                 }
                 if file.header.name.starts_with("semantic.")
-                    || file.header.name == crate::annotate::hands::NAME
+                    || file.header.name == crate::annotations::hand::NAME
                 {
                     let coverage = episode
                         .video_coverage(stream.id())?

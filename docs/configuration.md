@@ -20,7 +20,7 @@ status, cleanup, and rebuilding cached vectors need no key.
 Vision defaults to `gemini-3.8-flash` for explicit analysis and embodied annotation. `index` does not
 call the vision endpoint or generate scene descriptions, chapters, or summaries.
 Use `cerul analyze ./video.mp4` for scenes and an overview; use
-`cerul annotate ./video.mp4` for embodied labels. Existing analysis and description vectors
+`cerul-robotics annotate ./video.mp4` for embodied labels. Existing analysis and description vectors
 remain available to status and search. The old `--no-understanding` flag is
 accepted for compatibility and has no additional effect.
 

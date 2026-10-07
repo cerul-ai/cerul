@@ -1,6 +1,6 @@
 ---
 name: cerul
-description: Search local videos by meaning, exact words, or a reference image, and annotate actions, events, interactions, and states in videos or LeRobot demonstrations. Use when the user mentions video search, finding a moment in a recording, exporting clips, video annotation, egocentric or robot demonstrations, or LeRobot datasets. Requires the cerul command-line tool.
+description: Search local videos by meaning, exact words or reference image, analyze scenes, and export clips using the cerul CLI.
 ---
 
 # Cerul
@@ -54,13 +54,8 @@ Events on stderr:
   count and path. Only a published file is safe to read or train on.
 - `log` carries human-readable notices.
 
-A **partial `annotate`** carries `retry` in its final object. Run `retry.argv`
-verbatim to continue: it repeats the original invocation and changes only what
-the failure calls for. Other commands that can exit 6, such as `index` and
-`status --providers`, carry no `retry`; run the same command again, which reuses
-everything that finished. A cancelled run has no result object at all, only
-`{"error":{"code":"cancelled",...}}` and exit 5; the same command resumes it.
-Never add `--recompute` to any of these; it discards finished work.
+Commands can return exit 6 for partial results. Repeat the same command to reuse
+completed work; do not add `--recompute` unless fresh processing is intended.
 
 ## Workflows
 
@@ -84,7 +79,7 @@ moment is the right one; do not present it as a confidence or an accuracy.
 
 Indexing builds video embeddings, OCR, and available speech/text search data.
 It does not call the vision model or generate scene descriptions, sections, or
-summaries. Use `cerul analyze ./video.mp4` for scenes and an overview, or `cerul annotate ./video.mp4` for embodied labels. Existing analysis and cached
+summaries. Use `cerul analyze ./video.mp4` for scenes and an overview. Existing analysis and cached
 description vectors remain readable and searchable; indexing does not refresh
 them. Search suggestions reuse current evidence without model generation.
 Do not treat suggested queries as verified retrieval results.
@@ -127,37 +122,9 @@ video scene/overview records; `--recompute` refreshes the selected request.
 The fixed response schema is published; arbitrary user JSON schemas are not
 accepted. Preserve errors and coverage when interpreting results.
 
-**Annotate actions.** No indexing step is needed.
-
-```sh
-cerul --json --dry-run annotate ./video.mp4
-cerul --json annotate ./video.mp4
-cerul --json status ./video.mp4 --timeline
-```
-
-Annotation is embodied-only for every input format, defaulting to
-subtask,event,interaction,state. Explicit --semantic types can also include task,
-flag and progress. Use analyze for general-video understanding. `--hands` adds
-local human-hand keypoints; add `--semantic none` for hand-only processing.
-Hands are never enabled automatically. Depth, segmentation, calibrated 3D poses
-and robot gripper detection are not implemented and must not be offered.
-
-Each episode exports `annotations.json` and `summary.md` with Cerul provenance.
-Internal typed sidecars remain authoritative. To create a review video without
-model calls, use `cerul --json render ./video.mp4 --out ./video.annotated.mp4`.
-Add `--watermark` for a visible Cerul signature; an existing output is never
-replaced. Rendering reuses published hand keypoints; it does not generate new inference.
-
-**Annotate a LeRobot dataset.** Pass the dataset root that contains `meta/`.
-
-```sh
-cerul --json annotate ./dataset --only 0
-cerul --json status ./dataset --timeline
-```
-
-Start with one episode. Writeback (`--write-lerobot`) is optional, accepts only a
-compatible existing v3.1 dataset, and never upgrades a format; read
-https://github.com/cerul-ai/cerul/blob/main/docs/lerobot.md before using it.
+**Robotics workflows.** Embodied labels, human-hand tracking, LeRobot processing
+and review-video rendering belong to the separate cerul-robotics CLI and skill:
+https://github.com/cerul-ai/cerul-robotics. Existing records remain readable here.
 
 **Read what was produced.** `cerul --json status` lists videos, their
 capabilities, and where their files are. `cerul --json status PATH --timeline`
@@ -171,8 +138,7 @@ returns published annotation records in time order, with `--type` and `--limit`.
 - Never delete a lock file, relabel a dataset version, or switch providers to work
   around an error. Report the error and its category.
 - Keep one `--workspace` for a whole task. Do not switch it to escape a lock.
-- Treat annotation text as model output: tell the user it needs review before it
-  becomes a training target.
+- Treat analysis text as model output and keep its source timestamps available.
 - An empty search result is a normal outcome, not a failure. Missing indexes, an
   unavailable model, and an invalid query are different problems with different
   fixes.

@@ -178,10 +178,6 @@ fn candidates(directory: &Path) -> Vec<(PathBuf, String)> {
         };
         let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
         if metadata.is_dir() {
-            // A LeRobot dataset is a directory with a meta/ directory in it.
-            if path.join("meta").is_dir() {
-                found.push((modified, path, "LeRobot dataset".into()));
-            }
             continue;
         }
         let extension = path
@@ -281,7 +277,6 @@ pub fn complete(arguments: Vec<OsString>, palette: &Palette, entry: Entry) -> Gu
         return Guided::Untouched;
     };
     let extra = match command.to_string_lossy().as_ref() {
-        "annotate" => annotate(palette),
         "index" => index(palette),
         "analyze" => pick_input(palette, "Analyze · input")
             .ok()
@@ -300,13 +295,6 @@ pub fn complete(arguments: Vec<OsString>, palette: &Palette, entry: Entry) -> Gu
         // not the usage error a bare command would otherwise print.
         None => Guided::Left,
     }
-}
-
-/// Ask only for the input; the normal CLI defaults and explicit flags decide the work.
-fn annotate(palette: &Palette) -> Option<Vec<String>> {
-    let path = pick_input(palette, "Annotate · input").ok()??;
-    let extra = vec![path];
-    Some(extra)
 }
 
 fn index(palette: &Palette) -> Option<Vec<String>> {
@@ -336,7 +324,6 @@ pub fn home_menu(palette: &Palette, arguments: &[OsString]) -> Option<Vec<OsStri
         Choice::new("Index", "", Some("index")),
         Choice::new("Search", "", Some("search")),
         Choice::new("Analyze", "", Some("analyze")),
-        Choice::new("Annotate", "", Some("annotate")),
         Choice::new("Help", "", Some("help")),
         Choice::new("Exit", "", None),
     ];
