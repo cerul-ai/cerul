@@ -40,6 +40,13 @@ a terminal or process lifecycle. It does not parse process arguments, print
 progress, or terminate the process. CLI subprocess consumers use the
 [JSON/NDJSON and exit-code contract](docs/configuration.md#process-contract).
 
+Downstream products such as [Cerul Robotics](https://github.com/cerul-ai/cerul-robotics)
+link this library at a release tag and enter through `index::discover::DatasetAdapter`,
+`index::pipeline::run_with_adapter` and `analyze::run_with_adapter`. Treat these
+signatures, the episode and annotation record types they carry, and the sidecar
+layout as a cross-repository contract: a breaking change needs a matching Robotics
+change and a changelog entry before release.
+
 Library hosts can scope credentials with `providers::with_credentials` and supply
 a lazy resolver with `providers::with_credential_resolver`. The library does not
 read CLI credential files; environment values take precedence. Bundled media
