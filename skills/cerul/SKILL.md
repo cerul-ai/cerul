@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words or reference image, analyze scenes, and export clips using the cerul CLI.
 generated-by: cerul 0.0.18
-generated-sha256: a8194db6b19f3d4b2903d63e95c1a9dcecd10ef7dc41b64170021c5acc503ded
+generated-sha256: ddcf16c999e46aff63c5fc39026eef7baacbfbc4db734bf6249013585727db90
 ---
 
 # Cerul
@@ -105,7 +105,7 @@ invocation elapsed time for total throughput. This makes no model calls.
 
 ```sh
 cerul --json analyze ./video.mp4
-cerul --json --dry-run analyze ./dataset --only 0
+cerul --json --dry-run analyze ./videos/
 ```
 
 Without options, returns scenes, chapters and an overview. Add `--prompt "Question"`

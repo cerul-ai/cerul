@@ -103,7 +103,7 @@ invocation elapsed time for total throughput. This makes no model calls.
 
 ```sh
 cerul --json analyze ./video.mp4
-cerul --json --dry-run analyze ./dataset --only 0
+cerul --json --dry-run analyze ./videos/
 ```
 
 Without options, returns scenes, chapters and an overview. Add `--prompt "Question"`

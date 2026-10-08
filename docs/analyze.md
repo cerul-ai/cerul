@@ -1,13 +1,14 @@
 # Analyze videos
 
 `analyze` explicitly generates timestamped visual scenes, a grounded overview and
-chronological chapters. It runs directly on local videos, folders or LeRobot
-datasets; search indexing is not a prerequisite.
+chronological chapters. It runs directly on local videos or folders; search
+indexing is not a prerequisite. LeRobot datasets are analyzed with
+[Cerul Robotics](https://github.com/cerul-ai/cerul-robotics).
 
 ```sh
 cerul analyze ./video.mp4
 cerul analyze ./video.mp4 --json
-cerul analyze ./dataset --only 0
+cerul analyze ./videos/
 cerul analyze ./video.mp4 --dry-run
 ```
 
@@ -67,8 +68,7 @@ Times accept seconds, duration units, `MM:SS` or `HH:MM:SS`, with fractional
 seconds. The range includes `--from` and excludes `--to`; omitted boundaries use
 camera coverage. Both boundaries must lie within the selected camera's coverage.
 Results retain integer-microsecond episode timestamps: selecting 30–70 seconds
-still cites 30–70, not 0–40. For LeRobot this is the episode timeline, not the
-backing MP4 shard's absolute timeline.
+still cites 30–70, not 0–40.
 
 Focused analysis uses at most 120 evenly distributed visual frames, selected
 from approximately one-frame-per-second local extraction. Long ranges have
@@ -128,7 +128,7 @@ not measured accuracy, speed or cost. No TwelveLabs calls were made.
 | Capability | Cerul analyze in this change | TwelveLabs Analyze |
 | --- | --- | --- |
 | Entry point | Local CLI and Rust library | Hosted API and SDKs |
-| Source | Local files, folders and LeRobot cameras | Asset ID, media URL or base64 video |
+| Source | Local files and folders | Asset ID, media URL or base64 video |
 | Model | Configurable vision endpoint, Gemini by default | Pegasus 1.5 in the documented API |
 | Request | Scenes/overview, custom questions and reference images | User prompt, including questions; reference-image prompts |
 | Selected time range | Episode-relative start/end | Start/end timestamps |
@@ -136,7 +136,7 @@ not measured accuracy, speed or cost. No TwelveLabs calls were made.
 | Long-running work | Foreground command, local checkpoints and retry | Synchronous, asynchronous tasks and batch endpoints |
 | Custom segmentation | Not implemented | Asynchronous segmentation with custom definitions |
 | Search prerequisite | None | Analysis can accept video directly, without search indexing |
-| Embodied dataset output | Separate annotate command | Not an equivalent LeRobot annotation workflow in the cited API |
+| Embodied dataset output | Separate Cerul Robotics CLI | Not an equivalent LeRobot annotation workflow in the cited API |
 
 TwelveLabs documents synchronous analysis for videos up to one hour and async
 analysis up to two hours. Cerul has no equivalent benchmarked service limit or

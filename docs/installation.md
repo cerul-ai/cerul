@@ -67,7 +67,7 @@ The same command also generates scripts for fish, elvish, and powershell.
 
 ## Run your first video
 
-The first interactive `index` or semantic `search`/`annotate` using the default
+The first interactive `index`, semantic `search` or `analyze` using the default
 Gemini endpoint prompts for a hidden API key only when remote work is pending,
 validates a small text embedding
 request, and writes `~/.cerul/credentials.json` with mode 0600. This is private
