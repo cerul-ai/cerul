@@ -124,7 +124,7 @@ stdout. Interrupted or invalid responses are not published. See [analysis](docs/
 ### `clip <path> [QUERY]`
 
 Short clips from one video chosen by angle, quoted verbatim from its
-transcript, rendered with captions and a source credit and published with a
+transcript, rendered with captions (and an opt-in source credit) and published with a
 `clip/1` provenance sidecar. Selection uses the transcript station and the
 vision endpoint as a text generator; no embeddings, vision calls or index.
 The behavioral baseline is [the clip design](docs/design/clip-command.md);

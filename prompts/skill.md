@@ -126,25 +126,30 @@ accepted. Preserve errors and coverage when interpreting results.
 from the transcript alone: no index, no embeddings, no frames sent anywhere.
 
 ```sh
-cerul --json --dry-run clip ./video.mp4 --angle numbers
-cerul --json clip ./video.mp4 --angle numbers --angle stories
+cerul --json --dry-run clip ./video.mp4
+cerul --json clip ./video.mp4
+cerul --json clip ./video.mp4 "more about pricing" --max 45s
 cerul --json clip ./video.mp4 --export 1,3,5
 ```
 
 Dry-run first and tell the user that the audio will be sent to their speech
 endpoint (sixty-second windows) and the transcript text to their text
-endpoint. Presets are `numbers`, `claims`, `stories`, `howto`, `questions`,
-`disagreements` and `definitions`; anything else after `--angle`, or a quoted
-positional query, is passed through verbatim. With neither, the brief's
-`suggested_angles` are used. Present the numbered `proposals` in plain
-language: the `quote`, the `reason`, and the duration from `start_us` and
-`end_us`. The quote is the only text verified against the transcript; never
-present `reason` or `title` as fact beyond it. Ask which numbers to export, or
-which angle to try instead, then run `--export` with those numbers (it reuses
-the cached run and makes no model call; `--aspect 9:16` for vertical video).
-Report the `exports[]` file paths: each clip has an `.mp4`, an `.srt` and a
-`.json` provenance sidecar. Offer the `suggested_angles` that were not used.
-Exit 6 means some clips failed to render; their `error` says why.
+endpoint; ask before the real run. Do not ask which angle the user wants: run
+the bare command, which proposes across every angle the brief suggests and
+the presets for the video's content type. Present the numbered `proposals` in
+plain language, grouped by `chapter` and `angle`: the `quote`, the `reason`,
+and the duration from `start_us` and `end_us`. The quote is the only text
+verified against the transcript; never present `reason` or `title` as fact
+beyond it. Then ask what to keep or change. Turn corrections in the user's
+own words into a new run: a wish like "more about pricing" or "nothing from
+the intro" becomes a quoted positional query or `--angle` text passed through
+verbatim (presets `numbers`, `claims`, `stories`, `howto`, `questions`,
+`disagreements`, `definitions` also work), and "shorter" or "longer" adjusts
+`--min`/`--max`. Run `--export` with the chosen numbers (it reuses the cached
+run and makes no model call; `--aspect 9:16` for vertical video, `--credit`
+to burn a source line; captions are on by default). Report the `exports[]`
+file paths: each clip has an `.mp4`, an `.srt` and a `.json` provenance
+sidecar. Exit 6 means some clips failed to render; their `error` says why.
 
 **Robotics workflows.** Embodied labels, human-hand tracking, LeRobot processing
 and review-video rendering belong to the separate cerul-robotics CLI and skill:

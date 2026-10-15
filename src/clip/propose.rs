@@ -56,6 +56,57 @@ pub const PRESETS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Presets a bare run adds to the brief's suggestions, by what the video is.
+/// Every preset applies to `other`, where the brief could not tell.
+pub fn presets_for(content_type: super::brief::ContentType) -> &'static [&'static str] {
+    use super::brief::ContentType::*;
+    match content_type {
+        Interview => &[
+            "numbers",
+            "claims",
+            "stories",
+            "questions",
+            "disagreements",
+            "definitions",
+        ],
+        Lecture => &["definitions", "claims", "numbers", "howto", "stories"],
+        Webinar => &["howto", "numbers", "definitions", "questions", "claims"],
+        Solo => &["claims", "stories", "numbers", "howto"],
+        Demo => &["howto", "numbers", "definitions"],
+        Other => &[
+            "numbers",
+            "claims",
+            "stories",
+            "howto",
+            "questions",
+            "disagreements",
+            "definitions",
+        ],
+    }
+}
+
+/// The angles a run without `--angle` or a query covers: the brief's own
+/// suggestions first, then the presets for its content type, without
+/// repeating a label.
+pub fn default_angles(brief: &Brief) -> Vec<Angle> {
+    let mut angles: Vec<Angle> = brief
+        .suggested_angles
+        .iter()
+        .map(|a| Angle::suggested(&a.label, &a.query))
+        .collect();
+    for preset in presets_for(brief.content_type) {
+        let angle = Angle::parse(preset);
+        if !angles
+            .iter()
+            .any(|a| a.label.eq_ignore_ascii_case(&angle.label))
+        {
+            angles.push(angle);
+        }
+    }
+    angles.dedup();
+    angles
+}
+
 /// An angle as the model receives it: a label for people and the query it answers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Angle {
@@ -622,6 +673,23 @@ mod tests {
                 .as_deref(),
             Some("every time pricing comes up")
         );
+    }
+
+    #[test]
+    fn a_bare_run_covers_suggestions_then_content_type_presets_without_repeats() {
+        let brief: Brief = serde_json::from_value(json!({"summary":"s","content_type":"demo","topics":[],
+            "chapters":[],"suggested_angles":[{"label":"Numbers","query":"figures"},{"label":"setup pain","query":"where setup hurt"}]})).unwrap();
+        let angles = default_angles(&brief);
+        assert_eq!(
+            angles.iter().map(|a| a.label.as_str()).collect::<Vec<_>>(),
+            vec!["Numbers", "setup pain", "howto", "definitions"]
+        );
+        assert_eq!(angles[0].query.as_deref(), Some("figures"));
+        assert_eq!(angles[2].query, None);
+        let mut other = brief;
+        other.content_type = super::super::brief::ContentType::Other;
+        other.suggested_angles.clear();
+        assert_eq!(default_angles(&other).len(), PRESETS.len());
     }
 
     #[test]

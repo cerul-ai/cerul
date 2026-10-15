@@ -10,9 +10,10 @@ rename that heading when a version is cut.
 ### Added
 - `clip`: short clips from one video chosen by angle (`numbers`,
   `claims`, `stories`, `howto`, `questions`, `disagreements`, `definitions` or
-  free text). Proposals carry a verbatim transcript quote, a reason and a time
+  free text; a bare run covers the brief's suggestions plus the presets for the
+  video's content type). Proposals carry a verbatim transcript quote, a reason and a time
   range and are cached beside the video; `--export 1,3,5` renders them with
-  burned-in captions, a source credit, loudness normalisation, optional 9:16
+  burned-in captions, an opt-in `--credit` source line, loudness normalisation, optional 9:16
   cropping, an `.srt` and a `clip/1` provenance sidecar. Selection uses only
   the transcript and the vision endpoint as a text generator: no embeddings,
   no frames, no index. See [clip](docs/clip.md).

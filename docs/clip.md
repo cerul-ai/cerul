@@ -4,8 +4,8 @@
 carrying its source. Name what you are after ("every time pricing comes up"),
 or pick a preset; the command proposes moments as a numbered list with a
 verbatim quote, a one-line reason and a time range; you (or an agent) choose
-numbers; the command renders those clips with captions and a one-line source
-credit and writes a provenance sidecar next to each file.
+numbers; the command renders those clips with captions (and, with `--credit`,
+a one-line source credit) and writes a provenance sidecar next to each file.
 
 ```sh
 cerul clip ./ep42.mp4 --angle numbers
@@ -29,9 +29,17 @@ Presets: `numbers` (figures, prices, dates), `claims` (a stated position or
 prediction), `stories` (a told anecdote), `howto` (a step someone could act
 on), `questions` (a question asked and answered), `disagreements` (two people
 differing) and `definitions` (a term explained). Anything else after `--angle`,
-or the positional query, is passed to the model verbatim as its own angle. With
-no angle and no query, the command uses the angles its brief suggests for the
-video.
+or the positional query, is passed to the model verbatim as its own angle.
+
+With no angle and no query, one run covers every angle the brief suggests for
+the video and then the presets for its content type: interview — numbers,
+claims, stories, questions, disagreements, definitions; lecture —
+definitions, claims, numbers, howto, stories; webinar — howto, numbers,
+definitions, questions, claims; solo — claims, stories, numbers, howto; demo
+— howto, numbers, definitions; other — all seven. A preset whose label a
+suggestion already used is not repeated. `--limit` applies per angle and
+overlap suppression across all of them, so a bare run gives a broad, numbered
+list grouped by chapter and angle to choose from or narrow with your own words.
 
 ## What happens
 
@@ -86,8 +94,10 @@ text uses a font found on the system — `CERUL_CJK_FONT`, then PingFang,
 Hiragino Sans GB, STHeiti, Arial Unicode, Noto Sans CJK or WenQuanYi Micro
 Hei. Without one, Latin still renders and missing characters appear as the
 font's missing-glyph box.
-`--no-captions` skips the burned captions (the `.srt` is still written),
-`--no-credit` skips the credit line and `--credit-text` replaces it.
+`--no-captions` skips the burned captions (the `.srt` is still written).
+The credit line is off by default: `--credit` burns `<file name> · mm:ss–mm:ss`
+under the captions and `--credit-text` burns your own line instead (it implies
+`--credit`).
 
 Three files are published per clip under `--out` (default `./clips`), named
 `<source stem>-<start>-<end>`, for example `ep42-30m30s500-31m12s100.mp4`:
@@ -126,7 +136,7 @@ Two invocations are the normal agent flow: propose, then export the chosen
 numbers.
 
 ```sh
-cerul --json clip ./ep42.mp4 --angle numbers --angle stories
+cerul --json clip ./ep42.mp4
 cerul --json clip ./ep42.mp4 --export 1,3,5
 ```
 

@@ -11,8 +11,9 @@ microseconds, atomic publication, zero-model-call rebuilds) apply unchanged.
 carrying its source. The user names an angle ("every time pricing comes up")
 or picks from suggested angles; the command proposes moments as a numbered
 list with a verbatim quote, a one-line reason and a time range; the user (or
-an agent) selects numbers; the command renders the clips with captions and a
-one-line source credit and writes a provenance sidecar next to each file.
+an agent) selects numbers; the command renders the clips with captions (and, on
+request, a one-line source credit) and writes a provenance sidecar next to
+each file.
 
 Selection runs on the transcript (and cached screen text when present). No
 embeddings, no vision calls, no index are required. The video never leaves the
@@ -30,8 +31,8 @@ cerul clip <path> [QUERY]
     [--export all|N[,N...]]       # render the listed proposals; default: propose only
     [--out DIR]                   # default ./clips
     [--aspect source|9:16]        # default source
-    [--no-captions] [--no-credit]
-    [--credit-text TEXT]          # overrides the generated credit line
+    [--no-captions] [--credit]    # captions burn by default; the credit is opt-in
+    [--credit-text TEXT]          # the credit line to burn instead; implies --credit
     [--stream ID]                 # default primary
 ```
 
@@ -42,7 +43,7 @@ v1; a folder returns `invalid_arguments`.
 Two invocations are the normal agent flow:
 
 ```sh
-cerul --json clip ./ep42.mp4 --angle numbers --angle stories   # propose
+cerul --json clip ./ep42.mp4                                    # propose across every angle
 cerul --json clip ./ep42.mp4 --export 1,3,5                     # render
 ```
 
@@ -55,7 +56,14 @@ or prediction), `stories` (a told anecdote), `howto` (a step someone could
 act on), `questions` (a question asked and answered), `disagreements`
 (two people differing), `definitions` (a term explained). Free text after
 `--angle` or as `QUERY` is passed through verbatim. With no angle and no
-query, the command uses the brief's suggested angles (below).
+query, the command runs every angle the brief suggests (below) and then the
+presets for the brief's content type (interview: numbers, claims, stories,
+questions, disagreements, definitions; lecture: definitions, claims, numbers,
+howto, stories; webinar: howto, numbers, definitions, questions, claims;
+solo: claims, stories, numbers, howto; demo: howto, numbers, definitions;
+other: all seven), skipping a preset whose label a suggestion already used, so
+a bare run yields many proposals grouped by chapter and angle. `--limit`
+still applies per angle and overlap suppression across all of them.
 
 ## Flow
 
@@ -115,8 +123,8 @@ query, the command uses the brief's suggested angles (below).
      bundled OFL font (Latin) and a system CJK font when found; each cue is
      one `overlay` input with `enable='between(t,start,end)'`. This does not
      depend on libass or libfreetype in the ffmpeg build;
-   - credit: one PNG strip for the whole clip at the bottom:
-     `<file name> · mm:ss–mm:ss`, or `--credit-text`;
+   - credit (only with `--credit` or `--credit-text`): one PNG strip for the
+     whole clip at the bottom: `<file name> · mm:ss–mm:ss`, or `--credit-text`;
    - 100 ms audio fade in and out.
    Outputs: `<name>-<start>-<end>.mp4`, `.json` (sidecar, below), `.srt`.
    Publication is atomic (temp file, fsync, rename). Events: `published` per
@@ -153,12 +161,14 @@ Cerul clips; its JSON schema is generated from the Rust type like the others.
 ## Skill
 
 Add a "Clip a video" workflow to `skills/cerul/SKILL.md`: dry-run first and
-tell the user audio will be sent to their ASR endpoint; run the proposal call
-with `--json`; present the numbered proposals in plain language (quote,
-reason, duration); ask which to export or which angle to try instead; run
-`--export`; report file paths; offer the unused suggested angles. Never
-present `reason` or `title` as fact beyond the quote; the quote is the only
-verified text.
+tell the user audio will be sent to their ASR endpoint; run the bare proposal
+call with `--json` without asking which angle first; present the numbered
+proposals in plain language (quote, reason, duration), grouped by chapter and
+angle; ask what to keep or change, and turn corrections in the user's words
+("more about pricing", "shorter", "nothing from the intro") into a new run
+with a free-text angle or query or adjusted `--min`/`--max`; run `--export`;
+report file paths. Never present `reason` or `title` as fact beyond the
+quote; the quote is the only verified text.
 
 ## Out of scope for v1
 

@@ -105,7 +105,9 @@ Selection reads the transcript: sixty-second audio windows go to the speech
 endpoint and transcript text goes to the vision endpoint as plain text. No
 embeddings, no video frames, no index. Proposals are cached beside the video,
 so --export makes no model call. Each clip gets a .json provenance sidecar and
-an .srt; captions and a one-line source credit are burned in unless disabled.
+an .srt; captions are burned in unless disabled, and --credit adds a one-line
+source credit. Without --angle or a query, every angle the brief suggests and
+the presets for the video's content type are proposed in one run.
 Presets: numbers, claims, stories, howto, questions, disagreements, definitions.";
 
 #[derive(Parser)]
@@ -211,7 +213,7 @@ enum Command {
     /// Cut short clips from one video, chosen by angle and quoted from its speech.
     #[command(
         arg_required_else_help = true,
-        long_about = "Propose short clips from one long video for an angle such as numbers or stories, each with a verbatim quote and a time range, then render the ones you pick with captions and a source credit.",
+        long_about = "Propose short clips from one long video for an angle such as numbers or stories, each with a verbatim quote and a time range, then render the ones you pick with captions.",
         after_help = CLIP_HELP
     )]
     Clip(ClipArgs),
@@ -425,11 +427,11 @@ struct ClipArgs {
     /// Render without burned-in captions (the .srt is still written).
     #[arg(long)]
     no_captions: bool,
-    /// Render without the source credit line.
+    /// Burn a one-line source credit (file name and time range) under the captions.
     #[arg(long)]
-    no_credit: bool,
-    /// Replace the generated credit line (file name and time range).
-    #[arg(long, value_name = "TEXT", conflicts_with = "no_credit")]
+    credit: bool,
+    /// Burn this text as the credit line instead (implies --credit).
+    #[arg(long, value_name = "TEXT")]
     credit_text: Option<String>,
     /// Camera stream to clip.
     #[arg(long, default_value = "primary", help_heading = ADVANCED)]
@@ -1659,7 +1661,7 @@ async fn execute(
                 out: args.out.clone(),
                 aspect,
                 captions: !args.no_captions,
-                credit: !args.no_credit,
+                credit: args.credit || args.credit_text.is_some(),
                 credit_text: args.credit_text.clone(),
                 stream: args.stream.clone(),
                 ocr: args.ocr,

@@ -120,6 +120,7 @@ pub struct Options {
     pub out: PathBuf,
     pub aspect: Aspect,
     pub captions: bool,
+    /// Burn the source credit line; off by default. A `credit_text` implies it.
     pub credit: bool,
     pub credit_text: Option<String>,
     pub stream: String,
@@ -146,7 +147,7 @@ impl Default for Options {
             out: PathBuf::from("clips"),
             aspect: Aspect::Source,
             captions: true,
-            credit: true,
+            credit: false,
             credit_text: None,
             stream: "primary".into(),
             ocr: false,
@@ -588,7 +589,7 @@ async fn run_inner(
                 out: &options.out,
                 aspect: options.aspect,
                 captions: options.captions,
-                credit: options.credit,
+                credit: options.credit || options.credit_text.is_some(),
                 credit_text: options.credit_text.as_deref(),
                 transcript_model: transcript.header.model.clone(),
                 selection_model: run.model.clone(),
@@ -653,12 +654,7 @@ async fn run_inner(
     .await?;
     let mut angles = options.named_angles();
     if angles.is_empty() {
-        angles = brief
-            .suggested_angles
-            .iter()
-            .map(|a| Angle::suggested(&a.label, &a.query))
-            .collect();
-        angles.dedup();
+        angles = propose::default_angles(&brief);
     }
     ensure!(
         !angles.is_empty(),

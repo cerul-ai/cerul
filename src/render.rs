@@ -2148,7 +2148,7 @@ pub fn clip(
             ),
         };
         let angles = if plan.angles.is_empty() {
-            "suggested by the brief".to_owned()
+            "the brief's suggestions plus the presets for its content type".to_owned()
         } else {
             plan.angles.join(", ")
         };
@@ -2314,7 +2314,7 @@ pub fn clip(
             .join(",");
         steps.push((
             format!("{prefix} --export {picks}"),
-            "Render the proposals you pick, with captions and a source credit".into(),
+            "Render the proposals you pick with captions (--credit adds a source line)".into(),
         ));
     }
     let unused: Vec<&str> = report
