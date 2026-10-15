@@ -1,6 +1,6 @@
 # `clip` command design (v1)
 
-Status: implementation baseline for the first `cerul clip` release
+Status: implementation baseline for the first `clip` release
 (2026-10-15). Extends [DESIGN.md](../../DESIGN.md) section 3; the rules there
 (library never parses arguments or prints, sidecars authoritative, integer
 microseconds, atomic publication, zero-model-call rebuilds) apply unchanged.
@@ -21,7 +21,7 @@ transcript text goes to the configured text endpoint.
 
 ## Contract
 
-```sh
+```text
 cerul clip <path> [QUERY]
     [--angle ANGLE]...            # preset name or free text; repeatable
     [--limit N]                   # proposals per angle, default 10, max 25

@@ -2,7 +2,7 @@
 name: cerul
 description: Search local videos by meaning, exact words or reference image, analyze scenes, and export clips using the cerul CLI.
 generated-by: cerul 0.0.18
-generated-sha256: ddcf16c999e46aff63c5fc39026eef7baacbfbc4db734bf6249013585727db90
+generated-sha256: 7b0e271ef2b5a8d840a8b6b6eb69543b28c1c49025024c2b228015490ee487e6
 ---
 
 # Cerul
@@ -243,6 +243,29 @@ Analyze scenes, chapters, and a grounded overview without indexing
   --jobs <JOBS>               Parallel model requests (default 4)
   --rpm <RPM>                 Model requests per minute
 
+### cerul clip
+
+Cut short clips from one video, chosen by angle and quoted from its speech
+
+  <PATH>                      One video file
+  <QUERY>                     What to look for, in your own words (one quoted argument)
+  --angle <ANGLE>             A preset (numbers, claims, stories, howto, questions, disagreements, definitions) or free text; repeatable
+  --limit <N>                 Proposals per angle (at most 25) (default 10)
+  --min <DURATION>            Shortest clip, for example 15s (default 15s)
+  --max <DURATION>            Longest clip, for example 90s (default 90s)
+  --export <all|N[,N...]>     Render these proposals from the last run: all, or numbers such as 1,3,5
+  --out <DIR>                 Where rendered clips go (default ./clips)
+  --aspect <source|9:16>      Keep the source frame, or centre-crop to 9:16 at 1080x1920 (default source)
+  --no-captions               Render without burned-in captions (the .srt is still written)
+  --no-credit                 Render without the source credit line
+  --credit-text <TEXT>        Replace the generated credit line (file name and time range)
+  --stream <STREAM>           Camera stream to clip (default primary)
+  --ocr                       Also recognise screen text locally when it is missing, as context for selection
+  --preview                   Show a still frame per proposal (default when the terminal supports images)
+  --no-preview                Never show still frames
+  --jobs <JOBS>               Parallel model requests (default 4)
+  --rpm <RPM>                 Model requests per minute
+
 ### cerul remove
 
 Remove indexed videos, or free the disk they and their caches use
@@ -279,6 +302,7 @@ Print this message or the help of the given subcommand(s)
   cerul help auth                  Manage the saved Gemini API key
   cerul help config                Configure the required Gemini key and optional default speech transcription
   cerul help analyze               Analyze scenes, chapters, and a grounded overview without indexing
+  cerul help clip                  Cut short clips from one video, chosen by angle and quoted from its speech
   cerul help remove                Remove indexed videos, or free the disk they and their caches use
   cerul help upgrade               Install the newest published release of Cerul over this one
   cerul help skill                 Print or install the agent skill that teaches this CLI to a coding agent
