@@ -62,9 +62,10 @@ video.
    query, limits, model and prompt version, and remembered as the latest run
    for the video.
 5. **Export.** `--export` renders the numbered proposals from the latest run
-   for the video, making no model call. Naming different angles with
-   `--export`, or exporting before a proposal run exists, returns
-   `invalid_arguments`.
+   for the video, making no model call; `--limit`, `--min` and `--max` are
+   not consulted again, because the proposals already carry their bounds.
+   Naming different angles with `--export`, or exporting before a proposal
+   run exists, returns `invalid_arguments`.
 
 `--dry-run` reports the audio minutes that would go to the speech endpoint,
 the transcript bytes that would go to the text endpoint when a current
@@ -82,8 +83,9 @@ are rasterised by the CLI into PNG strips composited with ffmpeg `overlay`,
 so burned-in text does not depend on libass or libfreetype in the ffmpeg
 build. Latin text uses the bundled Inter font (SIL Open Font License); CJK
 text uses a font found on the system — `CERUL_CJK_FONT`, then PingFang,
-Hiragino Sans GB, Arial Unicode or Noto Sans CJK. Without one, Latin still
-renders and missing characters appear as the font's missing-glyph box.
+Hiragino Sans GB, STHeiti, Arial Unicode, Noto Sans CJK or WenQuanYi Micro
+Hei. Without one, Latin still renders and missing characters appear as the
+font's missing-glyph box.
 `--no-captions` skips the burned captions (the `.srt` is still written),
 `--no-credit` skips the credit line and `--credit-text` replaces it.
 

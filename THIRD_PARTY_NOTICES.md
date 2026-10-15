@@ -258,5 +258,5 @@ licensed under the SIL Open Font License, Version 1.1. The complete license
 text is in `packaging/licenses/Inter-OFL-1.1.txt`. The font file is
 unmodified. Characters the bundled font lacks, such as CJK, are drawn with a
 font found on the system at run time (`CERUL_CJK_FONT`, then PingFang,
-Hiragino Sans GB, Arial Unicode, or Noto Sans CJK); that font is never
-redistributed.
+Hiragino Sans GB, STHeiti, Arial Unicode, Noto Sans CJK, or WenQuanYi Micro
+Hei); that font is never redistributed.
