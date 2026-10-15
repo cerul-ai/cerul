@@ -7,6 +7,8 @@
 pub mod brief;
 pub mod captions;
 pub mod export;
+#[cfg(test)]
+mod integration;
 pub mod propose;
 pub mod raster;
 pub mod utterances;
@@ -468,6 +470,16 @@ async fn run_inner(
         return Ok(report);
     }
 
+    // An export needs a saved run; say so before any transcription work.
+    let saved_run = match &options.export {
+        Some(_) => Some(propose::last(&cache).ok_or_else(|| {
+            usage(format!(
+                "no cached proposals for {}; run cerul clip on it without --export first",
+                source.display()
+            ))
+        })?),
+        None => None,
+    };
     // Prepare: a current transcript, plus screen text when present or requested.
     ensure!(
         config.transcription.enabled != Some(false)
@@ -511,13 +523,7 @@ async fn run_inner(
         "the transcript contains no speech to select from"
     );
 
-    if let Some(selection) = &options.export {
-        let run = propose::last(&cache).ok_or_else(|| {
-            usage(format!(
-                "no cached proposals for {}; run cerul clip on it without --export first",
-                source.display()
-            ))
-        })?;
+    if let (Some(selection), Some(run)) = (&options.export, saved_run) {
         ensure!(
             run.utterance_key == utterance_key,
             usage(format!(

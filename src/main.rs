@@ -1629,6 +1629,14 @@ async fn execute(
                 CliError(2, "jobs and RPM must be positive".into())
             );
             readable(std::slice::from_ref(&args.path))?;
+            // A folder is refused before media tools are prepared or downloaded.
+            anyhow::ensure!(
+                args.path.is_file(),
+                cerul::clip::UsageError(format!(
+                    "clip takes exactly one video file; {} is not one",
+                    args.path.display()
+                ))
+            );
             let export = args
                 .export
                 .as_deref()
@@ -2215,6 +2223,11 @@ async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::pr
                 hint(code, &error, &env)
             };
             let mut named = failure(code, format!("{error:#}"));
+            // A request the library could not act on is an argument problem,
+            // the same category as a parse error, not a configuration one.
+            if error.downcast_ref::<cerul::clip::UsageError>().is_some() {
+                named.0 = "invalid_arguments";
+            }
             if mode == Mode::Human {
                 eprintln!(
                     "{}",
