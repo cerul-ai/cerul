@@ -120,6 +120,7 @@ cerul skill --install claude    # 也支援 codex、pi，或 --dir ./skills
 | 查看進度和結果 | `cerul status` | 中斷之後繼續，或查找 sidecar 位置 |
 | 限定一部影片搜尋 | `cerul search "打開門" --in ./demo.mp4` | 略過資料庫裡的其他影片 |
 | 回看某筆結果 | `cerul open 2` | 用播放器開啟編號對應的片段 |
+| 按意圖剪短片 | `cerul clip ./talk.mp4` | 先按各個角度列出帶原話引用的候選片段，再用 `--export 1,3` 渲染帶字幕的短片 |
 
 轉錄、標註和向量保存在影片旁的 sidecar 檔案中，可不呼叫模型重建搜尋索引。
 

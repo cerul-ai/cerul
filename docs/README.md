@@ -16,6 +16,7 @@ reading command or compatibility details.
 - [Drive Cerul from an agent](agent.md)
 - [Search videos and save clips](video-search.md)
 - [Analyze scenes and summaries](analyze.md)
+- [Clip a video by intent](clip.md)
 - [Annotate actions and demonstrations](https://github.com/cerul-ai/cerul-robotics/blob/main/docs/annotation.md)
 - [Annotate LeRobot subtasks](https://github.com/cerul-ai/cerul-robotics/blob/main/docs/lerobot-subtasks.md)
 - [LeRobot compatibility and writeback](https://github.com/cerul-ai/cerul-robotics/blob/main/docs/lerobot.md)

@@ -10,7 +10,7 @@ installation instructions are in the [documentation](docs/README.md).
 | Area | Decision |
 | --- | --- |
 | Language | Rust, one crate with a library and one binary. ffmpeg subprocesses, four endpoint types, LanceDB, and embedded OCR. No PyTorch, GPU runtime, Python runtime, or plugins. |
-| Commands | `index`, `search`, `analyze`, `status`, `diagnostics`, `open`, `auth`, `config`, `remove`, `upgrade`, `skill`; hidden shell `completions`. HTTP and MCP serving are not implemented. |
+| Commands | `index`, `search`, `analyze`, `clip`, `status`, `diagnostics`, `open`, `auth`, `config`, `remove`, `upgrade`, `skill`; hidden shell `completions`. HTTP and MCP serving are not implemented. |
 | Structure | Logic lives in library modules exposed through `lib.rs`. `main.rs` parses arguments, calls the library, and prints results. Desktop can link the library or consume subprocess JSON events without `serve`. |
 | Source of truth | One sidecar directory per episode, using JSONL and Parquet, **including embedding vectors**. Indexes are caches rebuildable from sidecars without model calls. |
 | Indexes | One LanceDB directory per `space_id`, the hash of provider kind, base URL, model, dimensions, query instruction template, and applicable document template. The same model name at different endpoints is a different space. Queries must match exactly. |
@@ -120,6 +120,15 @@ video observations. True SSE generation supports Gemini and compatible OpenAI
 Chat Completions endpoints. Human output streams decoded answer text; JSON mode
 writes provisional `analysis_delta` events to stderr and one validated report to
 stdout. Interrupted or invalid responses are not published. See [analysis](docs/analyze.md).
+
+### `clip <path> [QUERY]`
+
+Short clips from one video chosen by angle, quoted verbatim from its
+transcript, rendered with captions (and an opt-in source credit) and published with a
+`clip/1` provenance sidecar. Selection uses the transcript station and the
+vision endpoint as a text generator; no embeddings, vision calls or index.
+The behavioral baseline is [the clip design](docs/design/clip-command.md);
+the user guide is [clip](docs/clip.md).
 
 ### Robotics commands
 

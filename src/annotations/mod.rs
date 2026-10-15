@@ -27,7 +27,7 @@ pub const SEMANTIC_ITEMS: &[&str] = &[
     "progress",
 ];
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Model {
     pub kind: String,
     pub name: String,

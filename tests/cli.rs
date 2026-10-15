@@ -611,6 +611,7 @@ fn the_skill_installs_where_agents_look_and_never_replaces_a_hand_written_file()
     for command in [
         "cerul index",
         "cerul analyze",
+        "cerul clip",
         "cerul search",
         "cerul status",
     ] {
@@ -1099,4 +1100,81 @@ fn dataset_roots_require_robotics_even_for_a_dry_run() {
     }
     assert!(!dir.path().join(".cerul").exists());
     assert!(!dir.path().join("dataset/.cerul").exists());
+}
+
+#[test]
+fn clip_dry_run_writes_nothing_and_argument_problems_are_reported_as_such() {
+    let dir = tempfile::tempdir().unwrap();
+    video(dir.path());
+    let output = cli(
+        dir.path(),
+        &[
+            "--json",
+            "--dry-run",
+            "clip",
+            "sample.mp4",
+            "--angle",
+            "numbers",
+            "pricing",
+        ],
+    );
+    assert!(output.status.success(), "{:?}", output);
+    let report = final_json(&output);
+    assert_eq!(report["dry_run"], true);
+    assert_eq!(report["plan"]["audio_minutes"], 0.0);
+    assert_eq!(report["plan"]["transcript_cached"], false);
+    assert_eq!(
+        report["plan"]["angles"],
+        serde_json::json!(["numbers", "pricing"])
+    );
+    assert!(report["plan"]["text_bytes"].is_null());
+    assert!(
+        !dir.path().join(".cerul").exists(),
+        "a dry run writes no workspace"
+    );
+    assert!(
+        !dir.path().join("sample.mp4.cerul").exists(),
+        "a dry run writes no sidecar"
+    );
+    assert!(!dir.path().join("clips").exists());
+    let human = cli(dir.path(), &["--dry-run", "clip", "sample.mp4"]);
+    assert!(human.status.success());
+    let text = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        text.contains("Dry run:") && text.contains("Nothing was written"),
+        "{text}"
+    );
+
+    for (args, expected) in [
+        (
+            vec!["--json", "clip", "sample.mp4", "--export", "1"],
+            "no cached proposals",
+        ),
+        (
+            vec!["--json", "clip", ".", "--angle", "numbers"],
+            "exactly one video file",
+        ),
+        (
+            vec!["--json", "clip", "sample.mp4", "--export", "x"],
+            "--export takes all or proposal numbers",
+        ),
+        (
+            vec!["--json", "clip", "sample.mp4", "--limit", "30"],
+            "--limit must be between 1 and 25",
+        ),
+        (
+            vec!["--json", "clip", "sample.mp4", "--aspect", "4:3"],
+            "--aspect must be source or 9:16",
+        ),
+    ] {
+        let output = cli(dir.path(), &args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+        let error = final_json(&output)["error"].clone();
+        assert_eq!(error["code"], "invalid_arguments", "{args:?}: {error}");
+        assert!(
+            error["message"].as_str().unwrap().contains(expected),
+            "{args:?}: {error}"
+        );
+    }
+    assert!(!dir.path().join("clips").exists());
 }
