@@ -5,7 +5,10 @@
 //! or index are involved. Only sixty-second audio windows reach the ASR
 //! endpoint and only transcript text reaches the text endpoint.
 pub mod brief;
+pub mod captions;
+pub mod export;
 pub mod propose;
+pub mod raster;
 pub mod utterances;
 
 use crate::{
@@ -554,7 +557,82 @@ async fn run_inner(
         report.proposals = run.proposals.clone();
         report.dropped = run.dropped.clone();
         report.out = Some(options.out.clone());
-        anyhow::bail!("clip export is not available in this build yet");
+        std::fs::create_dir_all(&options.out)
+            .with_context(|| format!("create {}", options.out.display()))?;
+        let mut fonts = raster::Fonts::load()?;
+        events.emit(Event::Progress {
+            episode: episode.episode_id.clone(),
+            station: "export".into(),
+            done: 0,
+            total: numbers.len() as u64,
+        });
+        for (index, number) in numbers.iter().enumerate() {
+            crate::media::check_cancellation()?;
+            let proposal = run
+                .proposals
+                .iter()
+                .find(|p| p.number == *number)
+                .expect("numbers were checked");
+            let job = export::Job {
+                episode: &episode,
+                stream: &stream,
+                source: &source,
+                proposal,
+                units: &units,
+                out: &options.out,
+                aspect: options.aspect,
+                captions: options.captions,
+                credit: options.credit,
+                credit_text: options.credit_text.as_deref(),
+                transcript_model: transcript.header.model.clone(),
+                selection_model: run.model.clone(),
+            };
+            let mut export = Export {
+                number: *number,
+                video: None,
+                sidecar: None,
+                subtitles: None,
+                error: None,
+            };
+            match export::render(&job, &mut fonts) {
+                Ok(published) => {
+                    events.emit(Event::Published {
+                        episode: episode.episode_id.clone(),
+                        stream: stream.clone(),
+                        annotation: "clip".into(),
+                        records: 1,
+                        path: published.video.clone(),
+                    });
+                    export.video = Some(published.video);
+                    export.sidecar = Some(published.sidecar);
+                    export.subtitles = Some(published.subtitles);
+                }
+                Err(error) => {
+                    crate::media::check_cancellation()?;
+                    report.partial = true;
+                    export.error = Some(format!("{error:#}"));
+                    events.emit(Event::Log {
+                        level: "warn".into(),
+                        msg: format!("clip {number} failed: {error:#}"),
+                    });
+                }
+            }
+            report.exports.push(export);
+            events.emit(Event::Progress {
+                episode: episode.episode_id.clone(),
+                station: "export".into(),
+                done: index as u64 + 1,
+                total: numbers.len() as u64,
+            });
+        }
+        if let Some(path) = fonts.cjk_path.as_deref() {
+            events.emit(Event::Log {
+                level: "info".into(),
+                msg: format!("CJK captions use {path}"),
+            });
+        }
+        crate::diagnostics::partial(report.partial);
+        return Ok(report);
     }
 
     let brief_key = brief::key(&utterance_key, &text_model, brief::CHUNK_BYTES)?;

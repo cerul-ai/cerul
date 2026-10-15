@@ -1,0 +1,409 @@
+{
+  "$id": "https://cerul.ai/schemas/clip-result/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Report",
+  "type": "object",
+  "properties": {
+    "angles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Angle"
+      }
+    },
+    "brief": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Brief"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cache_key": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cached": {
+      "description": "The proposals came from a saved run; no selection call was made.",
+      "type": "boolean"
+    },
+    "dropped": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Dropped"
+      }
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "episode": {
+      "type": "string"
+    },
+    "exports": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Export"
+      }
+    },
+    "out": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "partial": {
+      "type": "boolean"
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Plan"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Proposal"
+      }
+    },
+    "sidecar": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "stream": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "source",
+    "episode",
+    "stream",
+    "sidecar",
+    "dry_run",
+    "angles",
+    "proposals",
+    "dropped",
+    "cached",
+    "exports",
+    "partial"
+  ],
+  "$defs": {
+    "Angle": {
+      "description": "An angle as the model receives it: a label for people and the query it answers.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "query": {
+          "description": "Absent for presets, whose meaning is fixed; verbatim text otherwise.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "label"
+      ]
+    },
+    "Brief": {
+      "type": "object",
+      "properties": {
+        "chapters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Chapter"
+          }
+        },
+        "content_type": {
+          "$ref": "#/$defs/ContentType"
+        },
+        "suggested_angles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SuggestedAngle"
+          }
+        },
+        "summary": {
+          "type": "string"
+        },
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "content_type",
+        "topics",
+        "chapters",
+        "suggested_angles"
+      ]
+    },
+    "Chapter": {
+      "type": "object",
+      "properties": {
+        "end_id": {
+          "type": "string"
+        },
+        "start_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "start_id",
+        "end_id"
+      ]
+    },
+    "ContentType": {
+      "type": "string",
+      "enum": [
+        "interview",
+        "lecture",
+        "webinar",
+        "solo",
+        "demo",
+        "other"
+      ]
+    },
+    "DropReason": {
+      "oneOf": [
+        {
+          "description": "An id that is not in the utterance list.",
+          "type": "string",
+          "const": "unknown_id"
+        },
+        {
+          "description": "A reversed span, or one mixing speech and screen ids.",
+          "type": "string",
+          "const": "invalid_span"
+        },
+        {
+          "description": "Shorter than `--min` or longer than `--max` after padding.",
+          "type": "string",
+          "const": "duration"
+        },
+        {
+          "description": "The quote is not a contiguous excerpt of the span's text.",
+          "type": "string",
+          "const": "quote_not_verbatim"
+        },
+        {
+          "description": "More than half of the span is already covered by an accepted proposal.",
+          "type": "string",
+          "const": "overlap"
+        }
+      ]
+    },
+    "Dropped": {
+      "type": "object",
+      "properties": {
+        "angle": {
+          "type": "string"
+        },
+        "end_id": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/DropReason"
+        },
+        "start_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "angle",
+        "start_id",
+        "end_id",
+        "quote",
+        "title",
+        "reason"
+      ]
+    },
+    "Export": {
+      "description": "One rendered clip, or why it was not.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "number": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "sidecar": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subtitles": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "video": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "number"
+      ]
+    },
+    "Plan": {
+      "description": "What a dry run would send and where it would write.",
+      "type": "object",
+      "properties": {
+        "angles": {
+          "description": "Angle labels, or empty when the brief's suggestions would be used.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "audio_minutes": {
+          "description": "Audio that would go to the ASR endpoint; zero when the transcript is current.",
+          "type": "number",
+          "format": "double"
+        },
+        "out": {
+          "type": "string"
+        },
+        "text_bytes": {
+          "description": "Transcript bytes that would go to the text endpoint across the brief and\nproposal calls, when a current transcript exists to measure.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "transcript_cached": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "audio_minutes",
+        "transcript_cached",
+        "angles",
+        "out"
+      ]
+    },
+    "Proposal": {
+      "type": "object",
+      "properties": {
+        "angle": {
+          "type": "string"
+        },
+        "chapter": {
+          "description": "Title of the brief chapter the moment starts in, when any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "number": {
+          "description": "One-based, as printed and as `--export` names it.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "preview": {
+          "description": "Still frame at the start, cached under the workspace; absent in JSON-only runs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quote": {
+          "description": "The only model text that has been verified against the transcript.",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "title": {
+          "type": "string"
+        },
+        "utterances": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "number",
+        "start_us",
+        "end_us",
+        "utterances",
+        "quote",
+        "title",
+        "reason",
+        "angle"
+      ]
+    },
+    "SuggestedAngle": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "query"
+      ]
+    }
+  }
+}

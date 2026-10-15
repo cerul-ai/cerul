@@ -59,6 +59,36 @@ pub fn video_quality(
     proxy: bool,
     crf: u8,
 ) -> Result<()> {
+    encode(source, source_range, destination, proxy, crf, None)
+}
+
+/// Extra image inputs and a filter graph for a rendered clip. The graph must
+/// end in `[vout]` and, when `audio` is set, `[aout]`; inputs are numbered
+/// from 1 in the order given, after the source at 0.
+pub struct Graph<'a> {
+    pub inputs: &'a [std::path::PathBuf],
+    pub filter_complex: &'a str,
+    pub audio: bool,
+}
+
+/// Cut a range through a filter graph with image overlays, publishing atomically.
+pub fn video_rendered(
+    source: &Path,
+    source_range: SourceRange,
+    destination: &Path,
+    graph: &Graph<'_>,
+) -> Result<()> {
+    encode(source, source_range, destination, false, 20, Some(graph))
+}
+
+fn encode(
+    source: &Path,
+    source_range: SourceRange,
+    destination: &Path,
+    proxy: bool,
+    crf: u8,
+    graph: Option<&Graph<'_>>,
+) -> Result<()> {
     ensure!(crf <= 51, "invalid video quality");
     let parent = destination.parent().context("clip has no parent")?;
     fs::create_dir_all(parent)?;
@@ -66,12 +96,31 @@ pub fn video_quality(
         .suffix(".mp4")
         .tempfile_in(parent)?;
     let mut command = crate::media::command("ffmpeg");
-    input(&mut command, source, source_range)?;
-    command.args(["-map", "0:V:0"]);
-    if proxy {
-        command.args(["-an", "-vf", "scale='min(480,iw)':'min(480,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=1:round=up"]);
-    } else {
-        command.args(["-map", "0:a:0?", "-c:a", "aac"]);
+    // Every input precedes -t, which otherwise would bind to the last image.
+    seek_input(&mut command, source, source_range)?;
+    if let Some(graph) = graph {
+        for image in graph.inputs {
+            command.arg("-i").arg(image);
+        }
+    }
+    command.args(["-t", &seconds(source_range.end_us - source_range.start_us)]);
+    match graph {
+        None => {
+            command.args(["-map", "0:V:0"]);
+            if proxy {
+                command.args(["-an", "-vf", "scale='min(480,iw)':'min(480,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=1:round=up"]);
+            } else {
+                command.args(["-map", "0:a:0?", "-c:a", "aac"]);
+            }
+        }
+        Some(graph) => {
+            command.args(["-filter_complex", graph.filter_complex, "-map", "[vout]"]);
+            if graph.audio {
+                command.args(["-map", "[aout]", "-c:a", "aac", "-b:a", "160k"]);
+            } else {
+                command.arg("-an");
+            }
+        }
     }
     command
         .args([

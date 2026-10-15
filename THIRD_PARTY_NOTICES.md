@@ -245,3 +245,18 @@ in an empty directory, place the supplied build script in `scripts/build-media.s
 and place the three tarballs in `target/media-build/` as `ffmpeg-7.1.4.tar.xz` and
 `x264.tar.gz`, and `zlib.tar.gz`. Run `bash scripts/build-media.sh` with a native C compiler, make,
 pkg-config, curl, tar, and xz/bzip2 available. Outputs appear in `target/bundle/`.
+
+## Bundled caption font
+
+`cerul clip` burns captions and a source credit into rendered clips with
+strips the CLI rasterises itself, so the result does not depend on libass or
+libfreetype in the FFmpeg build. The binary embeds Inter Regular 4.001
+(`packaging/fonts/Inter-Regular.otf`, SHA-256
+`d4f2b9e148059a15f014cb0f0b8fea8cd11bfa447dd483bedf1b0adc0e2ba799`),
+copyright 2016 The Inter Project Authors (https://github.com/rsms/inter),
+licensed under the SIL Open Font License, Version 1.1. The complete license
+text is in `packaging/licenses/Inter-OFL-1.1.txt`. The font file is
+unmodified. Characters the bundled font lacks, such as CJK, are drawn with a
+font found on the system at run time (`CERUL_CJK_FONT`, then PingFang,
+Hiragino Sans GB, Arial Unicode, or Noto Sans CJK); that font is never
+redistributed.

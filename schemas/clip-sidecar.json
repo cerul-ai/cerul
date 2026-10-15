@@ -1,0 +1,213 @@
+{
+  "$id": "https://cerul.ai/schemas/clip-sidecar/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sidecar",
+  "description": "The public contract for anything that later reads a Cerul clip.",
+  "type": "object",
+  "properties": {
+    "$cerul": {
+      "type": "string"
+    },
+    "angle": {
+      "type": "string"
+    },
+    "aspect": {
+      "$ref": "#/$defs/Aspect"
+    },
+    "captions": {
+      "$ref": "#/$defs/Captions"
+    },
+    "cerul_version": {
+      "type": "string"
+    },
+    "clip": {
+      "$ref": "#/$defs/Range"
+    },
+    "created": {
+      "type": "string"
+    },
+    "models": {
+      "$ref": "#/$defs/Models"
+    },
+    "query": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "quote": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/Source"
+    },
+    "title": {
+      "type": "string"
+    },
+    "utterances": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "$cerul",
+    "cerul_version",
+    "created",
+    "source",
+    "clip",
+    "utterances",
+    "quote",
+    "title",
+    "reason",
+    "angle",
+    "aspect",
+    "captions",
+    "models"
+  ],
+  "$defs": {
+    "Aspect": {
+      "oneOf": [
+        {
+          "description": "No crop; the clip keeps the source frame.",
+          "type": "string",
+          "const": "source"
+        },
+        {
+          "description": "Centre crop to 9:16, scaled to 1080×1920.",
+          "type": "string",
+          "const": "9:16"
+        }
+      ]
+    },
+    "Captions": {
+      "type": "object",
+      "properties": {
+        "burned": {
+          "type": "boolean"
+        },
+        "cues": {
+          "description": "Cue times are relative to the clip start.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Cue"
+          }
+        }
+      },
+      "required": [
+        "burned",
+        "cues"
+      ]
+    },
+    "Cue": {
+      "description": "One caption, timed relative to the clip start; lines are joined by `\\n`.",
+      "type": "object",
+      "properties": {
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_us",
+        "end_us",
+        "text"
+      ]
+    },
+    "Model": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    },
+    "Models": {
+      "type": "object",
+      "properties": {
+        "selection": {
+          "$ref": "#/$defs/Model"
+        },
+        "transcript": {
+          "$ref": "#/$defs/Model"
+        }
+      },
+      "required": [
+        "transcript",
+        "selection"
+      ]
+    },
+    "Range": {
+      "description": "Episode microseconds, half-open.",
+      "type": "object",
+      "properties": {
+        "end_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "start_us": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "required": [
+        "start_us",
+        "end_us"
+      ]
+    },
+    "Source": {
+      "type": "object",
+      "properties": {
+        "duration_us": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "episode": {
+          "type": "string"
+        },
+        "path": {
+          "description": "File name of the source video, not its full path.",
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "episode",
+        "stream",
+        "duration_us"
+      ]
+    }
+  }
+}
