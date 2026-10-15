@@ -5,6 +5,18 @@ publishes the section that matches the tagged version as the GitHub release
 notes, so keep an entry under **Unreleased** for every user-visible change and
 rename that heading when a version is cut.
 
+## Unreleased
+
+### Added
+- `clip`: short clips from one video chosen by angle (`numbers`,
+  `claims`, `stories`, `howto`, `questions`, `disagreements`, `definitions` or
+  free text). Proposals carry a verbatim transcript quote, a reason and a time
+  range and are cached beside the video; `--export 1,3,5` renders them with
+  burned-in captions, a source credit, loudness normalisation, optional 9:16
+  cropping, an `.srt` and a `clip/1` provenance sidecar. Selection uses only
+  the transcript and the vision endpoint as a text generator: no embeddings,
+  no frames, no index. See [clip](docs/clip.md).
+
 ## 0.0.18 - 2026-10-07
 
 ### Removed

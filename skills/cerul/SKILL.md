@@ -1,8 +1,8 @@
 ---
 name: cerul
-description: Search local videos by meaning, exact words or reference image, analyze scenes, and export clips using the cerul CLI.
+description: Search local videos by meaning, exact words or reference image, analyze scenes, cut short clips by intent, and export clips using the cerul CLI.
 generated-by: cerul 0.0.18
-generated-sha256: 7b0e271ef2b5a8d840a8b6b6eb69543b28c1c49025024c2b228015490ee487e6
+generated-sha256: 294ac43414647d9d7c375b0f7b8273ca72955292b25298d8c20bec7cb3fc4f36
 ---
 
 # Cerul
@@ -123,6 +123,30 @@ emit one delta marked `cached: true`. Question-specific results preserve full
 video scene/overview records; `--recompute` refreshes the selected request.
 The fixed response schema is published; arbitrary user JSON schemas are not
 accepted. Preserve errors and coverage when interpreting results.
+
+**Clip a video.** `clip` cuts short clips from one video by intent, working
+from the transcript alone: no index, no embeddings, no frames sent anywhere.
+
+```sh
+cerul --json --dry-run clip ./video.mp4 --angle numbers
+cerul --json clip ./video.mp4 --angle numbers --angle stories
+cerul --json clip ./video.mp4 --export 1,3,5
+```
+
+Dry-run first and tell the user that the audio will be sent to their speech
+endpoint (sixty-second windows) and the transcript text to their text
+endpoint. Presets are `numbers`, `claims`, `stories`, `howto`, `questions`,
+`disagreements` and `definitions`; anything else after `--angle`, or a quoted
+positional query, is passed through verbatim. With neither, the brief's
+`suggested_angles` are used. Present the numbered `proposals` in plain
+language: the `quote`, the `reason`, and the duration from `start_us` and
+`end_us`. The quote is the only text verified against the transcript; never
+present `reason` or `title` as fact beyond it. Ask which numbers to export, or
+which angle to try instead, then run `--export` with those numbers (it reuses
+the cached run and makes no model call; `--aspect 9:16` for vertical video).
+Report the `exports[]` file paths: each clip has an `.mp4`, an `.srt` and a
+`.json` provenance sidecar. Offer the `suggested_angles` that were not used.
+Exit 6 means some clips failed to render; their `error` says why.
 
 **Robotics workflows.** Embodied labels, human-hand tracking, LeRobot processing
 and review-video rendering belong to the separate cerul-robotics CLI and skill:

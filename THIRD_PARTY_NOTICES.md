@@ -248,7 +248,7 @@ pkg-config, curl, tar, and xz/bzip2 available. Outputs appear in `target/bundle/
 
 ## Bundled caption font
 
-`cerul clip` burns captions and a source credit into rendered clips with
+The `clip` command burns captions and a source credit into rendered clips with
 strips the CLI rasterises itself, so the result does not depend on libass or
 libfreetype in the FFmpeg build. The binary embeds Inter Regular 4.001
 (`packaging/fonts/Inter-Regular.otf`, SHA-256

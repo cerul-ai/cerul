@@ -103,9 +103,10 @@ The schema for these lives in [`schemas/event.json`](../schemas/event.json).
 
 ## Final objects
 
-`index`, `search`, `status`, `status --timeline`, and `remove`
+`index`, `search`, `clip`, `status`, `status --timeline`, and `remove`
 each have a generated schema in [`schemas/`](../schemas/), produced from the Rust
-result types. `auth`, `open`, `skill`, and `upgrade` return small objects with no
+result types; the `clip/1` sidecar written beside each rendered clip is
+[`schemas/clip-sidecar.json`](../schemas/clip-sidecar.json). `auth`, `open`, `skill`, and `upgrade` return small objects with no
 generated schema; their shapes are:
 
 ```json

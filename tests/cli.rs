@@ -611,6 +611,7 @@ fn the_skill_installs_where_agents_look_and_never_replaces_a_hand_written_file()
     for command in [
         "cerul index",
         "cerul analyze",
+        "cerul clip",
         "cerul search",
         "cerul status",
     ] {
