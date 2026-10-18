@@ -76,7 +76,9 @@ still applies per angle and overlap suppression across all of them.
    absence is not an error. Progress events use station `transcript`.
 3. **Utterances.** Derive sentence-level units from transcript records: split
    record text at sentence punctuation (`. ! ?` and `。！？`), keep order,
-   assign ids `u00001…`. Timing: word-level when the transcript protocol is
+   assign ids `u00001…`. A record that ends without sentence punctuation
+   continues into the next record when the gap is at most 1 s, since
+   recognizers cut phrases at a length limit, not at sentences. Timing: word-level when the transcript protocol is
    `native-word-phrases`, otherwise proportional by character count inside
    the record. Save as a checkpoint keyed by the transcript cache key. Screen
    text records, when present, become `s00001…` units with their own times.

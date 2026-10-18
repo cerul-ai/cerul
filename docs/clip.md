@@ -52,8 +52,11 @@ list grouped by chapter and angle to choose from or narrow with your own words.
    an error.
 2. **Utterances.** Transcript records are split into sentence-level units at
    `. ! ?` and `。！？`, timed proportionally by character count inside each
-   record, and numbered `u00001…`; screen-text records become `s00001…`. The
-   derivation is checkpointed under the transcript cache key.
+   record, and numbered `u00001…`; screen-text records become `s00001…`. A
+   record that ends mid-sentence continues into the next record when the gap
+   between them is at most one second, so a sentence the recognizer split
+   across two phrases is one utterance. The derivation is checkpointed under
+   the transcript cache key.
 3. **Brief.** One structured call summarises the video: `summary`,
    `content_type`, `topics`, ordered non-overlapping `chapters` and up to six
    `suggested_angles`. Long transcripts are sent in 120 kB chunks and merged.

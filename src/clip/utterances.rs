@@ -14,7 +14,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Bumped when splitting or timing rules change, so stale checkpoints are ignored.
-pub const RECIPE: &str = "clip-utterances/1";
+pub const RECIPE: &str = "clip-utterances/2";
+
+/// A speech phrase that ends without sentence punctuation continues into the
+/// next phrase when the gap between the two is at most this long. Recognizers
+/// group words into short phrases that often end mid-sentence; the sentence,
+/// not the phrase, is the unit a clip should start or end on.
+pub const MERGE_GAP_US: i64 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -112,6 +118,33 @@ pub fn proportional(start_us: i64, end_us: i64, pieces: &[String]) -> Result<Vec
     Ok(bounds)
 }
 
+/// Whether the text ends a sentence: its last character, ignoring closing
+/// quotes and brackets, is a terminator.
+fn ends_sentence(text: &str) -> bool {
+    text.chars()
+        .rev()
+        .find(|c| !closing(*c))
+        .is_some_and(terminator)
+}
+
+/// Join a continued sentence across two phrases: a space between Latin words
+/// or digits, nothing between CJK characters.
+fn join(left: &str, right: &str) -> String {
+    let latin = left
+        .chars()
+        .last()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+        || right
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric());
+    if latin {
+        format!("{left} {right}")
+    } else {
+        format!("{left}{right}")
+    }
+}
+
 fn record_text(record: &crate::annotations::Record) -> Result<&str> {
     record
         .fields
@@ -122,7 +155,10 @@ fn record_text(record: &crate::annotations::Record) -> Result<&str> {
 
 /// Derive ordered utterances from the current transcript and screen-text records.
 /// Records whose pieces cannot each receive at least one microsecond fall back
-/// to a single utterance for the whole record rather than inventing time.
+/// to a single utterance for the whole record rather than inventing time. A
+/// speech record that ends mid-sentence continues into the next record when
+/// the gap is at most [`MERGE_GAP_US`]; the merged utterance keeps the start
+/// of the first fragment and the end of the last, including the gap.
 pub fn derive(
     transcript: Option<&AnnotationFile>,
     screen: Option<&AnnotationFile>,
@@ -132,7 +168,10 @@ pub fn derive(
         let Some(file) = file else { continue };
         let mut records: Vec<_> = file.records.iter().collect();
         records.sort_by_key(|r| (r.start_us, r.end_us));
-        let mut count = 0usize;
+        // Timed pieces in order; an unfinished sentence waits in `open` for the
+        // next record. Only a record's last piece can be unfinished.
+        let mut timed: Vec<(i64, i64, String)> = Vec::new();
+        let mut open: Option<(i64, i64, String)> = None;
         for record in records {
             let text = record_text(record)?;
             let mut pieces = sentences(text);
@@ -147,15 +186,34 @@ pub fn derive(
                     .iter()
                     .zip(proportional(record.start_us, record.end_us, &pieces)?)
             {
-                count += 1;
-                units.push(Utterance {
-                    id: format!("{prefix}{count:05}"),
-                    kind,
-                    start_us,
-                    end_us,
-                    text: piece.clone(),
-                });
+                let piece = match open.take() {
+                    Some((open_start, open_end, open_text))
+                        if start_us - open_end <= MERGE_GAP_US =>
+                    {
+                        (open_start, end_us, join(&open_text, piece))
+                    }
+                    Some(previous) => {
+                        timed.push(previous);
+                        (start_us, end_us, piece.clone())
+                    }
+                    None => (start_us, end_us, piece.clone()),
+                };
+                if kind == Kind::Speech && !ends_sentence(&piece.2) {
+                    open = Some(piece);
+                } else {
+                    timed.push(piece);
+                }
             }
+        }
+        timed.extend(open.take());
+        for (index, (start_us, end_us, text)) in timed.into_iter().enumerate() {
+            units.push(Utterance {
+                id: format!("{prefix}{:05}", index + 1),
+                kind,
+                start_us,
+                end_us,
+                text,
+            });
         }
     }
     Ok(units)
@@ -303,6 +361,57 @@ mod tests {
         assert!(bounds.iter().all(|(s, e)| e > s));
         assert_eq!(bounds.last().unwrap().1, 13);
         assert!(proportional(5, 5, &many).is_err());
+    }
+
+    #[test]
+    fn unfinished_phrases_continue_into_the_next_record_within_a_short_gap() {
+        let transcript = file(
+            "transcript",
+            vec![
+                (0, 4_000_000, "我们收到了信号。父亲宣布进行无线电禁"),
+                (4_000_000, 8_000_000, "默和灯火管制。然后"),
+                // 1.5 s away: the open fragment stays on its own.
+                (9_500_000, 11_000_000, "继续。"),
+                (13_000_000, 15_000_000, "Prices rose to 3"),
+                (15_000_000, 17_000_000, "percent. Done"),
+            ],
+        );
+        let units = derive(Some(&transcript), None).unwrap();
+        assert_eq!(
+            units
+                .iter()
+                .map(|u| (u.id.as_str(), u.start_us, u.end_us, u.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("u00001", 0, 1_777_777, "我们收到了信号。"),
+                (
+                    "u00002",
+                    1_777_777,
+                    7_111_111,
+                    "父亲宣布进行无线电禁默和灯火管制。"
+                ),
+                ("u00003", 7_111_111, 8_000_000, "然后"),
+                ("u00004", 9_500_000, 11_000_000, "继续。"),
+                (
+                    "u00005",
+                    13_000_000,
+                    16_333_333,
+                    "Prices rose to 3 percent."
+                ),
+                ("u00006", 16_333_333, 17_000_000, "Done"),
+            ]
+        );
+        // Screen text never merges across records.
+        let screen = file(
+            "screen_text",
+            vec![(0, 1_000_000, "Slide 1"), (1_000_000, 2_000_000, "Slide 2")],
+        );
+        let units = derive(None, Some(&screen)).unwrap();
+        assert_eq!(units.len(), 2);
+        assert!(ends_sentence("Really?!”"));
+        assert!(!ends_sentence("v2.0"));
+        assert_eq!(join("第五", "日。"), "第五日。");
+        assert_eq!(join("大概", "70 天。"), "大概 70 天。");
     }
 
     #[test]
