@@ -458,11 +458,13 @@ async fn run_inner(
             _ => None,
         };
         report.plan = Some(Plan {
-            audio_minutes: pending
+            // An empty sum is -0.0 in Rust; keep the JSON at 0.0.
+            audio_minutes: (pending
                 .iter()
                 .map(|w| (w.end_us - w.start_us) as f64)
                 .sum::<f64>()
-                / 60_000_000.,
+                / 60_000_000.)
+                .max(0.0),
             text_bytes,
             transcript_cached: transcript.is_some() && pending.is_empty() && !options.recompute,
             angles: report.angles.iter().map(|a| a.label.clone()).collect(),

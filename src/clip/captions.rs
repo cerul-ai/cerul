@@ -83,13 +83,24 @@ pub fn wrap(text: &str, max: usize) -> Vec<String> {
     lines
 }
 
-/// Cues for the speech utterances inside `[clip_start_us, clip_end_us)`, at
-/// most two lines of 32 characters each, timed proportionally inside their
-/// utterance and expressed relative to the clip start.
-pub fn cues(units: &[Utterance], clip_start_us: i64, clip_end_us: i64) -> Result<Vec<Cue>> {
+/// Cues for the proposal's speech utterances (`ids`) inside
+/// `[clip_start_us, clip_end_us)`, at most two lines of 32 characters each,
+/// timed proportionally inside their utterance and expressed relative to the
+/// clip start. Neighbouring utterances that only reach into the padding
+/// around the proposal get no cue, so a sentence from outside the clip never
+/// flashes at its edges.
+pub fn cues(
+    units: &[Utterance],
+    ids: &[String],
+    clip_start_us: i64,
+    clip_end_us: i64,
+) -> Result<Vec<Cue>> {
     let mut cues = Vec::new();
     for unit in units {
-        if unit.kind != Kind::Speech || unit.end_us <= clip_start_us || unit.start_us >= clip_end_us
+        if unit.kind != Kind::Speech
+            || !ids.contains(&unit.id)
+            || unit.end_us <= clip_start_us
+            || unit.start_us >= clip_end_us
         {
             continue;
         }
@@ -180,26 +191,36 @@ mod tests {
 
     #[test]
     fn cues_group_two_lines_time_them_inside_the_utterance_and_clip_to_the_range() {
-        let unit = |start: i64, end: i64, text: &str| Utterance {
-            id: "u00001".into(),
+        let unit = |id: &str, start: i64, end: i64, text: &str| Utterance {
+            id: id.into(),
             kind: Kind::Speech,
             start_us: start,
             end_us: end,
             text: text.into(),
         };
-        let mut screen = unit(0, 1_000_000, "ERROR");
+        let mut screen = unit("s00001", 0, 1_000_000, "ERROR");
         screen.kind = Kind::Screen;
         let units = vec![
             unit(
+                "u00001",
+                5_000_000,
+                10_200_000,
+                "the sentence before the clip",
+            ),
+            unit(
+                "u00002",
                 9_000_000,
                 13_000_000,
                 "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen",
             ),
-            unit(13_000_000, 15_000_000, "short"),
+            unit("u00003", 13_000_000, 15_000_000, "short"),
             screen,
-            unit(30_000_000, 31_000_000, "after the clip"),
+            unit("u00004", 19_800_000, 31_000_000, "after the clip"),
         ];
-        let cues = cues(&units, 10_000_000, 20_000_000).unwrap();
+        let ids = vec!["u00002".to_owned(), "u00003".to_owned()];
+        let cues = cues(&units, &ids, 10_000_000, 20_000_000).unwrap();
+        // u00001 and u00004 reach into the clip's padding but are not part of
+        // the proposal, so they get no cue.
         assert_eq!(cues.len(), 3);
         assert_eq!(cues[0].start_us, 0);
         assert_eq!(cues[0].text.lines().count(), 2);

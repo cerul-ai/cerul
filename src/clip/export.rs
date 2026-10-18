@@ -206,7 +206,12 @@ pub fn render(job: &Job<'_>, fonts: &mut Fonts) -> Result<Published> {
         width >= 64 && height >= 64,
         "source frame is too small to clip"
     );
-    let cues = captions::cues(job.units, proposal.start_us, proposal.end_us)?;
+    let cues = captions::cues(
+        job.units,
+        &proposal.utterances,
+        proposal.start_us,
+        proposal.end_us,
+    )?;
     let temporary = tempfile::tempdir()?;
     let mut inputs = Vec::new();
     let mut overlays = Vec::new();
