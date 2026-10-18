@@ -37,6 +37,8 @@ Common workflows:
   cerul search \"a person holding a cup\"
   Analyze scenes and summarize a video
   cerul analyze ./video.mp4
+  Cut short clips chosen by intent
+  cerul clip ./talk.mp4 --angle numbers
   Inspect the workspace
   cerul status
 
@@ -85,6 +87,28 @@ Examples:
 Run index first. Quote a multi-word query as one argument.
 --in is optional; source videos remain in their original locations.
 --text searches local evidence; semantic queries use your configured embedding API.";
+
+const CLIP_HELP: &str = "\
+Examples:
+  Propose moments where figures are quoted
+  cerul clip ./talk.mp4 --angle numbers
+  Propose for your own angle
+  cerul clip ./talk.mp4 \"every time pricing comes up\"
+  Let the brief suggest angles
+  cerul clip ./talk.mp4
+  Render proposals 1, 3 and 5 as vertical clips
+  cerul clip ./talk.mp4 --export 1,3,5 --aspect 9:16
+  Preview what would be sent
+  cerul clip ./talk.mp4 --dry-run
+
+Selection reads the transcript: sixty-second audio windows go to the speech
+endpoint and transcript text goes to the vision endpoint as plain text. No
+embeddings, no video frames, no index. Proposals are cached beside the video,
+so --export makes no model call. Each clip gets a .json provenance sidecar and
+an .srt; captions are burned in unless disabled, and --credit adds a one-line
+source credit. Without --angle or a query, every angle the brief suggests and
+the presets for the video's content type are proposed in one run.
+Presets: numbers, claims, stories, howto, questions, disagreements, definitions.";
 
 #[derive(Parser)]
 #[command(
@@ -186,6 +210,13 @@ enum Command {
         after_help = "Examples:\n  cerul analyze ./video.mp4\n  cerul analyze ./videos\n  cerul analyze ./video.mp4 --json\nNo index is required. Uses the vision endpoint, reusing existing OCR and speech. Saves semantic.scene, semantic.section and semantic.summary sidecars. Does not generate embeddings or transcribe audio. Use --prompt for a question, --image for reference images, --from/--to to select a range, and --stream for incremental answers. With --json, deltas go to stderr and a validated final JSON object goes to stdout."
     )]
     Analyze(AnalyzeArgs),
+    /// Cut short clips from one video, chosen by angle and quoted from its speech.
+    #[command(
+        arg_required_else_help = true,
+        long_about = "Propose short clips from one long video for an angle such as numbers or stories, each with a verbatim quote and a time range, then render the ones you pick with captions.",
+        after_help = CLIP_HELP
+    )]
+    Clip(ClipArgs),
     /// Moved to the separate cerul-robotics CLI.
     #[command(hide = true)]
     Annotate {
@@ -367,6 +398,61 @@ struct AnalyzeArgs {
     rpm: Option<u32>,
 }
 #[derive(Args)]
+struct ClipArgs {
+    /// One video file.
+    path: PathBuf,
+    /// What to look for, in your own words (one quoted argument).
+    query: Option<String>,
+    /// A preset (numbers, claims, stories, howto, questions, disagreements, definitions) or free text; repeatable.
+    #[arg(long = "angle", value_name = "ANGLE")]
+    angles: Vec<String>,
+    /// Proposals per angle (at most 25).
+    #[arg(long, default_value_t = cerul::clip::DEFAULT_LIMIT, value_name = "N")]
+    limit: usize,
+    /// Shortest clip, for example 15s.
+    #[arg(long, default_value = "15s", value_parser = duration, value_name = "DURATION")]
+    min: i64,
+    /// Longest clip, for example 90s.
+    #[arg(long, default_value = "90s", value_parser = duration, value_name = "DURATION")]
+    max: i64,
+    /// Render these proposals from the last run: all, or numbers such as 1,3,5.
+    #[arg(long, value_name = "all|N[,N...]")]
+    export: Option<String>,
+    /// Where rendered clips go.
+    #[arg(long, default_value = "./clips", value_name = "DIR")]
+    out: PathBuf,
+    /// Keep the source frame, or centre-crop to 9:16 at 1080x1920.
+    #[arg(long, default_value = "source", value_name = "source|9:16")]
+    aspect: String,
+    /// Render without burned-in captions (the .srt is still written).
+    #[arg(long)]
+    no_captions: bool,
+    /// Burn a one-line source credit (file name and time range) under the captions.
+    #[arg(long)]
+    credit: bool,
+    /// Burn this text as the credit line instead (implies --credit).
+    #[arg(long, value_name = "TEXT")]
+    credit_text: Option<String>,
+    /// Camera stream to clip.
+    #[arg(long, default_value = "primary", help_heading = ADVANCED)]
+    stream: String,
+    /// Also recognise screen text locally when it is missing, as context for selection.
+    #[arg(long, help_heading = ADVANCED)]
+    ocr: bool,
+    /// Show a still frame per proposal (default when the terminal supports images).
+    #[arg(long, conflicts_with = "no_preview", help_heading = ADVANCED)]
+    preview: bool,
+    /// Never show still frames.
+    #[arg(long, help_heading = ADVANCED)]
+    no_preview: bool,
+    /// Parallel model requests.
+    #[arg(long, default_value_t = 4, help_heading = ADVANCED)]
+    jobs: usize,
+    /// Model requests per minute.
+    #[arg(long, help_heading = ADVANCED)]
+    rpm: Option<u32>,
+}
+#[derive(Args)]
 struct IndexArgs {
     /// Videos or directories.
     #[arg(required = true)]
@@ -494,6 +580,9 @@ fn category(code: u8, error: anyhow::Error) -> anyhow::Error {
 fn exit_code(error: &anyhow::Error) -> u8 {
     if let Some(error) = error.downcast_ref::<CliError>() {
         return error.0;
+    }
+    if error.downcast_ref::<cerul::clip::UsageError>().is_some() {
+        return 2;
     }
     match error.downcast_ref::<ProviderError>().map(|e| e.kind) {
         Some(Failure::Cancelled) => 5,
@@ -810,6 +899,7 @@ enum Outcome {
         opened: bool,
     },
     Analyze(cerul::analyze::Report, Duration),
+    Clip(cerul::clip::Report, render::ClipContext),
     Index(pipeline::Report, render::IndexContext),
     Search(cerul::search::Report, render::SearchContext),
 }
@@ -848,6 +938,7 @@ impl Outcome {
                 json!({"media": media, "start_us": start_us, "player": player, "seeks": seeks, "opened": opened})
             }
             Outcome::Analyze(report, _) => serde_json::to_value(report)?,
+            Outcome::Clip(report, _) => serde_json::to_value(report)?,
             Outcome::Index(report, _) => serde_json::to_value(report)?,
             Outcome::Search(report, _) => serde_json::to_value(report)?,
             Outcome::Remove(report, _, _) => serde_json::to_value(report)?,
@@ -963,6 +1054,7 @@ impl Outcome {
                 opened,
             } => render::open(out, palette, media, *start_us, player, *seeks, *opened),
             Outcome::Analyze(report, elapsed) => render::analyze(out, palette, report, *elapsed),
+            Outcome::Clip(report, context) => render::clip(out, palette, report, context),
             Outcome::Index(report, names) => render::index(out, palette, report, names),
             Outcome::Search(report, context) => render::search(out, palette, report, context),
             Outcome::Remove(report, names, unknown) => {
@@ -1533,6 +1625,102 @@ async fn execute(
             let code = if report.partial { 6 } else { 0 };
             Ok((Outcome::Analyze(report, elapsed), code))
         }
+        Some(Command::Clip(args)) => {
+            anyhow::ensure!(
+                args.jobs > 0 && args.rpm != Some(0),
+                CliError(2, "jobs and RPM must be positive".into())
+            );
+            readable(std::slice::from_ref(&args.path))?;
+            // A folder is refused before media tools are prepared or downloaded.
+            anyhow::ensure!(
+                args.path.is_file(),
+                cerul::clip::UsageError(format!(
+                    "clip takes exactly one video file; {} is not one",
+                    args.path.display()
+                ))
+            );
+            let export = args
+                .export
+                .as_deref()
+                .map(cerul::clip::Selection::parse)
+                .transpose()?;
+            let aspect = cerul::clip::Aspect::parse(&args.aspect)?;
+            let config = config(cli).map_err(|e| category(2, e))?;
+            let terminal = render::Terminal::detect(sink.mode);
+            let preview = !args.no_preview
+                && !cli.dry_run
+                && export.is_none()
+                && (args.preview || (terminal.images.is_some() && !cli.quiet));
+            let options = cerul::clip::Options {
+                angles: args.angles.clone(),
+                query: args.query.as_deref().and_then(query_words),
+                limit: args.limit,
+                min_us: args.min,
+                max_us: args.max,
+                export,
+                out: args.out.clone(),
+                aspect,
+                captions: !args.no_captions,
+                credit: args.credit || args.credit_text.is_some(),
+                credit_text: args.credit_text.clone(),
+                stream: args.stream.clone(),
+                ocr: args.ocr,
+                preview,
+                jobs: args.jobs,
+                rpm: args.rpm,
+                recompute: cli.recompute,
+                dry_run: cli.dry_run,
+                request_notice: (!cli.yes).then(|| sink.notice(MEDIA_NOTICE)),
+            };
+            options.validate()?;
+            prepare_media(cli, &workspace, sink, &cancel).await?;
+            if !cli.dry_run {
+                sink.spinner(&format!(
+                    "{} {}",
+                    if options.export.is_some() {
+                        "Rendering clips from"
+                    } else {
+                        "Selecting moments in"
+                    },
+                    render::file_name(&args.path)
+                ));
+            }
+            let events = sink.clone();
+            let report = cerul::clip::run(
+                &args.path,
+                &workspace,
+                &config,
+                &options,
+                cancel,
+                &mut |event| events.emit(event),
+            )
+            .await;
+            sink.finish();
+            let report = report?;
+            let mut command = vec!["cerul".to_owned()];
+            if let Some(path) = &cli.workspace {
+                command.extend(["--workspace".into(), path.to_string_lossy().into_owned()]);
+            }
+            for setting in &cli.overrides {
+                command.extend(["--set".into(), setting.clone()]);
+            }
+            command.push("clip".into());
+            command.push(args.path.to_string_lossy().into_owned());
+            let code = if report.partial { 6 } else { 0 };
+            Ok((
+                Outcome::Clip(
+                    report,
+                    render::ClipContext {
+                        terminal,
+                        player: render::Player::detect(),
+                        command,
+                        asr_model: config.transcription.model.clone(),
+                        text_model: config.vision.model.clone(),
+                    },
+                ),
+                code,
+            ))
+        }
         Some(Command::Search(args)) => {
             let config = config(cli).map_err(|e| category(2, e))?;
             anyhow::ensure!(
@@ -2030,13 +2218,18 @@ async fn run(arguments: Vec<std::ffi::OsString>, entry: guide::Entry) -> std::pr
             let hint = if code == 5 {
                 matches!(
                     &cli.command,
-                    Some(Command::Index(_)) | Some(Command::Analyze(_))
+                    Some(Command::Index(_)) | Some(Command::Analyze(_)) | Some(Command::Clip(_))
                 )
                 .then(|| format!("retry with {}", render::shell_command(&invocation)))
             } else {
                 hint(code, &error, &env)
             };
             let mut named = failure(code, format!("{error:#}"));
+            // A request the library could not act on is an argument problem,
+            // the same category as a parse error, not a configuration one.
+            if error.downcast_ref::<cerul::clip::UsageError>().is_some() {
+                named.0 = "invalid_arguments";
+            }
             if mode == Mode::Human {
                 eprintln!(
                     "{}",

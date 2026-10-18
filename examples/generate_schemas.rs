@@ -9,6 +9,8 @@ fn main() -> Result<()> {
     let schemas = [
         ("episode", schema::<cerul::episode::Episode>()),
         ("analyze-result", schema::<cerul::analyze::Report>()),
+        ("clip-result", schema::<cerul::clip::Report>()),
+        ("clip-sidecar", schema::<cerul::clip::export::Sidecar>()),
         (
             "execution-diagnostics",
             schema::<cerul::diagnostics::Report>(),

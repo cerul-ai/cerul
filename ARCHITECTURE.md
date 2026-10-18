@@ -15,6 +15,7 @@ the behavior, storage contracts, and invariants implementations must preserve.
 | Indexing | [index/pipeline.rs](src/index/pipeline.rs), [index/](src/index) | Discover inputs, resume processing stations, publish sidecars, and build search indexes. |
 | Annotation contracts | [annotations/](src/annotations) | Validate and read shared records, preserve legacy formats, and atomically publish sidecars. |
 | Retrieval | [search/](src/search) | Apply temporal filters, search vectors or text, and export clips. |
+| Clips | [clip/](src/clip) | Derive utterances from the transcript, brief and propose moments through the text endpoint, verify quotes locally, and render captioned clips with a provenance sidecar. |
 | Dataset adapters | [index/discover.rs](src/index/discover.rs) | Accept explicit downstream adapters; Robotics owns LeRobot readers and writeback. |
 | Persistence and maintenance | [storage.rs](src/storage.rs), [status.rs](src/status.rs), [clean.rs](src/clean.rs) | Atomic writes and locks, status reporting, and explicit data or cache removal. |
 

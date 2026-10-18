@@ -131,6 +131,7 @@ cerul skill --install claude    # also: codex, pi, or --dir ./skills
 | Check progress | `cerul status` | After an interruption, or to find where sidecars live |
 | Search one video | `cerul search "opening a door" --in ./demo.mp4` | Skip the rest of the library |
 | Replay a result | `cerul open 2` | Open a numbered match in your video player |
+| Cut clips by intent | `cerul clip ./talk.mp4` | Propose quoted moments across every angle, then `--export 1,3` renders them with captions |
 
 Sidecar files preserve transcripts, annotations, and vectors alongside your media.
 Search indexes can be rebuilt from them without model calls. LeRobot subtask

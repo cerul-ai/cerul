@@ -426,6 +426,50 @@ pub fn transcript_pending(
     Ok(false)
 }
 
+/// Sixty-second windows that still need a model call, for planning. Resumable
+/// checkpoints count as done; a pending recompute generation counts its own.
+pub fn transcript_pending_windows(
+    episode: &Episode,
+    stream: &str,
+    sidecar: &Path,
+    provider: &Provider,
+    recompute: bool,
+) -> Result<Vec<crate::episode::TimeRange>> {
+    let Stream::Video {
+        probe, range_us, ..
+    } = episode.video(stream)?
+    else {
+        unreachable!()
+    };
+    if !probe.has_audio {
+        return Ok(Vec::new());
+    }
+    let key = transcript_key(episode, stream, provider)?;
+    let path = stream_directory(sidecar, stream, &episode.time.reference).join("transcript.jsonl");
+    let pending = retry_path(sidecar, &key);
+    let generation = pending
+        .is_file()
+        .then(|| fs::read_to_string(&pending))
+        .transpose()?;
+    if generation.is_none() && existing(&path, &key, episode.duration_us()?, recompute)?.is_some() {
+        return Ok(Vec::new());
+    }
+    let checkpoints = Checkpoints::new(sidecar);
+    let mut windows = Vec::new();
+    for window in media::chunks(range_us[1] - range_us[0], WINDOW_US, 0)? {
+        let checkpoint = match &generation {
+            Some(generation) => storage::cache_key(&(&key, window, generation))?,
+            None => storage::cache_key(&(&key, window))?,
+        };
+        if (recompute && generation.is_none())
+            || checkpoints.load::<Vec<Record>>(&checkpoint)?.is_none()
+        {
+            windows.push(window);
+        }
+    }
+    Ok(windows)
+}
+
 pub async fn transcript(
     episode: &Episode,
     stream: &str,

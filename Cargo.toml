@@ -11,7 +11,7 @@ include = [
     "/README.md", "/README.zh-CN.md", "/README.zh-TW.md", "/DESIGN.md", "/ARCHITECTURE.md", "/CONTRIBUTING.md",
     "/CODE_OF_CONDUCT.md", "/SECURITY.md", "/CHANGELOG.md",
     "/src/**/*.rs", "/examples/*.rs", "/docs/**/*.md",
-    "/packaging/licenses/*.txt", "/scripts/build-*.sh", "/scripts/test-*.py", "/scripts/check-docs.py", "/scripts/package-media-source.sh", "/schemas/*.json", "/prompts/*.md", "/skills/cerul/SKILL.md", "/docs/assets/*.png",
+    "/packaging/licenses/*.txt", "/packaging/fonts/*.otf", "/scripts/build-*.sh", "/scripts/test-*.py", "/scripts/check-docs.py", "/scripts/package-media-source.sh", "/schemas/*.json", "/prompts/*.md", "/skills/cerul/SKILL.md", "/docs/assets/*.png",
     "/models/det.onnx", "/models/rec.onnx", "/models/characters.txt",
     "/models/LICENSE", "/models/README.md",
     "/tests/*.rs", "/tests/*.py", "/scripts/evaluate-retrieval.py",
@@ -50,6 +50,7 @@ tempfile = "3"
 rpassword = "7"
 indicatif = "0.18"
 console = { version = "0.16", default-features = false, features = ["std", "ansi-parsing"] }
+ab_glyph = "0.2.32"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", features = ["fs"] }

@@ -21,6 +21,7 @@ pub mod search;
 
 pub mod analyze;
 pub mod clean;
+pub mod clip;
 pub mod diagnostics;
 pub mod providers;
 

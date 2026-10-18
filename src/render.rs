@@ -347,6 +347,8 @@ fn station_label(station: &str) -> String {
     match station {
         "screen_text" => "Screen text".into(),
         "transcript" => "Speech".into(),
+        "propose" => "Selecting".into(),
+        "export" => "Rendering".into(),
         "video_embed" => "Video vectors".into(),
         "embed" => "Text vectors / Save".into(),
         "understanding" => "Understanding".into(),
@@ -2099,6 +2101,256 @@ pub fn error(palette: &Palette, code: u8, message: &str, hint: Option<&str>) -> 
         palette.dim(&format!("exit {code} · {category}"))
     ));
     text
+}
+
+/// What the clip receipt needs beyond the report: the commands a person can
+/// copy next and the models a dry run would call.
+pub struct ClipContext {
+    pub terminal: Terminal,
+    pub player: Player,
+    /// `cerul [global flags] clip <path>`, the prefix of every follow-up command.
+    pub command: Vec<String>,
+    pub asr_model: String,
+    pub text_model: String,
+}
+
+/// Numbered cards, one per proposal: time range, still frame, verbatim quote,
+/// then the model's title and reason, which are hints rather than evidence.
+pub fn clip(
+    out: &mut dyn Write,
+    palette: &Palette,
+    report: &cerul::clip::Report,
+    context: &ClipContext,
+) -> io::Result<()> {
+    let name = short_name(&file_name(&report.source));
+    let prefix = shell_command(&context.command);
+    if let Some(plan) = &report.plan {
+        writeln!(out, "{} {name}", palette.bold("Dry run:"))?;
+        let audio = if plan.transcript_cached {
+            "none; the transcript is current".to_owned()
+        } else if plan.audio_minutes > 0. {
+            format!(
+                "{:.1} minutes of audio to {}",
+                plan.audio_minutes, context.asr_model
+            )
+        } else {
+            "none; the file has no audio track".to_owned()
+        };
+        let text = match plan.text_bytes {
+            Some(bytes) => format!(
+                "about {} of transcript text to {}",
+                bytes_label(bytes),
+                context.text_model
+            ),
+            None => format!(
+                "the transcript, once made, to {} (size unknown until then)",
+                context.text_model
+            ),
+        };
+        let angles = if plan.angles.is_empty() {
+            "the brief's suggestions plus the presets for its content type".to_owned()
+        } else {
+            plan.angles.join(", ")
+        };
+        facts(
+            out,
+            palette,
+            &[
+                ("Speech", audio),
+                ("Selection", text),
+                ("Angles", angles),
+                ("Output", tilde(&plan.out)),
+            ],
+        )?;
+        writeln!(out, "  {}", palette.dim("Nothing was written or sent."))?;
+        return Ok(());
+    }
+    if !report.exports.is_empty() {
+        let rendered = report.exports.iter().filter(|e| e.video.is_some()).count();
+        writeln!(
+            out,
+            "{} {} of {} clip{} rendered to {}",
+            if report.partial {
+                palette.warn("!")
+            } else {
+                palette.ok("✓")
+            },
+            rendered,
+            report.exports.len(),
+            if report.exports.len() == 1 { "" } else { "s" },
+            tilde(report.out.as_deref().unwrap_or(Path::new("clips")))
+        )?;
+        for export in &report.exports {
+            let proposal = report.proposals.iter().find(|p| p.number == export.number);
+            let range = proposal
+                .map(|p| format!("{} → {}", clock(p.start_us), clock(p.end_us)))
+                .unwrap_or_default();
+            match (&export.video, &export.error) {
+                (Some(video), _) => writeln!(
+                    out,
+                    "  {}  {}   {}",
+                    palette.cmd(&format!("[{}]", export.number)),
+                    context.terminal.file_link(&file_name(video), video),
+                    palette.dim(&range)
+                )?,
+                (None, Some(error)) => writeln!(
+                    out,
+                    "  {}  {} {}",
+                    palette.cmd(&format!("[{}]", export.number)),
+                    palette.err("failed:"),
+                    error
+                )?,
+                (None, None) => {}
+            }
+        }
+        writeln!(
+            out,
+            "  {}",
+            palette.dim("Each clip has a .json provenance sidecar and an .srt next to it.")
+        )?;
+        return Ok(());
+    }
+    if let Some(brief) = &report.brief {
+        writeln!(out, "{}", palette.bold(&name))?;
+        for line in wrap(&brief.summary, 90) {
+            writeln!(out, "  {line}")?;
+        }
+        writeln!(out)?;
+    }
+    let angles = report
+        .angles
+        .iter()
+        .map(|a| a.label.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(
+        out,
+        "{} for {angles}   {}",
+        palette.bold(&format!(
+            "{} proposal{}",
+            report.proposals.len(),
+            if report.proposals.len() == 1 { "" } else { "s" }
+        )),
+        palette.dim(&format!(
+            "{} dropped{}",
+            report.dropped.len(),
+            if report.cached { " · cached" } else { "" }
+        ))
+    )?;
+    writeln!(out)?;
+    let columns = console::Term::stdout().size().1.clamp(60, 110) as usize;
+    let body = columns.saturating_sub(12);
+    for proposal in &report.proposals {
+        let mut meta = vec![
+            format!("{} → {}", clock(proposal.start_us), clock(proposal.end_us)),
+            format!("{}s", (proposal.end_us - proposal.start_us) / 1_000_000),
+            proposal.angle.clone(),
+        ];
+        if let Some(chapter) = &proposal.chapter {
+            meta.push(chapter.clone());
+        }
+        writeln!(
+            out,
+            "  {}  {}",
+            palette.cmd(&format!("[{}]", proposal.number)),
+            palette.dim(&meta.join("   "))
+        )?;
+        if let Some(preview) = proposal
+            .preview
+            .as_deref()
+            .filter(|_| context.terminal.images.is_some())
+        {
+            write!(out, "       ")?;
+            if context.terminal.image(out, preview, 30, 8)? {
+                writeln!(out)?;
+            }
+        }
+        let mut lines = wrap(&format!("“{}”", proposal.quote), body);
+        let truncated = lines.len() > 4;
+        lines.truncate(4);
+        if truncated && let Some(last) = lines.last_mut() {
+            last.push('…');
+        }
+        for line in lines {
+            writeln!(out, "       {line}")?;
+        }
+        for line in wrap(&format!("{} — {}", proposal.title, proposal.reason), body) {
+            writeln!(out, "       {}", palette.dim(&line))?;
+        }
+        let (label, target) = context.player.open(&report.source, proposal.start_us);
+        if context.terminal.hyperlinks {
+            writeln!(
+                out,
+                "       {}",
+                context.terminal.link(&palette.cmd(&label), &target)
+            )?;
+        }
+        writeln!(out)?;
+    }
+    if report.proposals.is_empty() {
+        writeln!(
+            out,
+            "  {}",
+            palette.dim("Nothing fit these angles within the duration bounds.")
+        )?;
+    }
+    if !report.dropped.is_empty() {
+        writeln!(
+            out,
+            "{}",
+            palette.dim(
+                "Dropped proposals failed a local check (quote not verbatim, length, overlap); --json lists them."
+            )
+        )?;
+    }
+    let mut steps: Vec<(String, String)> = Vec::new();
+    if !report.proposals.is_empty() {
+        let picks = report
+            .proposals
+            .iter()
+            .take(2)
+            .map(|p| p.number.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        steps.push((
+            format!("{prefix} --export {picks}"),
+            "Render the proposals you pick with captions (--credit adds a source line)".into(),
+        ));
+    }
+    let unused: Vec<&str> = report
+        .brief
+        .iter()
+        .flat_map(|b| b.suggested_angles.iter())
+        .map(|a| a.label.as_str())
+        .filter(|label| !report.angles.iter().any(|a| a.label == *label))
+        .collect();
+    let suggestion = unused.first().copied().unwrap_or("stories");
+    steps.push((
+        format!("{prefix} --angle {}", shell_quote(suggestion)),
+        if unused.is_empty() {
+            "Try another angle".into()
+        } else {
+            format!(
+                "Try another angle; the brief also suggests: {}",
+                unused.join(", ")
+            )
+        },
+    ));
+    let steps: Vec<(&str, &str)> = steps
+        .iter()
+        .map(|(command, note)| (command.as_str(), note.as_str()))
+        .collect();
+    next_block(out, palette, &steps)
+}
+
+fn bytes_label(bytes: u64) -> String {
+    if bytes >= 1_000_000 {
+        format!("{:.1} MB", bytes as f64 / 1e6)
+    } else if bytes >= 1_000 {
+        format!("{} kB", bytes / 1_000)
+    } else {
+        format!("{bytes} bytes")
+    }
 }
 
 #[cfg(test)]
