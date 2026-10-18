@@ -5,7 +5,7 @@ publishes the section that matches the tagged version as the GitHub release
 notes, so keep an entry under **Unreleased** for every user-visible change and
 rename that heading when a version is cut.
 
-## Unreleased
+## 0.0.19 - 2026-10-19
 
 ### Added
 - `clip`: short clips from one video chosen by angle (`numbers`,
