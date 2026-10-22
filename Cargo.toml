@@ -1,6 +1,6 @@
 [package]
 name = "cerul"
-version = "0.0.19"
+version = "0.0.20"
 edition = "2024"
 license = "Apache-2.0"
 description = "Searchable video and annotation data, using your own model endpoints"
@@ -15,7 +15,7 @@ include = [
     "/models/det.onnx", "/models/rec.onnx", "/models/characters.txt",
     "/models/LICENSE", "/models/README.md",
     "/tests/*.rs", "/tests/*.py", "/scripts/evaluate-retrieval.py",
-    "/tests/fixtures/README.md", "/tests/fixtures/ocr-text.png",
+    "/tests/fixtures/README.md", "/tests/fixtures/ocr-text.png", "/tests/fixtures/emudhra-*.der",
 ]
 
 [dependencies]
@@ -36,7 +36,13 @@ uuid = { version = "1", features = ["v4"] }
 parquet = { version = "58", default-features = false, features = ["arrow", "zstd", "snap"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 futures = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "http2"] }
+# The TLS policy in src/tls.rs builds reqwest's rustls config itself; keep these
+# on the versions reqwest resolves.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+rustls-webpki = { version = "0.103", default-features = false, features = ["std"] }
+webpki-roots = "1.0.10"
 base64 = "0.22"
 tokio-util = { version = "0.7", features = ["rt"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

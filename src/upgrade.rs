@@ -86,7 +86,7 @@ fn ordinal(value: &str) -> Vec<u64> {
 }
 
 fn client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
+    cerul::tls::client_builder()?
         .user_agent(concat!("cerul/", env!("CARGO_PKG_VERSION")))
         .build()
         .context("could not start an HTTPS client")

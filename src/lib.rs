@@ -26,3 +26,4 @@ pub mod diagnostics;
 pub mod providers;
 
 mod text;
+pub mod tls;
