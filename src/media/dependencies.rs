@@ -261,7 +261,7 @@ async fn download(
     cancel: &CancellationToken,
     events: &mut dyn EventSink,
 ) -> Result<()> {
-    let client = reqwest::Client::builder()
+    let client = crate::tls::client_builder()?
         .https_only(!cfg!(test))
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(300))

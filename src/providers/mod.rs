@@ -295,9 +295,9 @@ impl Provider {
             })
             .transpose()?;
         let builder = if matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")) {
-            Client::builder().no_proxy()
+            crate::tls::client_builder()?.no_proxy()
         } else {
-            Client::builder()
+            crate::tls::client_builder()?
         };
         let client = builder
             .timeout(Duration::from_secs(180))

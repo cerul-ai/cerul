@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "cerul"
-version = "0.0.19"
+version = "0.0.20"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -789,6 +789,9 @@ dependencies = [
  "reqwest",
  "rpassword",
  "rustix",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-webpki",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -801,6 +804,7 @@ dependencies = [
  "tract-onnx",
  "url",
  "uuid",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -7015,9 +7019,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]

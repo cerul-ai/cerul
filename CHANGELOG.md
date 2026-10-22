@@ -5,6 +5,17 @@ publishes the section that matches the tagged version as the GitHub release
 notes, so keep an entry under **Unreleased** for every user-visible change and
 rename that heading when a version is cut.
 
+## 0.0.20 - 2026-10-22
+
+### Security
+- HTTPS requests to model endpoints, GitHub Releases and media downloads now
+  refuse any certificate chain that presents one of the eight eMudhra
+  intermediate CA keys disclosed on 2026-10-20 (GO-2026-6809). Earlier
+  versions trusted certificates forged with those keys whenever the system
+  trust store still held `AAA Certificate Services` or
+  `emSign ECC Root CA - G3`, which macOS and many Linux distributions still
+  do. The bundled Mozilla roots are updated to drop `emSign ECC Root CA - G3`.
+
 ## 0.0.19 - 2026-10-19
 
 ### Added
